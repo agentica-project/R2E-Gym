@@ -115,9 +115,10 @@ class DockerRuntime(ExecutionEnvironment):
             )  # Pass the module name for clarity
         else:
             self.logger = logger
-        self.client = docker.from_env()
+        self.client = docker.from_env(timeout=120)
 
         # Start the container
+        self.container = None
         self.container_name = self._get_container_name(self.docker_image)
         self.start_container(
             self.docker_image, command, self.container_name, **docker_kwargs
@@ -169,24 +170,11 @@ class DockerRuntime(ExecutionEnvironment):
             self.stop_container()
             return
 
-        # Prepare the subprocess for interaction
-        startup_cmd = ["docker", "exec", "-i", ctr_name, "/bin/bash", "-l"]
-        self.container_subprocess = subprocess.Popen(
-            startup_cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,  # Line-buffered
-        )
-
     def stop_container(self):
         try:
             if self.container:
                 self.container.stop()
                 self.container.remove()
-            if self.container_subprocess:
-                self.container_subprocess.terminate()  # Correct reference
         except Exception as e:
             print("Container stop error:", repr(e))
 
