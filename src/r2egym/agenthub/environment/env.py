@@ -26,7 +26,7 @@ class EnvArgs:
 
 
 class RepoEnv(gym.Env):
-    def __init__(self, args: EnvArgs, logger=None):
+    def __init__(self, args: EnvArgs, logger=None, backend: str = "docker"):
         # Get the logger
         if logger is None:
             self.logger = get_logger("RepoEnv")  # Pass the module name for clarity
@@ -34,7 +34,7 @@ class RepoEnv(gym.Env):
             self.logger = logger
 
         self.runtime = DockerRuntime(
-            ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger
+            ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=backend
         )
 
         self.args = args
@@ -42,6 +42,7 @@ class RepoEnv(gym.Env):
         self.observation = None
         self.state = None
         self.cmd_parser = ParseCommandBash()
+        self.backend = backend
         self.logger.info(
             f"Initialized Env: {self.runtime.repo_name} with image: {self.runtime.docker_image}"
         )

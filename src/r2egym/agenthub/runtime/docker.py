@@ -16,8 +16,10 @@ import subprocess
 import datetime
 import hashlib
 import shutil
+import uuid
 
 import docker
+import kubernetes
 import tarfile
 import io
 import os
@@ -35,7 +37,11 @@ from r2egym.agenthub.trajectory.swebench_utils import (
 from r2egym.agenthub.utils.utils import get_logger
 from r2egym.commit_models.diff_classes import ParsedCommit
 
+from kubernetes import client, config, watch
+# For Kubernetes exec.
+from kubernetes.stream import stream
 
+DEFAULT_NAMESPACE = 'default'
 DOCKER_PATH = "/root/.venv/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 from swebench.harness.constants import (
@@ -80,13 +86,15 @@ class DockerRuntime(ExecutionEnvironment):
         docker_image: str = None,  # docker image to use (if not provided, will be inferred from ds)
         command: str = "/bin/bash",
         logger=None,
+        backend='docker',
         **docker_kwargs,
     ):
         # check if ds is provided (required for all dockers moving forward)
         assert ds, f"Dataset not provided for docker image: {docker_image}"
-
+        assert backend in ['docker', 'kubernetes'], f"Invalid backend: {backend}"
         # swebench specific setup
         self.ds = ds
+        self.backend = backend
         self.docker_image = (
             self.ds["docker_image"] if not docker_image else docker_image
         )
@@ -110,26 +118,49 @@ class DockerRuntime(ExecutionEnvironment):
         self.commit = ParsedCommit(**json.loads(self.commit_json))
         self.docker_kwargs = docker_kwargs
         if logger is None:
+            if self.backend == 'docker':
+                logger_name = "DockerRuntime"
+            elif self.backend == 'kubernetes':
+                logger_name = "KubernetesRuntime"
+            else:
+                raise ValueError(f"Invalid backend: {self.backend}")
             self.logger = get_logger(
-                "DockerRuntime"
+                logger_name
             )  # Pass the module name for clarity
         else:
             self.logger = logger
-        self.client = docker.from_env(timeout=120)
+
+        if self.backend == 'docker':
+            self.client = docker.from_env(timeout=120)
+        elif self.backend == 'kubernetes':
+            # Assumes config is in ~/.kube/config
+            config.load_kube_config()
+            self.client = client.CoreV1Api()
 
         # Start the container
         self.container = None
         self.container_name = self._get_container_name(self.docker_image)
+        if self.backend == 'kubernetes':
+            # Generate a random UUID and truncate to 30 characters
+            self.container_name = str(uuid.uuid4())
         self.start_container(
             self.docker_image, command, self.container_name, **docker_kwargs
         )
 
         # Initialize the environment
         self.setup_env()
-        self.logger.info("Docker environment initialized")
+        if self.backend == 'kubernetes':
+            self.logger.info("Kubernetes environment initialized")
+        else:
+            self.logger.info("Docker environment initialized")
         self.logger.info("repo name: %s", self.repo_name)
         self.logger.info("Docker image: %s", self.docker_image)
-        self.logger.info("Container ID: %s", self.container.id)
+        if self.backend == 'docker':
+            self.logger.info("Container ID: %s", self.container.id)
+        elif self.backend == 'kubernetes':
+            # Assuming self.container is a V1Pod object after creation/retrieval
+            pod_name = self.container.metadata.name if self.container and self.container.metadata else "N/A"
+            self.logger.info("Pod Name: %s", pod_name)
 
     @staticmethod
     def _get_container_name(image_name: str) -> str:
@@ -142,41 +173,176 @@ class DockerRuntime(ExecutionEnvironment):
         image_name_sanitized = image_name_sanitized.replace(":", "-")
         return f"{image_name_sanitized}-{hash_object.hexdigest()[:10]}"
 
+    def _start_kubernetes_pod(
+        self, docker_image: str, command: str, pod_name: str, **docker_kwargs
+    ):
+        """
+        Starts or connects to a Kubernetes pod with the specified configuration.
+
+        If a pod with the given name already exists, it attempts to connect to it.
+        Otherwise, it creates a new pod based on the provided image, command,
+        and environment variables, then waits for it to reach the 'Running' state.
+
+        Args:
+            docker_image: The Docker image to use for the pod's container.
+            command: The command to run inside the container.
+            pod_name: The desired name for the Kubernetes pod.
+            **docker_kwargs: Additional keyword arguments. Currently used to extract
+                             'environment' variables for the pod spec.
+
+        Raises:
+            kubernetes.client.ApiException: If there's an error interacting with the
+                                           Kubernetes API (other than 404 Not Found
+                                           when checking existence).
+            RuntimeError: If the pod fails to reach the 'Running' state after creation.
+        """
+        not_found_error = None
+        try:
+            # Check if the pod already exists
+            self.container = self.client.read_namespaced_pod(
+                name=pod_name, namespace=DEFAULT_NAMESPACE
+            )
+            self.logger.info(f"Found existing Kubernetes pod: {pod_name}")
+            return
+        except client.ApiException as e:
+            not_found_error = e
+            
+        if not_found_error.status != 404:
+            self.logger.error(
+                f"Error checking Kubernetes pod '{pod_name}' status: {not_found_error}. Check Kubernetes configuration and permissions."
+            )
+            raise not_found_error
+
+        env_vars = docker_kwargs.get("environment", {})
+        env_spec = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
+        pod_body = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": pod_name},
+            "spec": {
+                "restartPolicy": "Never",
+                "containers": [{
+                    "name": pod_name,
+                    "image": docker_image,
+                    "command": ["/bin/sh", "-c"],
+                    "args": [command] if isinstance(command, str) else command,
+                    "stdin": True,
+                    "tty": True,
+                    "env": env_spec,
+                }],
+            },
+        }
+        
+        # Create the Pod & efficiently monitor with K8 Watch
+        try:
+            pod = self.client.create_namespaced_pod(
+                namespace=DEFAULT_NAMESPACE, body=pod_body
+            )
+            rv = pod.metadata.resource_version
+            w = watch.Watch()
+            stream = w.stream(
+                self.client.list_namespaced_pod,
+                namespace=DEFAULT_NAMESPACE,
+                field_selector=f"metadata.name={pod_name}",
+                resource_version=rv,
+                timeout_seconds=3600, # This will eventually lead to error, if pod is not running long enough.
+            )
+            for event in stream:
+                obj = event['object']
+                phase = obj.status.phase
+                #self.logger.info(f"Event {event['type']} → pod.phase={phase}")
+                if phase == "Running":
+                    self.logger.info(f"Kubernetes pod '{pod_name}' is Running.")
+                    w.stop()
+                    break
+                if phase in ["Failed", "Succeeded", "Unknown"]:
+                    w.stop()
+                    raise RuntimeError(f"Kubernetes pod '{pod_name}' entered terminal phase '{phase}'.")
+            self.container = pod
+        except client.ApiException as create_error:
+            self.logger.error(
+                f"Failed to create Kubernetes pod '{pod_name}': {create_error}"
+            )
+            raise create_error
+
     def start_container(
         self, docker_image: str, command: str, ctr_name: str, **docker_kwargs
     ):
         # Start or reuse a container
         try:
-            containers = self.client.containers.list(
-                all=True, filters={"name": ctr_name}
-            )
-            if containers:
-                self.container = containers[0]
-                if self.container.status != "running":
-                    self.container.start()
-            else:
-                self.container = self.client.containers.run(
-                    docker_image,
-                    command,
-                    name=ctr_name,
-                    detach=True,
-                    tty=True,
-                    stdin_open=True,
-                    # environment={"PATH": "/commands"},
-                    **docker_kwargs,
+            if self.backend == 'docker':
+                containers = self.client.containers.list(
+                    all=True, filters={"name": ctr_name}
                 )
+                if containers:
+                    self.container = containers[0]
+                    if self.container.status != "running":
+                        self.container.start()
+                else:
+                    self.container = self.client.containers.run(
+                        docker_image,
+                        command,
+                        name=ctr_name,
+                        detach=True,
+                        tty=True,
+                        stdin_open=True,
+                        # environment={"PATH": "/commands"},
+                        **docker_kwargs,
+                    )
+            elif self.backend == 'kubernetes':
+                self._start_kubernetes_pod(docker_image, command, ctr_name, **docker_kwargs)
         except Exception as e:
             print("Container start error:", repr(e))
             self.stop_container()
             return
 
+    def _stop_kubernetes_pod(self):
+        try:
+            pod = self.client.read_namespaced_pod(self.container_name, DEFAULT_NAMESPACE)
+            rv = pod.metadata.resource_version
+
+            # 2) start the watch
+            w = watch.Watch()
+            stream = w.stream(
+                self.client.list_namespaced_pod,
+                namespace=DEFAULT_NAMESPACE,
+                field_selector=f"metadata.name={self.container_name}",
+                resource_version=rv,
+                timeout_seconds=60
+            )
+
+            # 3) delete the pod (now your watch is listening)
+            self.client.delete_namespaced_pod(
+                name=self.container_name,
+                namespace=DEFAULT_NAMESPACE,
+                body=kubernetes.client.V1DeleteOptions(grace_period_seconds=0),
+            )
+
+            # 4) consume events until you see DELETED
+            for event in stream:
+                if event['type'] == 'DELETED':
+                    self.logger.info(f"Kubernetes pod {self.container_name} deleted.")
+                    w.stop()
+                    break
+        except kubernetes.client.rest.ApiException as e:
+            if e.status == 404:
+                # Pod already deleted, ignore
+                self.logger.info(f"Kubernetes pod '{self.container_name}' not found, likely already deleted.")
+            else:
+                # Log other K8s API errors during deletion
+                self.logger.error(f"Error deleting Kubernetes pod '{self.container_name}': {e}")
+                raise e # Re-raise unexpected errors
+
     def stop_container(self):
         try:
             if self.container:
-                self.container.stop()
-                self.container.remove()
+                if self.backend == 'docker':
+                    self.container.stop()
+                    self.container.remove()
+                elif self.backend == 'kubernetes':
+                    self._stop_kubernetes_pod()
         except Exception as e:
-            print("Container stop error:", repr(e))
+            print("Container stop/delete error:", repr(e))
 
     def setup_env_swebench(self):
         try:
@@ -266,6 +432,92 @@ class DockerRuntime(ExecutionEnvironment):
         except Exception as e:
             return self.ds["problem_statement"]
 
+    def _run_kubernetes(
+        self,
+        code: str,
+        timeout: int = CMD_TIMEOUT,
+        args: str = "",
+        workdir: str = "",
+    ) -> tuple[str, str]:
+        """
+        Kubernetes-specific method to execute code or commands in the pod, with a timeout.
+        Mirrors the logic of the original Docker `run` method using Kubernetes API.
+        """
+        # Command includes 'timeout' and potentially 'cd <workdir> &&' from the main run method
+        command = ""
+        if workdir:
+            command += f"cd {workdir}; "
+        command += f"timeout {timeout} {code} {args}"
+        full_command = ["/bin/sh", "-c", command]
+        try:
+            # Define the exec function call within a lambda for the executor
+            def execute_command():
+                resp = stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    self.container_name,
+                    DEFAULT_NAMESPACE,
+                    command=full_command,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False, # Match docker exec_run settings
+                    _preload_content=False, # Important for streaming
+                )
+                # Read until the command exits, accumulating each channel
+                stdout_chunks = []
+                stderr_chunks = []
+                while resp.is_open():
+                    resp.update(timeout=1)            # wait for data
+                    if resp.peek_stdout():
+                        stdout_chunks.append(resp.read_stdout())
+                    if resp.peek_stderr():
+                        stderr_chunks.append(resp.read_stderr())
+                resp.close()
+                exit_code = resp.returncode
+                # Join into regular Python strings
+                stdout = "".join(stdout_chunks)
+                stderr = "".join(stderr_chunks)
+                return stdout, stderr, exit_code
+
+            # Execute with an overall timeout slightly larger than the command's timeout
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(execute_command)
+                # Use timeout+10 as a buffer for k8s comms
+                stdout_result, stderr_result, exit_code = future.result(timeout=timeout + 5)
+
+            # Process results - Combine stdout and stderr for the primary output message
+            # This matches docker's exec_run behavior when demux=False
+            output = stdout_result + stderr_result
+
+            if exit_code is None: # Should not happen if command finished
+                 self.logger.error("Kubernetes exec: Exit code not found.")
+                 return output, "-1" # Unknown error state
+
+            if exit_code == 124:
+                self.logger.error(f"Internal Timeout via 'timeout' command: {timeout}s")
+                return f"The command took too long to execute (>{timeout}s)", "-1"
+
+            if exit_code != 0:
+                # Log format matches the docker version's error logging
+                self.logger.error(
+                    f"Kubernetes exec Error: Exit code {exit_code}\nError Message: {output}"
+                )
+                # Return combined output and error code string
+                return output, f"Error: Exit code {exit_code}"
+
+            # Remove ANSI escape codes and \r characters from the combined output
+            output = re.sub(r"\x1b\[[0-9;]*m|\r", "", output)
+            return output, str(exit_code)
+        except concurrent.futures.TimeoutError:
+            self.logger.error(f"Kubernetes exec Overall Timeout: {timeout + 5}s")
+            return "The command took too long to execute (>{timeout}s)", "-1"
+        except client.ApiException as e:
+             self.logger.error(f"Kubernetes API Error during exec: {e}")
+             return f"Error executing command in pod: {repr(e)}", "-1"
+        except Exception as e:
+             self.logger.error(f"Unexpected error during Kubernetes exec: {repr(e)}")
+             return f"Error: {repr(e)}", "-1"
+
     def run(
         self,
         code: str,
@@ -280,9 +532,15 @@ class DockerRuntime(ExecutionEnvironment):
         :param code: The code or command to execute.
         :param args: Arguments to pass to the code/script.
         :param workdir: The working directory inside the container (optional).
-        :return: A tuple containing (output, error_message). If no error, error_message is the exit code (int).
+        :return: A tuple containing (output, error_message). If no error, error_message is the exit code (str).
         """
-        command = f"timeout {timeout} {code} {args}"
+        exec_code = code
+        exec_workdir = self.repo_path if workdir is None else workdir
+
+        if self.backend == 'kubernetes':
+            return self._run_kubernetes(exec_code, timeout, args, workdir=exec_workdir)
+
+        command = f"timeout {timeout} {exec_code} {args}"
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 # Notice we do NOT set tty=True here
@@ -290,7 +548,7 @@ class DockerRuntime(ExecutionEnvironment):
                     self.container.exec_run,
                     cmd=["/bin/sh", "-c", command],
                     # cmd=command,
-                    workdir=self.repo_path if workdir is None else workdir,
+                    workdir=exec_workdir,
                     stdout=True,
                     stderr=True,
                     environment={"PATH": DOCKER_PATH},
@@ -359,22 +617,48 @@ class DockerRuntime(ExecutionEnvironment):
         except Exception as e:
             return f"Error: {repr(e)}", f"Error: {repr(e)}", "-1"
 
-    def copy_to_container(self, src_path: str, dest_path: str):
+    def _copy_to_container_kubernetes(self, src_path: str, dest_path: str):
         """
-        Copies a file or directory from the host to the Docker container.
-
-        Args:
-            src_path: Path to the file or directory on the host.
-            dest_path: Destination path inside the container.
+        Copy a file or directory from host into Kubernetes pod using tar over exec.
         """
-        # Create a tar archive of the source file/directory
+        # Calculate destination directory and prepare in-memory tarball
+        dest_dir = os.path.dirname(dest_path)
         tar_stream = io.BytesIO()
-        with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+        with tarfile.open(fileobj=tar_stream, mode='w') as tar:
             tar.add(src_path, arcname=os.path.basename(dest_path))
         tar_stream.seek(0)
 
-        # Use Docker API to put the archive into the container
-        self.container.put_archive(os.path.dirname(dest_path), tar_stream.read())
+        # Exec into pod to untar into the destination directory
+        exec_command = ['tar', 'xmf', '-', '-C', dest_dir]
+        resp = stream(
+            self.client.connect_get_namespaced_pod_exec,
+            self.container_name,
+            DEFAULT_NAMESPACE,
+            command=exec_command,
+            stderr=True,
+            stdin=True,
+            stdout=True,
+            tty=False,
+            _preload_content=False,
+        )
+        # Stream the tar binary data into the pod
+        resp.write_stdin(tar_stream.read())
+        resp.close()
+
+
+    def copy_to_container(self, src_path: str, dest_path: str):
+        """
+        Copies a file or directory from the host into the container (Docker or Kubernetes).
+        """
+        if self.backend == 'docker':
+            tar_stream = io.BytesIO()
+            with tarfile.open(fileobj=tar_stream, mode="w") as tar:
+                tar.add(src_path, arcname=os.path.basename(dest_path))
+            tar_stream.seek(0)
+            self.container.put_archive(os.path.dirname(dest_path), tar_stream.read())
+        else:
+            # Kubernetes pod copy
+            return self._copy_to_container_kubernetes(src_path, dest_path)
 
     @DeprecationWarning  # TODO: remove dependency on this method with new dockers
     def read_file(self, rel_file_path: str) -> str:
@@ -504,11 +788,11 @@ class DockerRuntime(ExecutionEnvironment):
         else:
             return parse_log_fn(f"{self.repo_name}")(log_output)
 
-    def _calculate_reward_swebench(self, get_test_output=False) -> float:
+    def _calculate_reward_swebench(self, get_test_output=False, timeout=300) -> float:
         # gt_test_patch = self.commit.get_patch(test_file=True,non_test_file=False)
         # self.apply_patch(gt_test_patch)
         out, _ = self.run(
-            "/run_tests.sh", 300
+            "/run_tests.sh", timeout=timeout
         )  # run the tests after applying the patch
         eval_status_map, found = self.get_logs_eval(self.test_spec, out)
         eval_ref = {
@@ -568,7 +852,8 @@ class DockerRuntime(ExecutionEnvironment):
 
     def close(self):
         self.stop_container()
-        self.client.close()
+        if self.backend == 'docker':
+            self.client.close()
 
     def run_swebv_regression(
         self, run_tests_regression: str | None = None, timeout: int = 300
