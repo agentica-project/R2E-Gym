@@ -236,8 +236,13 @@ class DockerRuntime(ExecutionEnvironment):
                         "stdin": True,
                         "tty": True,
                         "env": env_spec,
+                        "resources": {
+                            "requests": {"cpu": "0.5", "memory": "1Gi"},
+                        },
                     }
                 ],
+                "imagePullSecrets": [{"name": "dockerhub-pro"}],
+                "nodeSelector": {"karpenter.sh/nodepool": "bigcpu-standby"},
             },
         }
 
