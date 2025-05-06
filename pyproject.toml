@@ -35,6 +35,7 @@ dependencies = [
     "apscheduler>=3.11.0",
     "sb-cli>=0.1.1",
     "seaborn>=0.13.2",
+    "kubernetes>=32.0.1",
 ]
 requires-python = ">=3.10"
 readme = "README.md"

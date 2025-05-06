@@ -15,7 +15,7 @@ from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.environment.env import EnvArgs, RepoEnv
 from r2egym.agenthub.agent.agent import AgentArgs, Agent
 
-from docker_bash_utils.docker_list_tags import fetch_docker_tags
+from r2egym.docker_bash_utils.docker_list_tags import fetch_docker_tags
 from r2egym.agenthub.utils.log import get_logger
 from r2egym.logging import setup_logging, INFO
 from r2egym.agenthub.utils.utils import get_parsed_commit
@@ -57,7 +57,13 @@ def get_docker_images(repo_name) -> List[str]:
 # editagent Functions
 ##############################################################################
 def run_agent_with_restarts(
-    agent, env, max_steps=40, num_restarts=1, temperature=0.0, max_steps_absolute=50, use_fn_calling: bool = True,
+    agent,
+    env,
+    max_steps=40,
+    num_restarts=1,
+    temperature=0.0,
+    max_steps_absolute=50,
+    use_fn_calling: bool = True,
 ):
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
@@ -113,7 +119,7 @@ def runagent(
     env_args = EnvArgs(ds=ds)
 
     # Initialize the RepoEnv
-    env = RepoEnv(env_args, logger=logger)
+    env = RepoEnv(env_args, logger=logger, backend="kubernetes")
     # set agent args
     if use_fn_calling:
         agent_args = AgentArgs.from_yaml(

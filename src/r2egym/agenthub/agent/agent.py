@@ -284,12 +284,13 @@ class Agent:
                 }
                 if tools:
                     kwargs = {}
+                if "o3" not in self.llm_name and "o4" not in self.llm_name:
+                    kwargs["temperature"] = temperature
                 response = litellm.completion(
                     model=self.llm_name,
                     tools=tools,
                     messages=messages_,
                     timeout=self.llm_timeout,
-                    temperature=temperature,
                     api_base=self.llm_base_url,
                     # max_tokens=3000,
                     **kwargs,
@@ -379,6 +380,8 @@ class Agent:
         support_fn_calling = (
             "gpt" in self.llm_name
             or "sonnet" in self.llm_name
+            or "o3" in self.llm_name
+            or "o4" in self.llm_name
             and "qwen" not in self.llm_name
         )
         self.use_fn_calling = use_fn_calling and support_fn_calling
