@@ -246,11 +246,36 @@ class DockerRuntime(ExecutionEnvironment):
             },
         }
 
-        # Create the Pod & efficiently monitor with K8 Watch
-        try:
-            pod = self.client.create_namespaced_pod(
-                namespace=DEFAULT_NAMESPACE, body=pod_body
+        # Create the Pod with retry logic & efficiently monitor with K8 Watch
+        max_retries = 5
+        backoff = 5  # seconds
+        pod = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                pod = self.client.create_namespaced_pod(
+                    namespace=DEFAULT_NAMESPACE, body=pod_body
+                )
+                break  # success
+            except client.ApiException as e:
+                # Retry on API-server throttling or transient errors
+                if e.status in (429, 500, 503):
+                    self.logger.warning(
+                        f"Transient Kubernetes error {e.status} while creating pod "
+                        f"'{pod_name}' (attempt {attempt}/{max_retries}); "
+                        f"retrying in {backoff}s"
+                    )
+                    time.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+                    continue
+                # Non-retryable error → propagate
+                self.logger.error(f"Failed to create Kubernetes pod '{pod_name}': {e}")
+                raise
+        else:
+            raise RuntimeError(
+                f"Exceeded retry limit ({max_retries}) while creating pod '{pod_name}'."
             )
+
+        try:
             rv = pod.metadata.resource_version
             w = watch.Watch()
             stream = w.stream(
