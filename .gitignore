@@ -1,5 +1,6 @@
 PKG-INFO
 requires.txt
+traj/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
