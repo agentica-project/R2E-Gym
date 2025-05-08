@@ -219,7 +219,7 @@ class DockerRuntime(ExecutionEnvironment):
             )
             raise not_found_error
 
-        env_vars = docker_kwargs.get("environment", {})
+        env_vars = {"PATH": DOCKER_PATH, **docker_kwargs.get("environment", {})}
         env_spec = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
         pod_body = {
             "apiVersion": "v1",
@@ -494,7 +494,8 @@ class DockerRuntime(ExecutionEnvironment):
         # Command includes 'timeout' and potentially 'cd <workdir> &&' from the main run method
         command = ""
         if workdir:
-            command += f"cd {workdir}; "
+            # Use '&&' so that failure to change directory aborts the command
+            command += f"cd {workdir} && "
         command += f"timeout {timeout} {code} {args}"
         full_command = ["/bin/sh", "-c", command]
         try:
@@ -512,32 +513,32 @@ class DockerRuntime(ExecutionEnvironment):
                     _preload_content=False,  # Important for streaming
                 )
                 # Read until the command exits, accumulating each channel
+                combined_chunks = []
                 stdout_chunks = []
                 stderr_chunks = []
                 while resp.is_open():
                     resp.update(timeout=1)  # wait for data
                     if resp.peek_stdout():
-                        stdout_chunks.append(resp.read_stdout())
+                        chunk = resp.read_stdout()
+                        stdout_chunks.append(chunk)
+                        combined_chunks.append(chunk)
                     if resp.peek_stderr():
-                        stderr_chunks.append(resp.read_stderr())
+                        chunk = resp.read_stderr()
+                        stderr_chunks.append(chunk)
+                        combined_chunks.append(chunk)
                 resp.close()
                 exit_code = resp.returncode
-                # Join into regular Python strings
-                stdout = "".join(stdout_chunks)
-                stderr = "".join(stderr_chunks)
-                return stdout, stderr, exit_code
+                combined_output = "".join(combined_chunks)
+                return combined_output, exit_code
 
             # Execute with an overall timeout slightly larger than the command's timeout
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(execute_command)
                 # Use timeout+10 as a buffer for k8s comms
-                stdout_result, stderr_result, exit_code = future.result(
-                    timeout=timeout + 5
-                )
+                combined_output, exit_code = future.result(timeout=timeout + 5)
 
-            # Process results - Combine stdout and stderr for the primary output message
-            # This matches docker's exec_run behavior when demux=False
-            output = stdout_result + stderr_result
+            # Process results - combined_output already preserves inter-leaved stdout/stderr
+            output = combined_output
 
             if exit_code is None:  # Should not happen if command finished
                 self.logger.error("Kubernetes exec: Exit code not found.")
@@ -560,7 +561,7 @@ class DockerRuntime(ExecutionEnvironment):
             return output, str(exit_code)
         except concurrent.futures.TimeoutError:
             self.logger.error(f"Kubernetes exec Overall Timeout: {timeout + 5}s")
-            return "The command took too long to execute (>{timeout}s)", "-1"
+            return f"The command took too long to execute (>{timeout}s)", "-1"
         except client.ApiException as e:
             self.logger.error(f"Kubernetes API Error during exec: {e}")
             return f"Error executing command in pod: {repr(e)}", "-1"
