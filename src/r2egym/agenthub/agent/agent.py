@@ -238,7 +238,7 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0
+        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True
     ) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None
@@ -269,7 +269,7 @@ class Agent:
         if using_local:
             litellm.api_key = None
 
-        if not self.use_fn_calling:
+        if not self.use_fn_calling and condense_history:
             # condense messages after first user message
             messages_ = self.condense_history(messages)
         else:
@@ -370,6 +370,7 @@ class Agent:
         temperature=0,
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
+        condense_history: bool = True,
     ):
 
         # get the start time
@@ -446,7 +447,13 @@ class Agent:
 
             # Query the LLM
             messages = copy.deepcopy(self.history)
-            response, llm_exec_time = self.model_query(messages, temperature)
+            try:
+                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history)
+            except Exception as e:
+                self.logger.error(f"Error querying LLM: {e}")
+                done = True
+                exit_reason = "llm_query_error"
+                break
 
             # Log total tokens in the response
             if hasattr(response, "usage"):
@@ -617,7 +624,7 @@ class Agent:
             max_llm_time=max_llm_time,
             max_exec_time=max_exec_time,
             max_total_time=max_total_time,
-            exit_reason=exit_reason,  # reason for exiting. must be one of the [agent, max_step_limit, agent_max_step_limit, abs_step_limit, token_limit, traj_time_limit]
+            exit_reason=exit_reason,  # reason for exiting. must be one of the [agent, max_step_limit, agent_max_step_limit, abs_step_limit, token_limit, traj_time_limit, llm_query_error]
             output_patch=output_patch,
         )
 
