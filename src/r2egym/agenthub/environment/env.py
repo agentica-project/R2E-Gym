@@ -156,6 +156,8 @@ class RepoEnv(gym.Env):
             obs = str(e)
             error = f"Exception occurred: {obs}"
             self.logger.error(error)
+            error_code = -1
+            bash_output = ""
         end_time = time.time()
         total_time = end_time - start_time
         return bash_output, error_code, total_time

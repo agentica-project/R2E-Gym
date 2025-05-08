@@ -219,8 +219,8 @@ class DockerRuntime(ExecutionEnvironment):
             )
             raise not_found_error
 
-        env_vars = docker_kwargs.get("environment", {})
-        env_vars.update({"PATH": DOCKER_PATH})
+        # env_vars = docker_kwargs.get("environment", {})
+        env_vars = {"PATH": DOCKER_PATH, **docker_kwargs.get("environment", {})}
         env_spec = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
         pod_body = {
             "apiVersion": "v1",
@@ -344,7 +344,7 @@ class DockerRuntime(ExecutionEnvironment):
             pod = self.client.read_namespaced_pod(
                 self.container_name, DEFAULT_NAMESPACE
             )
-            rv = pod.metadata.resource_version
+            #rv = pod.metadata.resource_version
 
             # 2) start the watch
             w = watch.Watch()
@@ -352,7 +352,7 @@ class DockerRuntime(ExecutionEnvironment):
                 self.client.list_namespaced_pod,
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={self.container_name}",
-                resource_version=rv,
+                #resource_version=rv,
                 timeout_seconds=60,
             )
 
