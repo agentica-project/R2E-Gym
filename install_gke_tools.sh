@@ -12,7 +12,8 @@ cd "$HOME/tmp"
 
 # Download Google Cloud SDK
 echo "[+] Downloading Google Cloud SDK..."
-curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-latest-linux-x86_64.tar.gz
+# curl -L -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-latest-linux-x86_64.tar.gz
+curl -L -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-latest-linux-x86_64.tar.gz
 
 # Extract the SDK
 echo "[+] Extracting Google Cloud SDK..."
