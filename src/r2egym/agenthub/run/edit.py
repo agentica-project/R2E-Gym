@@ -91,7 +91,7 @@ def runagent(
     llm_name="gpt-4o",
     temperature=0,
     use_fn_calling: bool = True,
-    backend: str = "kubernetes",
+    backend: str = "kubernetes", # "kubernetes" or "docker"
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -185,7 +185,7 @@ def runagent_multiple(
     skip_existing: bool = False,
     temperature: float = 0,
     use_fn_calling: bool = True,
-    backend: str = "kubernetes",
+    backend: str = "kubernetes", # "kubernetes" or "docker"
 ):
     """
     Runs the editagent agent on the first k Docker images.

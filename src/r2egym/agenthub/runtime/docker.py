@@ -219,6 +219,7 @@ class DockerRuntime(ExecutionEnvironment):
             )
             raise not_found_error
 
+        # env_vars = docker_kwargs.get("environment", {})
         env_vars = {"PATH": DOCKER_PATH, **docker_kwargs.get("environment", {})}
         env_spec = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
         pod_body = {
@@ -237,7 +238,7 @@ class DockerRuntime(ExecutionEnvironment):
                         "tty": True,
                         "env": env_spec,
                         "resources": {
-                            "requests": {"cpu": "0.5", "memory": "1Gi"},
+                            "requests": {"cpu": "1", "memory": "1Gi"},
                         },
                     }
                 ],
@@ -343,7 +344,7 @@ class DockerRuntime(ExecutionEnvironment):
             pod = self.client.read_namespaced_pod(
                 self.container_name, DEFAULT_NAMESPACE
             )
-            rv = pod.metadata.resource_version
+            #rv = pod.metadata.resource_version
 
             # 2) start the watch
             w = watch.Watch()
@@ -351,7 +352,7 @@ class DockerRuntime(ExecutionEnvironment):
                 self.client.list_namespaced_pod,
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={self.container_name}",
-                resource_version=rv,
+                #resource_version=rv,
                 timeout_seconds=60,
             )
 
@@ -715,8 +716,8 @@ class DockerRuntime(ExecutionEnvironment):
         output, _ = self.run(f"cat /{self.alt_path}/{rel_file_path}")
         return output
 
-    def run_tests(self) -> tuple[str, str]:
-        output, error_code = self.run(f"bash {self.alt_path}/run_tests.sh", timeout=300)
+    def run_tests(self, timeout: int = 300) -> tuple[str, str]:
+        output, error_code = self.run(f"bash {self.alt_path}/run_tests.sh", timeout=timeout)
         # Remove ANSI escape codes and \r characters
         output = re.sub(r"\x1b\[[0-9;]*m|\r", "", output)
         return output, error_code
@@ -838,7 +839,7 @@ class DockerRuntime(ExecutionEnvironment):
         else:
             return parse_log_fn(f"{self.repo_name}")(log_output)
 
-    def _calculate_reward_swebench(self, get_test_output=False, timeout=300) -> float:
+    def _calculate_reward_swebench(self, get_test_output=False, timeout: int = 300) -> float:
         # gt_test_patch = self.commit.get_patch(test_file=True,non_test_file=False)
         # self.apply_patch(gt_test_patch)
         out, _ = self.run(
@@ -858,9 +859,9 @@ class DockerRuntime(ExecutionEnvironment):
             return success, out
         return int(success)
 
-    def _calculate_reward_r2e(self, get_test_output=False) -> float:
+    def _calculate_reward_r2e(self, get_test_output=False, timeout: int = 300) -> float:
         # calculate reward based for r2e-edit dockers
-        output, error_code = self.run_tests()
+        output, error_code = self.run_tests(timeout=timeout)
         # print(output)x
         parse = self.parse_logs(output)
         parse = decolor_dict_keys(parse)
@@ -890,11 +891,11 @@ class DockerRuntime(ExecutionEnvironment):
             return reward, output
         return reward
 
-    def _calculate_reward(self, get_test_output=False) -> float:
+    def _calculate_reward(self, get_test_output=False, timeout: int = 300) -> float:
         if self.swebench_verified:
-            return self._calculate_reward_swebench(get_test_output=get_test_output)
+            return self._calculate_reward_swebench(get_test_output=get_test_output, timeout=timeout)
         else:
-            return self._calculate_reward_r2e(get_test_output=get_test_output)
+            return self._calculate_reward_r2e(get_test_output=get_test_output, timeout=timeout)
 
     def reset(self):
         self.stop_container()
