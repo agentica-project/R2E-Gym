@@ -27,7 +27,7 @@ def search_in_directory(search_term: str, directory: str = ".", python_only: boo
     directory = os.path.realpath(directory)
 
     if not os.path.isdir(directory):
-        print(f"Directory '{directory}' not found or not a directory.")
+        print("Directory '{}' not found or not a directory.".format(directory))
         sys.exit(1)
 
     matches = {}
@@ -60,28 +60,28 @@ def search_in_directory(search_term: str, directory: str = ".", python_only: boo
                 continue
 
     if not matches:
-        print(f'No matches found for "{search_term}" in {directory}')
+        print('No matches found for "{}" in {}'.format(search_term, directory))
         sys.exit(0)
 
     # Summarize
     num_matches = sum(matches.values())
     if num_files_matched > 100:
         print(
-            f'More than {num_files_matched} files matched for "{search_term}" in {directory}. '
-            "Please narrow your search."
+            'More than {} files matched for "{}" in {}. '
+            "Please narrow your search.".format(num_files_matched, search_term, directory)
         )
         sys.exit(0)
 
-    print(f'Found {num_matches} matches for "{search_term}" in {directory}:')
+    print('Found {} matches for "{}" in {}:'.format(num_matches, search_term, directory))
 
     # Print matched files
     for filepath, count in matches.items():
         relative_path = os.path.relpath(filepath, start=os.getcwd())
         if not relative_path.startswith("./"):
             relative_path = "./" + relative_path
-        print(f"{relative_path} ({count} matches)")
+        print("{} ({} matches)".format(relative_path, count))
 
-    print(f'End of matches for "{search_term}" in {directory}')
+    print('End of matches for "{}" in {}'.format(search_term, directory))
 
 def search_in_directory_old(search_term: str, directory: str = ".", python_only=False):
     """
@@ -91,7 +91,7 @@ def search_in_directory_old(search_term: str, directory: str = ".", python_only=
     directory = os.path.realpath(directory)
 
     if not os.path.isdir(directory):
-        print(f"Directory '{directory}' not found or not a directory.")
+        print("Directory '{}' not found or not a directory.".format(directory))
         sys.exit(1)
 
     matches = {}
@@ -119,19 +119,19 @@ def search_in_directory_old(search_term: str, directory: str = ".", python_only=
                 continue
 
     if not matches:
-        print(f'No matches found for "{search_term}" in {directory}')
+        print('No matches found for "{}" in {}'.format(search_term, directory))
         sys.exit(0)
 
     # Summarize
     num_matches = sum(matches.values())
     if num_files_matched > 100:
         print(
-            f'More than {num_files_matched} files matched for "{search_term}" in {directory}. '
-            "Please narrow your search."
+            'More than {} files matched for "{}" in {}. '
+            "Please narrow your search.".format(num_files_matched, search_term, directory)
         )
         sys.exit(0)
 
-    print(f'Found {num_matches} matches for "{search_term}" in {directory}:')
+    print('Found {} matches for "{}" in {}:'.format(num_matches, search_term, directory))
 
     # Print matched files
     for filepath, count in matches.items():
@@ -139,9 +139,9 @@ def search_in_directory_old(search_term: str, directory: str = ".", python_only=
         relative_path = os.path.relpath(filepath, start=os.getcwd())
         if not relative_path.startswith("./"):
             relative_path = "./" + relative_path
-        print(f"{relative_path} ({count} matches)")
+        print("{} ({} matches)".format(relative_path, count))
 
-    print(f'End of matches for "{search_term}" in {directory}')
+    print('End of matches for "{}" in {}'.format(search_term, directory))
 
 
 def search_in_file(search_term: str, filepath: str):
@@ -152,7 +152,7 @@ def search_in_file(search_term: str, filepath: str):
     filepath = os.path.realpath(filepath)
 
     if not os.path.isfile(filepath):
-        print(f"File '{filepath}' not found or is not a file.")
+        print("File '{}' not found or is not a file.".format(filepath))
         sys.exit(1)
 
     try:
@@ -174,15 +174,15 @@ def search_in_file(search_term: str, filepath: str):
     if result.returncode != 0:
         # grep exit code = 1 means "no matches", other non-zero exit code is a real error
         if result.returncode == 1:
-            print(f'No matches found for "{search_term}" in {filepath}')
+            print('No matches found for "{}" in {}'.format(search_term, filepath))
             sys.exit(0)
         else:
             # Something else went wrong
-            print(f"Error executing grep:\n{result.stderr}")
+            print("Error executing grep:\n{}".format(result.stderr))
             sys.exit(result.returncode)
 
     # Print the grep output directly
-    print(f'Matches for "{search_term}" in {filepath}:')
+    print('Matches for "{}" in {}:'.format(search_term, filepath))
     # Depending on the fallback, the output is in result.stdout
     print(result.stdout.strip())
     # try:

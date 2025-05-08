@@ -41,15 +41,15 @@ def main():
     first_token = args.cmd.strip().split()[0]
     if first_token in BLOCKED_BASH_COMMANDS:
         print(
-            f"Bash command '{first_token}' is not allowed. "
-            "Please use a different command or tool."
+            "Bash command '{}' is not allowed. "
+            "Please use a different command or tool.".format(first_token)
         )
         sys.exit(1)
 
     result = run_command(args.cmd)
 
     if result.returncode != 0:
-        print(f"Error executing command:\n")
+        print("Error executing command:\n")
         print("[STDOUT]\n")
         print(result.stdout.strip(), "\n")
         print("[STDERR]\n")

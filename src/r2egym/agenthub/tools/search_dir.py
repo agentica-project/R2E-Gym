@@ -29,7 +29,7 @@ def main():
         search_term = args[0]
         directory = args[1]
         if not os.path.isdir(directory):
-            print(f"Directory {directory} not found")
+            print("Directory {} not found".format(directory))
             sys.exit(1)
     else:
         print("Usage: search_dir <search_term> [<dir>]")
@@ -59,27 +59,29 @@ def main():
                 continue  # Skip files that can't be read
 
     if not matches:
-        print(f'No matches found for "{search_term}" in {directory}')
+        print('No matches found for "{}" in {}'.format(search_term, directory))
         sys.exit(0)
 
     num_matches = sum(matches.values())
 
     if num_files_matched > 100:
         print(
-            f'More than {num_files_matched} files matched for "{search_term}" in {directory}. Please narrow your search.'
+            'More than {} files matched for "{}" in {}. Please narrow your search.'.format(
+                num_files_matched, search_term, directory
+            )
         )
         sys.exit(0)
 
-    print(f'Found {num_matches} matches for "{search_term}" in {directory}:')
+    print('Found {} matches for "{}" in {}:'.format(num_matches, search_term, directory))
 
     for filepath, count in matches.items():
         # Replace leading path with './' for consistency
         relative_path = os.path.relpath(filepath, start=os.getcwd())
         if not relative_path.startswith("./"):
             relative_path = "./" + relative_path
-        print(f"{relative_path} ({count} matches)")
+        print("{} ({} matches)".format(relative_path, count))
 
-    print(f'End of matches for "{search_term}" in {directory}')
+    print('End of matches for "{}" in {}'.format(search_term, directory))
 
 
 if __name__ == "__main__":

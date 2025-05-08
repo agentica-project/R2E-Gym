@@ -22,7 +22,7 @@ def submit(result: str = ""):
     """
     print("<<<Finished>>>")
     # if result:
-    #     print(f"Final result submitted: {result}")
+    #     print("Final result submitted: {}".format(result))
     # else:
     #     print("No result provided.")
     # You can add more logic here as needed
@@ -42,7 +42,7 @@ def main():
     if args.command == "submit":
         submit(args.result)
     else:
-        print(f"Unknown command '{args.command}'. Only `submit` is supported.")
+        print("Unknown command '{}'. Only `submit` is supported.".format(args.command))
         sys.exit(1)
 
 
