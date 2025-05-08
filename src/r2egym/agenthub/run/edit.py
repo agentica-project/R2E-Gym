@@ -91,6 +91,7 @@ def runagent(
     llm_name="gpt-4o",
     temperature=0,
     use_fn_calling: bool = True,
+    backend: str = "kubernetes", # "kubernetes" or "docker"
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -119,7 +120,7 @@ def runagent(
     env_args = EnvArgs(ds=ds)
 
     # Initialize the RepoEnv
-    env = RepoEnv(env_args, logger=logger, backend="kubernetes")
+    env = RepoEnv(env_args, logger=logger, backend=backend)
     # set agent args
     if use_fn_calling:
         agent_args = AgentArgs.from_yaml(
@@ -184,6 +185,7 @@ def runagent_multiple(
     skip_existing: bool = False,
     temperature: float = 0,
     use_fn_calling: bool = True,
+    backend: str = "kubernetes", # "kubernetes" or "docker"
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -278,6 +280,7 @@ def runagent_multiple(
                 llm_name=llm_name,
                 temperature=temperature,
                 use_fn_calling=use_fn_calling,
+                backend=backend,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
