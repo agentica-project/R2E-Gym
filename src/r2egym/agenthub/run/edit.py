@@ -64,6 +64,7 @@ def run_agent_with_restarts(
     temperature=0.0,
     max_steps_absolute=50,
     use_fn_calling: bool = True,
+    condense_history: bool = True,
 ):
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
@@ -76,6 +77,7 @@ def run_agent_with_restarts(
             temperature=temperature,
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
+            condense_history=condense_history,
         )
         # remove reproduce.py
         # env.runtime.run('rm reproduce_issue.py')
@@ -92,6 +94,7 @@ def runagent(
     temperature=0,
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
+    condense_history: bool = True,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -145,6 +148,7 @@ def runagent(
             temperature=temperature,
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
+            condense_history=condense_history,
         )
     except Exception as e:
         logger.error(
@@ -186,6 +190,7 @@ def runagent_multiple(
     temperature: float = 0,
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
+    condense_history: bool = True,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -281,6 +286,7 @@ def runagent_multiple(
                 temperature=temperature,
                 use_fn_calling=use_fn_calling,
                 backend=backend,
+                condense_history=condense_history,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
