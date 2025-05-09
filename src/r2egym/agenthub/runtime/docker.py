@@ -219,7 +219,6 @@ class DockerRuntime(ExecutionEnvironment):
             )
             raise not_found_error
 
-        # env_vars = docker_kwargs.get("environment", {})
         env_vars = {"PATH": DOCKER_PATH, **docker_kwargs.get("environment", {})}
         env_spec = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
         pod_body = {
