@@ -147,11 +147,21 @@ class Agent:
         total_tokens = self._count_tokens(messages_)
         self.logger.warning(
             f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
+        )     
         if total_tokens <= MAX_TOKENS:
+            logger.warning("No condensing needed. Total tokens are within the limit.")
+            return messages_
+        # else:
+        #     raise ValueError(f"Total tokens: {total_tokens} exceed the limit: {MAX_TOKENS}") 
+        # 1) simple pass: keep only last 5 user observations (after the first)
+        user_idxs = [i for i, m in enumerate(msgs) if m["role"] == "user"][1:]
+        for idx in user_idxs[:-5]:
+            messages_[idx]["content"] = "<Observation condensed for saving context>"        
+        if total_tokens <= MAX_TOKENS:
+            logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
             return messages_
 
-        # Identify user messages (role='user'), skipping the very first user message
+        # 2) Identify user messages (role='user'), skipping the very first user message
         user_msg_indexes = [
             i for i, msg in enumerate(messages_) if msg["role"] == "user"
         ]
@@ -170,9 +180,8 @@ class Agent:
                 break
 
         self.logger.warning(
-            f"Condensed history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
+            f"Condensed history (both) to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
         )
-
         return messages_
 
     def condense_history_old(
@@ -334,6 +343,7 @@ class Agent:
 
         # convert action to Action object
         action = Action.from_string(action)
+        # action, original_xml_str = Action.from_swesmith_xml_string(action)
 
         return thought, action
 
@@ -371,6 +381,7 @@ class Agent:
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
         condense_history: bool = True,
+        swesmith_wrapper: bool = False,
     ):
 
         # get the start time
@@ -406,6 +417,7 @@ class Agent:
         user_prompt = self.instance_prompt_template.format(
             problem_statement=problem_statement,
             gt_patch=gt_patch,
+            working_dir='/testbed',
             test_patch_hint=metadata.get("test_patch_hint", ""),
             candidate_patch=metadata.get("candidate_patch", ""),
             candidate_patch_correctness=(
@@ -485,7 +497,11 @@ class Agent:
             if self.use_fn_calling:
                 thought, action = self.custom_parser(response)
             else:
-                thought, action = self.parse_response(assistant_message)
+                thought, action_original = self.parse_response(assistant_message)
+                if swesmith_wrapper:
+                    action = action_original.from_swesmith_action()
+                else:
+                    action = action_original
 
             action_str = action.to_xml_string()
             self.logger.info(f"THOUGHT:\n{thought}\n")
@@ -535,7 +551,8 @@ class Agent:
                     self.history.append({"role": "user", "content": str(obs)})
             else:
                 self.logger.warning("logging fn response as a user message")
-                assistant_message = f"{thought}\n\n{action.to_xml_string()}"
+                assistant_message = f"{thought}\n\n{action_original.to_xml_string()}"
+                # assistant_message = f"{thought}\n\n{original_xml_str}"
                 self.history.append({"role": "assistant", "content": assistant_message})
                 self.history.append({"role": "user", "content": str(obs)})
 
