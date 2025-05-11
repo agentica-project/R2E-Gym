@@ -65,6 +65,7 @@ def run_agent_with_restarts(
     max_steps_absolute=50,
     use_fn_calling: bool = True,
     condense_history: bool = True,
+    swesmith_wrapper: bool = False,
 ):
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
@@ -78,6 +79,7 @@ def run_agent_with_restarts(
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
             condense_history=condense_history,
+            swesmith_wrapper=swesmith_wrapper,
         )
         # remove reproduce.py
         # env.runtime.run('rm reproduce_issue.py')
@@ -95,6 +97,7 @@ def runagent(
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
     condense_history: bool = True,
+    swesmith_wrapper: bool = False,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -130,9 +133,17 @@ def runagent(
             Path("./src/r2egym/agenthub/config/edit_fn_calling.yaml")
         )
     else:
-        agent_args = AgentArgs.from_yaml(
-            Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
-        )
+        # agent_args = AgentArgs.from_yaml(
+        #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
+        # )
+        if swesmith_wrapper:
+            agent_args = AgentArgs.from_yaml(
+                Path("./src/r2egym/agenthub/config/edit_swesmith.yaml")
+            )
+        else:
+            agent_args = AgentArgs.from_yaml(
+                Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
+            )
     agent_args.llm_name = llm_name
 
     # Initialize the agent
@@ -149,6 +160,7 @@ def runagent(
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
             condense_history=condense_history,
+            swesmith_wrapper=swesmith_wrapper,
         )
     except Exception as e:
         logger.error(
@@ -191,6 +203,7 @@ def runagent_multiple(
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
     condense_history: bool = True,
+    swesmith_wrapper: bool = False,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -287,6 +300,7 @@ def runagent_multiple(
                 use_fn_calling=use_fn_calling,
                 backend=backend,
                 condense_history=condense_history,
+                swesmith_wrapper=swesmith_wrapper,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
