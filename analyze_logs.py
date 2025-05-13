@@ -108,6 +108,12 @@ def analyze_log(
     print("Exit reasons:")
     print(pd.Series(exit_reasons).value_counts())
 
+    # add pd percentile results for reward_calc_time
+    # get all reward_calc_time for all entries
+    reward_calc_times = [t.reward_calc_time for t in trajectories]
+    print(f"\nReward calc time:")
+    print(pd.Series(reward_calc_times).describe(percentiles=[0.05, 0.5, 0.75, 0.8, 0.85, 0.9, 0.95]))
+
     # For trajectories with exit_reason as "traj_time_limit",
     # compute the total_time_traj from the last trajectory step,
     # and the sum of llm_exec_time and env_exec_time across all steps.
