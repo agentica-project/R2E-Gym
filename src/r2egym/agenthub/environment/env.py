@@ -40,7 +40,9 @@ class RepoEnv(gym.Env):
             self.logger = logger
 
         if not verbose:
-            self.logger.setLevel(logging.WARNING)
+            self.logger.setLevel(logging.CRITICAL)  # Disable all possible logging
+            #logging.getLogger().setLevel(logging.CRITICAL)  # Disable root logger
+            #logging.disable(logging.CRITICAL)  # Disable all logging
 
         self.runtime = DockerRuntime(
             ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=backend

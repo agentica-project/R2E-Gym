@@ -58,6 +58,8 @@ def parse_log_fn(repo_name: str):
         return parse_log_pytest
     if repo_name == "orange3":
         return parse_log_pytest
+    else:
+        return parse_log_pytest
 
     raise ValueError(f"Parser for {repo_name} not implemented")
 

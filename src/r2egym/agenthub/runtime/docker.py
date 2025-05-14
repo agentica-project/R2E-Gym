@@ -679,22 +679,38 @@ class DockerRuntime(ExecutionEnvironment):
             tar.add(src_path, arcname=os.path.basename(dest_path))
         tar_stream.seek(0)
 
-        # Exec into pod to untar into the destination directory
-        exec_command = ["tar", "xmf", "-", "-C", dest_dir]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            self.container_name,
-            DEFAULT_NAMESPACE,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-        # Stream the tar binary data into the pod
-        resp.write_stdin(tar_stream.read())
-        resp.close()
+        # Retry with exponential backoff
+        max_retries = 5
+        retry_delay = 5  # Initial delay in seconds
+        for attempt in range(max_retries):
+            try:
+                # Exec into pod to untar into the destination directory
+                exec_command = ["tar", "xmf", "-", "-C", dest_dir]
+                resp = stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    self.container_name,
+                    DEFAULT_NAMESPACE,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                )
+                # Stream the tar binary data into the pod
+                resp.write_stdin(tar_stream.read())
+                resp.close()
+                break  # Success, exit the retry loop
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"Copy to container failed (attempt {attempt+1}/{max_retries}): {str(e)}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    retry_delay = min(retry_delay, 60)
+                    tar_stream.seek(0)  # Reset the stream for the next attempt
+                else:
+                    self.logger.error(f"Copy to container failed after {max_retries} attempts: {str(e)}")
+                    raise
 
     def copy_to_container(self, src_path: str, dest_path: str):
         """
@@ -881,6 +897,11 @@ class DockerRuntime(ExecutionEnvironment):
             # If ANY mismatch, reward = 0.0, else = 1.0
             match = True
             for k in parse.keys():
+                if not k:
+                    continue
+                if k not in expected:
+                    match = False
+                    break
                 if parse[k] != expected[k]:
                     match = False
                     break
