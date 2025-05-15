@@ -243,6 +243,20 @@ class DockerRuntime(ExecutionEnvironment):
                 ],
                 "imagePullSecrets": [{"name": "dockerhub-pro"}],
                 "nodeSelector": {"karpenter.sh/nodepool": "bigcpu-standby"},
+                "tolerations": [
+                    {
+                        "key": "node.kubernetes.io/disk-pressure",
+                        "operator": "Exists",
+                        "effect": "NoSchedule",
+                        "tolerationSeconds": 10800,
+                    },
+                    {
+                        "key": "node.kubernetes.io/disk-pressure",
+                        "operator": "Exists",
+                        "effect": "NoExecute",
+                        "tolerationSeconds": 10800
+                    }
+                ],
             },
         }
 
@@ -283,7 +297,7 @@ class DockerRuntime(ExecutionEnvironment):
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={pod_name}",
                 resource_version=rv,
-                timeout_seconds=3600,  # This will eventually lead to error, if pod is not running long enough.
+                timeout_seconds=600,  # 10 minutes timeout instead of 1 hour
             )
             for event in stream:
                 obj = event["object"]
@@ -304,6 +318,23 @@ class DockerRuntime(ExecutionEnvironment):
                 f"Failed to create Kubernetes pod '{pod_name}': {create_error}"
             )
             raise create_error
+        except Exception as e:
+            # Handle watch timeout or other errors
+            self.logger.error(f"Error waiting for pod to start: {e}")
+            # Check pod status directly as fallback
+            try:
+                pod_status = self.client.read_namespaced_pod(
+                    name=pod_name, namespace=DEFAULT_NAMESPACE
+                )
+                if pod_status.status.phase == "Running":
+                    self.logger.info(f"Pod '{pod_name}' is running (verified after watch error)")
+                    self.container = pod_status
+                else:
+                    self.logger.warning(f"Pod '{pod_name}' is in state {pod_status.status.phase}")
+                    raise RuntimeError(f"Pod '{pod_name}' failed to reach Running state: {pod_status.status.phase}")
+            except Exception as status_error:
+                self.logger.error(f"Failed to check pod status after watch error: {status_error}")
+                raise RuntimeError(f"Failed to verify pod status: {status_error}")
 
     def start_container(
         self, docker_image: str, command: str, ctr_name: str, **docker_kwargs
@@ -352,7 +383,7 @@ class DockerRuntime(ExecutionEnvironment):
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={self.container_name}",
                 #resource_version=rv,
-                timeout_seconds=60,
+                timeout_seconds=60,  # 1 minute timeout instead of indefinite
             )
 
             # 3) delete the pod (now your watch is listening)
@@ -362,12 +393,41 @@ class DockerRuntime(ExecutionEnvironment):
                 body=kubernetes.client.V1DeleteOptions(grace_period_seconds=0),
             )
 
-            # 4) consume events until you see DELETED
+            # 4) consume events until you see DELETED or timeout
+            deletion_confirmed = False
             for event in stream:
                 if event["type"] == "DELETED":
                     self.logger.info(f"Kubernetes pod {self.container_name} deleted.")
+                    deletion_confirmed = True
                     w.stop()
                     break
+            
+            # If watch times out without seeing deletion, verify pod is gone
+            if not deletion_confirmed:
+                try:
+                    # Check if pod still exists
+                    self.client.read_namespaced_pod(
+                        name=self.container_name, namespace=DEFAULT_NAMESPACE
+                    )
+                    self.logger.warning(
+                        f"Watch timed out but pod {self.container_name} still exists. Forcing deletion."
+                    )
+                    # Try deleting again with force
+                    self.client.delete_namespaced_pod(
+                        name=self.container_name,
+                        namespace=DEFAULT_NAMESPACE,
+                        body=kubernetes.client.V1DeleteOptions(
+                            grace_period_seconds=0,
+                            force=True
+                        ),
+                    )
+                except kubernetes.client.rest.ApiException as e:
+                    if e.status == 404:
+                        # Pod is gone, which is what we want
+                        self.logger.info(f"Confirmed pod {self.container_name} is deleted.")
+                    else:
+                        # Some other API error
+                        self.logger.error(f"Error checking pod status after timeout: {e}")
         except kubernetes.client.rest.ApiException as e:
             if e.status == 404:
                 # Pod already deleted, ignore
