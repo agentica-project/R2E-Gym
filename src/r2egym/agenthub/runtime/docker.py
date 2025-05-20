@@ -244,12 +244,12 @@ class DockerRuntime(ExecutionEnvironment):
                 "imagePullSecrets": [{"name": "dockerhub-pro"}],
                 "nodeSelector": {"karpenter.sh/nodepool": "bigcpu-standby"},
                 "tolerations": [
-                    {
-                        "key": "node.kubernetes.io/disk-pressure",
-                        "operator": "Exists",
-                        "effect": "NoSchedule",
-                        "tolerationSeconds": 10800,
-                    },
+                    # {
+                    #     "key": "node.kubernetes.io/disk-pressure",
+                    #     "operator": "Exists",
+                    #     "effect": "NoSchedule",
+                    #     "tolerationSeconds": 10800,
+                    # },
                     {
                         "key": "node.kubernetes.io/disk-pressure",
                         "operator": "Exists",
