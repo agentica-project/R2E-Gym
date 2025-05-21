@@ -156,7 +156,7 @@ class Action:
         Converts this action into R2E format from SWESmith format.
         """
         # create a copy of the action
-        action = self.copy()
+        action = Action(self.function_name, self.parameters)
         assert action.function_name in ['bash', 'submit', 'str_replace_editor']
         
         # Map SWESmith actions to r2e-gym actions
