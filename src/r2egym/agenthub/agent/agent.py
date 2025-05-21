@@ -48,6 +48,90 @@ class AgentArgs:
 
 
 ##############################################################################
+# ChatTemplateParser for Qwen models
+##############################################################################
+class ChatTemplateParser:
+    def __init__(self):
+        pass
+
+    def parse(self, messages, add_generation_prompt=False, **kwargs):
+        return messages
+
+class QwenChatTemplateParser(ChatTemplateParser):
+    def __init__(self, enable_thinking=True):
+        super().__init__()
+        self.bos_token = "<|im_start|>"
+        self.eos_token = "<|im_end|>"
+        self.system_token = '<|im_start|>system\n'
+        self.user_token = '<|im_start|>user\n'
+        self.assistant_token = '<|im_start|>assistant\n'
+        if enable_thinking:
+            self.assistant_token += '<think>\n\n</think>\n\n'
+        self.eot_token = '<|im_end|>\n'
+        self.generation_prompt = self.assistant_token
+        
+        self.tool_start_token = "\n<tool_call>\n"
+        self.tool_end_token = "\n</tool_call>"
+        
+        self.tool_response_start_token = '<tool_response>\n'
+        self.tool_response_end_token = '\n</tool_response>'
+
+    def parse(self, messages, add_generation_prompt=False):
+        result = ''
+
+        # if the first message is not a system message, add the system message
+        if messages and messages[0]["role"] != "system":
+            result += self.system_token + "You are Qwen, created by Alibaba Cloud. You are a helpful assistant." + self.eot_token
+
+        for message in messages:
+            if message["role"] == "system":
+                result += self.parse_system(message)
+            elif message["role"] == "user":
+                result += self.parse_user(message)
+            elif message["role"] == "assistant":
+                result += self.parse_assistant(message)
+            elif message['role'] == 'tool':
+                result += self.parse_tool(message)
+            else:
+                raise NotImplementedError(f"Unsupported message role: {message['role']}")
+
+        if add_generation_prompt:
+            result += self.generation_prompt
+        return result
+
+    def parse_system(self, message):
+        return self.system_token + message['content'] + self.eot_token
+    
+    def parse_user(self, message):
+        return self.user_token + message['content'] + self.eot_token
+    
+    def parse_assistant(self, message):
+        result = self.assistant_token + message['content']
+        if 'tool_calls' in message:
+            for tool_call in message['tool_calls']:
+                tool_json = {
+                    "name": tool_call['function']['name'],
+                    "arguments": tool_call['function']['arguments']
+                }
+                arguments = tool_call['function']['arguments']
+                if isinstance(arguments, str):
+                    try:
+                        # If arguments is already a JSON string, parse it to avoid double encoding
+                        parsed_args = json.loads(arguments)
+                        tool_json["arguments"] = parsed_args
+                    except json.JSONDecodeError:
+                        # If not valid JSON, keep as is
+                        pass
+                
+                result += self.tool_start_token + json.dumps(tool_json, ensure_ascii=False) + self.tool_end_token
+        result += self.eot_token
+        return result
+    
+    def parse_tool(self, message):
+        return self.user_token + self.tool_response_start_token + message['content'] + self.tool_response_end_token + self.eot_token
+
+
+##############################################################################
 # Agent Class
 ##############################################################################
 class Agent:
@@ -283,6 +367,9 @@ class Agent:
         else:
             messages_ = copy.deepcopy(messages)
 
+        # For qwen models, use the QwenChatTemplateParser
+        is_qwen_model = "qwen3" in self.llm_name.lower()
+        
         # query the model with retries
         while retries < self.max_retries:
             try:
@@ -294,15 +381,40 @@ class Agent:
                     kwargs = {}
                 if "o3" not in self.llm_name and "o4" not in self.llm_name:
                     kwargs["temperature"] = temperature
-                response = litellm.completion(
-                    model=self.llm_name,
-                    tools=tools,
-                    messages=messages_,
-                    timeout=self.llm_timeout,
-                    api_base=self.llm_base_url,
-                    # max_tokens=3000,
-                    **kwargs,
-                )
+                
+                # For Qwen models, convert messages to a formatted prompt string
+                if is_qwen_model and not self.use_fn_calling:
+                    self.logger.warning(f"Using QwenChatTemplateParser for {self.llm_name}")
+                    parser = QwenChatTemplateParser(enable_thinking="qwen3" in self.llm_name.lower())
+                    formatted_prompt = parser.parse(messages_, add_generation_prompt=True)
+                    
+                    # Use text_completion for Qwen models with appropriate parameters
+                    # Note: text_completion doesn't support tool_choice and other chat-specific parameters
+                    text_completion_kwargs = {
+                        "timeout": self.llm_timeout,
+                        "api_base": self.llm_base_url,
+                        "max_tokens": 3000,
+                        "temperature": temperature,
+                    }
+                    
+                    response = litellm.text_completion(
+                        model=self.llm_name,
+                        prompt=formatted_prompt,
+                        **text_completion_kwargs,
+                    )
+                else:
+                    # For other models, use the regular completion endpoint
+                    response = litellm.completion(
+                        model=self.llm_name,
+                        tools=tools,
+                        messages=messages_,
+                        timeout=self.llm_timeout,
+                        api_base=self.llm_base_url,
+                        enable_thinking=True,
+                        max_tokens=3000,
+                        **kwargs,
+                    )
+                
                 self.logger.warning(f"Querying LLM complete")
                 break
             except Exception as e:
@@ -347,6 +459,14 @@ class Agent:
         return thought, action
 
     def custom_parser(self, response):
+        # Handle text_completion responses for Qwen models
+        if hasattr(response, 'choices') and hasattr(response.choices[0], 'text'):
+            # This is a text_completion response
+            text = response.choices[0].text
+            # Parse the response using the same regex pattern
+            return self.parse_response(text)
+        
+        # Handle chat completion responses
         thought = response.choices[0].message.content
         if not thought:
             thought = ""
@@ -488,17 +608,25 @@ class Agent:
 
             # Parse the LLM response to get 'thought' and 'action'
             self.response = response  # for debugging
-            assistant_message = response.choices[0].message.content
+            
+            # Handle both text_completion and chat completion responses
+            is_text_completion = hasattr(response, 'choices') and hasattr(response.choices[0], 'text')
+            
+            if is_text_completion:
+                # For text_completion (used with Qwen)
+                assistant_message = response.choices[0].text
+            else:
+                # For chat completion
+                assistant_message = response.choices[0].message.content
+                
             self.logger.info(f"Assistant's message:\n{assistant_message}\n")
 
             if self.use_fn_calling:
                 thought, action = self.custom_parser(response)
             else:
-                thought, action_original = self.parse_response(assistant_message)
+                thought, action = self.parse_response(assistant_message)
                 if swesmith_wrapper:
-                    action = action_original.from_swesmith_action()
-                else:
-                    action = action_original
+                    action = action.from_swesmith_action()
 
             action_str = action.to_xml_string()
             self.logger.info(f"THOUGHT:\n{thought}\n")
@@ -517,6 +645,7 @@ class Agent:
             total_time_traj += total_step_time
             step_count += 1  # Increment the step count
 
+            # Add to history based on response type
             if self.use_fn_calling:
                 assistant_response = response.choices[0].message.dict()
                 if assistant_response.get("tool_calls", None):
@@ -548,8 +677,8 @@ class Agent:
                     self.history.append({"role": "user", "content": str(obs)})
             else:
                 self.logger.warning("logging fn response as a user message")
-                assistant_message = f"{thought}\n\n{action_original.to_xml_string()}"
-                # assistant_message = f"{thought}\n\n{original_xml_str}"
+                # For both text_completion and regular responses, use the same action object
+                assistant_message = f"{thought}\n\n{action.to_xml_string()}"
                 self.history.append({"role": "assistant", "content": assistant_message})
                 self.history.append({"role": "user", "content": str(obs)})
 
