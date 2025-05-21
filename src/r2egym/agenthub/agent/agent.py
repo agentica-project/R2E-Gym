@@ -474,6 +474,8 @@ class Agent:
                 completion_tokens = -1
                 prompt_tokens = -1
                 total_tokens = -1
+                if not condense_history:
+                    total_tokens =  self._count_tokens(messages)
                 self.logger.warning(
                     "No token usage information available in the response."
                 )
