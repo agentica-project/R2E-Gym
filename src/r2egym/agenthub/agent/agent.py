@@ -147,18 +147,10 @@ class Agent:
         total_tokens = self._count_tokens(messages_)
         self.logger.warning(
             f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )     
+        )
         if total_tokens <= MAX_TOKENS:
             logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
-               
-        # # 1) simple pass: keep only last 5 user observations (after the first)
-        # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
-        # for idx in user_idxs[:-5]:
-        #     messages_[idx]["content"] = "<Observation condensed for saving context>"        
-        # if total_tokens <= MAX_TOKENS:
-        #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
-        #     return messages_
 
         # 2) Identify user messages (role='user'), skipping the very first user message
         user_msg_indexes = [
