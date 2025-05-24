@@ -139,7 +139,7 @@ class Agent:
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = 28000
+        MAX_TOKENS = 65536 # 32768
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -151,6 +151,8 @@ class Agent:
         if total_tokens <= MAX_TOKENS:
             logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
+        else:
+            raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
                
         # # 1) simple pass: keep only last 5 user observations (after the first)
         # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
@@ -370,7 +372,7 @@ class Agent:
         max_steps: int = 10,
         max_steps_absolute: int = 50,
         # token limits
-        max_token_limit: int = 32768,  # 32k tokens
+        max_token_limit: int = 65536,  # 64k tokens
         # time limits
         max_exec_time: int = 90,  # 5 mins per env execution
         max_total_time: int = 1200,  # 20 minutes overall agent run limit
