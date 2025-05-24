@@ -219,7 +219,6 @@ class DockerRuntime(ExecutionEnvironment):
             )
             raise not_found_error
 
-        # env_vars = docker_kwargs.get("environment", {})
         env_vars = {"PATH": DOCKER_PATH, **docker_kwargs.get("environment", {})}
         env_spec = [{"name": k, "value": str(v)} for k, v in env_vars.items()]
         pod_body = {
@@ -244,6 +243,20 @@ class DockerRuntime(ExecutionEnvironment):
                 ],
                 "imagePullSecrets": [{"name": "dockerhub-pro"}],
                 "nodeSelector": {"karpenter.sh/nodepool": "bigcpu-standby"},
+                "tolerations": [
+                    # {
+                    #     "key": "node.kubernetes.io/disk-pressure",
+                    #     "operator": "Exists",
+                    #     "effect": "NoSchedule",
+                    #     "tolerationSeconds": 10800,
+                    # },
+                    {
+                        "key": "node.kubernetes.io/disk-pressure",
+                        "operator": "Exists",
+                        "effect": "NoExecute",
+                        "tolerationSeconds": 10800
+                    }
+                ],
             },
         }
 
@@ -284,7 +297,7 @@ class DockerRuntime(ExecutionEnvironment):
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={pod_name}",
                 resource_version=rv,
-                timeout_seconds=3600,  # This will eventually lead to error, if pod is not running long enough.
+                timeout_seconds=600,  # 10 minutes timeout instead of 1 hour
             )
             for event in stream:
                 obj = event["object"]
@@ -305,6 +318,23 @@ class DockerRuntime(ExecutionEnvironment):
                 f"Failed to create Kubernetes pod '{pod_name}': {create_error}"
             )
             raise create_error
+        except Exception as e:
+            # Handle watch timeout or other errors
+            self.logger.error(f"Error waiting for pod to start: {e}")
+            # Check pod status directly as fallback
+            try:
+                pod_status = self.client.read_namespaced_pod(
+                    name=pod_name, namespace=DEFAULT_NAMESPACE
+                )
+                if pod_status.status.phase == "Running":
+                    self.logger.info(f"Pod '{pod_name}' is running (verified after watch error)")
+                    self.container = pod_status
+                else:
+                    self.logger.warning(f"Pod '{pod_name}' is in state {pod_status.status.phase}")
+                    raise RuntimeError(f"Pod '{pod_name}' failed to reach Running state: {pod_status.status.phase}")
+            except Exception as status_error:
+                self.logger.error(f"Failed to check pod status after watch error: {status_error}")
+                raise RuntimeError(f"Failed to verify pod status: {status_error}")
 
     def start_container(
         self, docker_image: str, command: str, ctr_name: str, **docker_kwargs
@@ -353,7 +383,7 @@ class DockerRuntime(ExecutionEnvironment):
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={self.container_name}",
                 #resource_version=rv,
-                timeout_seconds=60,
+                timeout_seconds=60,  # 1 minute timeout instead of indefinite
             )
 
             # 3) delete the pod (now your watch is listening)
@@ -363,12 +393,41 @@ class DockerRuntime(ExecutionEnvironment):
                 body=kubernetes.client.V1DeleteOptions(grace_period_seconds=0),
             )
 
-            # 4) consume events until you see DELETED
+            # 4) consume events until you see DELETED or timeout
+            deletion_confirmed = False
             for event in stream:
                 if event["type"] == "DELETED":
                     self.logger.info(f"Kubernetes pod {self.container_name} deleted.")
+                    deletion_confirmed = True
                     w.stop()
                     break
+            
+            # If watch times out without seeing deletion, verify pod is gone
+            if not deletion_confirmed:
+                try:
+                    # Check if pod still exists
+                    self.client.read_namespaced_pod(
+                        name=self.container_name, namespace=DEFAULT_NAMESPACE
+                    )
+                    self.logger.warning(
+                        f"Watch timed out but pod {self.container_name} still exists. Forcing deletion."
+                    )
+                    # Try deleting again with force
+                    self.client.delete_namespaced_pod(
+                        name=self.container_name,
+                        namespace=DEFAULT_NAMESPACE,
+                        body=kubernetes.client.V1DeleteOptions(
+                            grace_period_seconds=0,
+                            force=True
+                        ),
+                    )
+                except kubernetes.client.rest.ApiException as e:
+                    if e.status == 404:
+                        # Pod is gone, which is what we want
+                        self.logger.info(f"Confirmed pod {self.container_name} is deleted.")
+                    else:
+                        # Some other API error
+                        self.logger.error(f"Error checking pod status after timeout: {e}")
         except kubernetes.client.rest.ApiException as e:
             if e.status == 404:
                 # Pod already deleted, ignore
@@ -680,22 +739,38 @@ class DockerRuntime(ExecutionEnvironment):
             tar.add(src_path, arcname=os.path.basename(dest_path))
         tar_stream.seek(0)
 
-        # Exec into pod to untar into the destination directory
-        exec_command = ["tar", "xmf", "-", "-C", dest_dir]
-        resp = stream(
-            self.client.connect_get_namespaced_pod_exec,
-            self.container_name,
-            DEFAULT_NAMESPACE,
-            command=exec_command,
-            stderr=True,
-            stdin=True,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-        )
-        # Stream the tar binary data into the pod
-        resp.write_stdin(tar_stream.read())
-        resp.close()
+        # Retry with exponential backoff
+        max_retries = 5
+        retry_delay = 5  # Initial delay in seconds
+        for attempt in range(max_retries):
+            try:
+                # Exec into pod to untar into the destination directory
+                exec_command = ["tar", "xmf", "-", "-C", dest_dir]
+                resp = stream(
+                    self.client.connect_get_namespaced_pod_exec,
+                    self.container_name,
+                    DEFAULT_NAMESPACE,
+                    command=exec_command,
+                    stderr=True,
+                    stdin=True,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                )
+                # Stream the tar binary data into the pod
+                resp.write_stdin(tar_stream.read())
+                resp.close()
+                break  # Success, exit the retry loop
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    self.logger.warning(f"Copy to container failed (attempt {attempt+1}/{max_retries}): {str(e)}")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    retry_delay = min(retry_delay, 60)
+                    tar_stream.seek(0)  # Reset the stream for the next attempt
+                else:
+                    self.logger.error(f"Copy to container failed after {max_retries} attempts: {str(e)}")
+                    raise
 
     def copy_to_container(self, src_path: str, dest_path: str):
         """
@@ -882,6 +957,11 @@ class DockerRuntime(ExecutionEnvironment):
             # If ANY mismatch, reward = 0.0, else = 1.0
             match = True
             for k in parse.keys():
+                if not k:
+                    continue
+                if k not in expected:
+                    match = False
+                    break
                 if parse[k] != expected[k]:
                     match = False
                     break

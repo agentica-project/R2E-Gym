@@ -89,6 +89,7 @@ class Trajectory(BaseModel):
     output_patch: str  # final output patch
     # outputs after test execution [Optional]
     reward: Optional[float] = None  # success for editing agent
+    reward_calc_time: Optional[float] = None  # time taken to calculate reward
     test_output: Optional[str] = None  # output after test execution
 
     ##############################

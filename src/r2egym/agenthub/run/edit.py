@@ -25,6 +25,7 @@ from r2egym.agenthub.utils.utils import match_dockerimage_to_repo
 from r2egym.agenthub import SUPPORTED_REPOS
 from datasets import load_dataset
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
+import time
 
 ##############################################################################
 # Initialize Logger
@@ -65,6 +66,7 @@ def run_agent_with_restarts(
     max_steps_absolute=50,
     use_fn_calling: bool = True,
     condense_history: bool = True,
+    swesmith_wrapper: bool = False,
 ):
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
@@ -78,6 +80,7 @@ def run_agent_with_restarts(
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
             condense_history=condense_history,
+            swesmith_wrapper=swesmith_wrapper,
         )
         # remove reproduce.py
         # env.runtime.run('rm reproduce_issue.py')
@@ -95,6 +98,8 @@ def runagent(
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
     condense_history: bool = True,
+    swesmith_wrapper: bool = False,
+    max_reward_calc_time: int = 300,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -130,9 +135,17 @@ def runagent(
             Path("./src/r2egym/agenthub/config/edit_fn_calling.yaml")
         )
     else:
-        agent_args = AgentArgs.from_yaml(
-            Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
-        )
+        # agent_args = AgentArgs.from_yaml(
+        #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
+        # )
+        if swesmith_wrapper:
+            agent_args = AgentArgs.from_yaml(
+                Path("./src/r2egym/agenthub/config/edit_swesmith.yaml")
+            )
+        else:
+            agent_args = AgentArgs.from_yaml(
+                Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
+            )
     agent_args.llm_name = llm_name
 
     # Initialize the agent
@@ -149,6 +162,7 @@ def runagent(
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
             condense_history=condense_history,
+            swesmith_wrapper=swesmith_wrapper,
         )
     except Exception as e:
         logger.error(
@@ -157,7 +171,9 @@ def runagent(
         return None
 
     # also get the gt outputs
-    reward, test_output = env.runtime._calculate_reward(get_test_output=True)
+    reward_calc_time = time.time()
+    reward, test_output = env.runtime._calculate_reward(get_test_output=True, timeout=max_reward_calc_time)
+    reward_calc_time = time.time() - reward_calc_time
     # Close the environment and runtime
     env.close()
 
@@ -166,6 +182,8 @@ def runagent(
     trajectory.test_output = test_output
     trajectory.ds = ds
     trajectory.exp_name = exp_name
+    trajectory.reward_calc_time = reward_calc_time # time taken to calculate reward
+    logger.warning(f"time taken to calculate reward in seconds: {reward_calc_time:.2f}")
 
     logger.info(f"editagent completed for Docker image: {ds['docker_image']}")
     # close env and docker runtime
@@ -191,6 +209,8 @@ def runagent_multiple(
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
     condense_history: bool = True,
+    swesmith_wrapper: bool = False,
+    max_reward_calc_time: int = 300,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -287,6 +307,8 @@ def runagent_multiple(
                 use_fn_calling=use_fn_calling,
                 backend=backend,
                 condense_history=condense_history,
+                swesmith_wrapper=swesmith_wrapper,
+                max_reward_calc_time=max_reward_calc_time,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
