@@ -432,7 +432,7 @@ class Agent:
             # Format thought by combining thinking and text content
             thought = ""
             if thinking:
-                thought += f"<think>\n{thinking}\n</think>\n\n"
+                thought += f"<think>\n{thinking}</think>\n\n"
             thought += text
 
         # Handle OpenAI-style response

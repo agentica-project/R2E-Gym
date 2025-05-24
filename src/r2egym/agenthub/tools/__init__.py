@@ -3,10 +3,10 @@
 ##############################################################################
 _STR_REPLACE_EDITOR_DESCRIPTION = """Custom editing tool for viewing, creating and editing files
 * State is persistent across command calls and discussions with the user
-* If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
+* `path` is a file and `view` displays the result of applying `cat -n` with concise view by default. 
 * The `create` command cannot be used if the specified `path` already exists as a file
-* If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
 * The `undo_edit` command will revert the last edit made to the file at `path`
+* If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
 
 Notes for using the `str_replace` command:
 * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
@@ -28,7 +28,7 @@ file_editor = {
                     "type": "string",
                 },
                 "path": {
-                    "description": "Absolute path to file or directory, e.g. `/testbed/file.py` or `/testbed`.",
+                    "description": "Absolute path to file e.g. `/testbed/file.py`.",
                     "type": "string",
                 },
                 "file_text": {
@@ -48,7 +48,7 @@ file_editor = {
                     "type": "integer",
                 },
                 "view_range": {
-                    "description": "Optional for the `view` command when `path` points to a file. Specifies the line range to view. E.g., [11, 12] shows lines 11 and 12. Indexing starts at 1. Use [start_line, -1] to show all lines from `start_line` to the end.",
+                    "description": "Recommended but optional for the `view` command when `path` points to a file. Specifies the line range to view. E.g., [11, 12] shows lines 11 and 12. Indexing starts at 1. Use [start_line, -1] to show all lines from `start_line` to the end. If not provided, often long files will be elided.",
                     "type": "array",
                     "items": {"type": "integer"},
                 },
@@ -160,10 +160,7 @@ finish_tool = {
 }
 
 
-anthropic_file_editor = file_editor['function']
-anthropic_bash_execute = bash_execute_tool['function']
-anthropic_search = search_tool['function']
-anthropic_finish = finish_tool['function']
-
-
-
+anthropic_file_editor = file_editor["function"]
+anthropic_bash_execute = bash_execute_tool["function"]
+anthropic_search = search_tool["function"]
+anthropic_finish = finish_tool["function"]

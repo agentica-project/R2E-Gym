@@ -210,7 +210,7 @@ def runagent_multiple(
     ds = load_dataset(dataset, split=split)
     logger.info(f"{len(ds)}, {k}, {start_idx}")
     # shuffle the dataset
-    ds = ds.shuffle(seed=42)
+    ds = ds.shuffle(seed=96)
 
     # get selected idxs
     selected_idx = range(start_idx, start_idx + k)
