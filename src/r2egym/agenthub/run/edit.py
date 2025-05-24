@@ -93,7 +93,7 @@ def runagent(
     llm_name="gpt-4o",
     temperature=0,
     use_fn_calling: bool = True,
-    backend: str = "kubernetes", # "kubernetes" or "docker"
+    backend: str = "kubernetes",  # "kubernetes" or "docker"
     condense_history: bool = True,
 ) -> Optional[str]:
     """
@@ -154,6 +154,9 @@ def runagent(
         logger.error(
             f"Error during agent run for Docker image {ds['docker_image']}: {e}"
         )
+        import traceback
+
+        traceback.print_exc()
         return None
 
     # also get the gt outputs
@@ -189,7 +192,7 @@ def runagent_multiple(
     skip_existing: bool = False,
     temperature: float = 0,
     use_fn_calling: bool = True,
-    backend: str = "kubernetes", # "kubernetes" or "docker"
+    backend: str = "kubernetes",  # "kubernetes" or "docker"
     condense_history: bool = True,
 ):
     """

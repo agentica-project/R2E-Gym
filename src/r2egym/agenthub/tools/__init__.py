@@ -19,7 +19,7 @@ file_editor = {
     "function": {
         "name": "file_editor",
         "description": _STR_REPLACE_EDITOR_DESCRIPTION,
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "command": {
@@ -75,7 +75,7 @@ bash_execute_tool = {
     "function": {
         "name": "execute_bash",
         "description": _BASH_EXECUTE_DESCRIPTION,
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cmd": {
@@ -108,7 +108,7 @@ search_tool = {
     "function": {
         "name": "search",
         "description": _SEARCH_DESCRIPTION,
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "search_term": {
@@ -140,7 +140,7 @@ finish_tool = {
     "function": {
         "name": "finish",
         "description": _FINISH_DESCRIPTION,
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "command": {
@@ -158,3 +158,12 @@ finish_tool = {
         # "cache_control": {"type": "ephemeral"},
     },
 }
+
+
+anthropic_file_editor = file_editor['function']
+anthropic_bash_execute = bash_execute_tool['function']
+anthropic_search = search_tool['function']
+anthropic_finish = finish_tool['function']
+
+
+
