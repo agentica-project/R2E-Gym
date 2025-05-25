@@ -1,0 +1,152 @@
+diff --git a/astropy/io/fits/card.py b/astropy/io/fits/card.py
+index 1b3285ddce..2ba76a3c83 100644
+--- a/astropy/io/fits/card.py
++++ b/astropy/io/fits/card.py
+@@ -768,7 +768,13 @@ class Card(_Verify):
+         if m.group("bool") is not None:
+             value = m.group("bool") == "T"
+         elif m.group("strg") is not None:
+-            value = re.sub("''", "'", m.group("strg"))
++            # Get the string value from the match group
++            value = m.group("strg")
++            # Handle the case where the string contains double quotes
++            if value is not None:
++                # Replace sequences of three or more single quotes with double quotes
++                # This is the FITS standard way to escape single quotes in strings
++                value = value.replace("'''", "'").replace("'''''", "''")
+         elif m.group("numr") is not None:
+             #  Check for numbers with leading 0s.
+             numr = self._number_NFSC_RE.match(m.group("numr"))
+@@ -1273,6 +1279,8 @@ def _format_value(value):
+         if value == "":
+             return "''"
+         else:
++            # Replace single quotes with double quotes
++            # This is the FITS standard way to escape single quotes in strings
+             exp_val_str = value.replace("'", "''")
+             val_str = f"'{exp_val_str:8}'"
+             return f"{val_str:20}"
+diff --git a/debug_issue.py b/debug_issue.py
+new file mode 100644
+index 0000000000..c0d4a3f8dc
+--- /dev/null
++++ b/debug_issue.py
+@@ -0,0 +1,36 @@
++from astropy.io import fits
++import re
++
++# Print the regex pattern used to match string values
++print("String regex pattern:", fits.Card._strg)
++
++# Create a card with double quotes
++card1 = fits.Card('CONFIG', "'test''test'")
++print("\nOriginal card value:", repr(card1.value))
++
++# Convert the card to a string
++card_str = str(card1)
++print("Card string representation:", repr(card_str))
++
++# Create a new card from the string
++card2 = fits.Card.fromstring(card_str)
++print("New card value:", repr(card2.value))
++
++# Debug the regex matching
++pattern = fits.Card._strg_comment_RE
++m = pattern.match(card_str[0:80])
++if m is not None and m.group("strg") is not None:
++    print("\nMatch groups:")
++    print("strg:", repr(m.group("strg")))
++    print("comm_field:", repr(m.group("comm_field") if m.group("comm_field") else None))
++    print("sepr:", repr(m.group("sepr") if m.group("sepr") else None))
++    print("comm:", repr(m.group("comm") if m.group("comm") else None))
++
++# Test with a simpler example
++print("\nTesting with a simpler example:")
++card3 = fits.Card('CONFIG', "''")
++print("Original card value:", repr(card3.value))
++card_str3 = str(card3)
++print("Card string representation:", repr(card_str3))
++card4 = fits.Card.fromstring(card_str3)
++print("New card value:", repr(card4.value))
+\ No newline at end of file
+diff --git a/pyproject.toml b/pyproject.toml
+index 243782fdfc..b2688da2a5 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..a0e3358b16
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,24 @@
++from astropy.io import fits
++
++def test_double_quotes():
++    print("Testing double single quotes in FITS Card values...")
++    print("\nTest 1: Double quotes at the end of the string")
++    for n in range(60, 70):
++        card1 = fits.Card('CONFIG', "x" * n + "''")
++        card2 = fits.Card.fromstring(str(card1))
++        print(f"{n:2d} {len(card1.value):2d} {card1.value == card2.value}")
++        if card1.value != card2.value:
++            print(f"  card1: {repr(card1.value)}")
++            print(f"  card2: {repr(card2.value)}")
++
++    print("\nTest 2: Double quotes in the middle of a longer string")
++    for n in range(50, 70):
++        card1 = fits.Card('CONFIG', "x" * n + "''" + "x"*10)
++        card2 = fits.Card.fromstring(str(card1))
++        print(f"{n:2d} {len(card1.value):2d} {card1.value == card2.value}")
++        if card1.value != card2.value:
++            print(f"  card1: {repr(card1.value)}")
++            print(f"  card2: {repr(card2.value)}")
++
++if __name__ == "__main__":
++    test_double_quotes()
+\ No newline at end of file
+diff --git a/test_fits_card.py b/test_fits_card.py
+new file mode 100644
+index 0000000000..5cd3b5d866
+--- /dev/null
++++ b/test_fits_card.py
+@@ -0,0 +1,32 @@
++from astropy.io import fits
++
++def test_double_quotes():
++    # Test with a simple string containing double quotes
++    card1 = fits.Card('CONFIG', "''")
++    card2 = fits.Card.fromstring(str(card1))
++    print("Test with empty string:")
++    print(f"card1.value = {repr(card1.value)}")
++    print(f"card2.value = {repr(card2.value)}")
++    print(f"Equal: {card1.value == card2.value}")
++    print()
++
++    # Test with a string containing double quotes in the middle
++    card1 = fits.Card('CONFIG', "test''test")
++    card2 = fits.Card.fromstring(str(card1))
++    print("Test with double quotes in the middle:")
++    print(f"card1.value = {repr(card1.value)}")
++    print(f"card2.value = {repr(card2.value)}")
++    print(f"Equal: {card1.value == card2.value}")
++    print()
++
++    # Test with a string containing double quotes at the end
++    card1 = fits.Card('CONFIG', "test''")
++    card2 = fits.Card.fromstring(str(card1))
++    print("Test with double quotes at the end:")
++    print(f"card1.value = {repr(card1.value)}")
++    print(f"card2.value = {repr(card2.value)}")
++    print(f"Equal: {card1.value == card2.value}")
++    print()
++
++if __name__ == "__main__":
++    test_double_quotes()
+\ No newline at end of file

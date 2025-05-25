@@ -1,0 +1,174 @@
+diff --git a/django/test_check_constraint.py b/django/test_check_constraint.py
+new file mode 100644
+index 0000000000..36a97bda8b
+--- /dev/null
++++ b/django/test_check_constraint.py
+@@ -0,0 +1,65 @@
++import unittest
++from django.db import models, migrations
++from django.db.models import Q
++from django.db.models.constraints import CheckConstraint
++
++class TestCheckConstraint(unittest.TestCase):
++    def test_check_constraint_sql(self):
++        """Test that CheckConstraint generates correct SQL for OR conditions."""
++
++        class TestModel(models.Model):
++            field_1 = models.IntegerField(blank=True, null=True)
++            flag = models.BooleanField(blank=False, null=False)
++
++            class Meta:
++                constraints = [
++                    CheckConstraint(
++                        check=Q(flag__exact=True, field_1__isnull=False) | Q(flag__exact=False),
++                        name='field_1_has_value_if_flag_set'
++                    ),
++                ]
++
++        # Get the constraint
++        constraint = TestModel._meta.constraints[0]
++
++        # Create a mock schema editor
++        class MockSchemaEditor:
++            def __init__(self):
++                self.connection = None
++
++            def quote_value(self, value):
++                if value is True:
++                    return 1
++                elif value is False:
++                    return 0
++                elif value is None:
++                    return 'NULL'
++                return value
++
++            def _check_sql(self, name, check):
++                return f"CONSTRAINT {name} CHECK ({check})"
++
++            def _create_check_sql(self, model, name, check):
++                return f"CREATE TABLE new__testmodel (id int, field_1 int, flag bool, CONSTRAINT {name} CHECK ({check}));"
++
++        # Create a mock connection
++        class MockConnection:
++            def quote_name_unless_alias(self, name):
++                return f'"{name}"'
++
++        # Set up the schema editor
++        schema_editor = MockSchemaEditor()
++        schema_editor.connection = MockConnection()
++
++        # Get the SQL for the constraint
++        sql = constraint._get_check_sql(TestModel, schema_editor)
++        print(f"Generated SQL: {sql}")
++
++        # Check if the SQL contains the table name prefix in the OR part
++        if '"new__testmodel"."field_1"' in sql and '"new__testmodel"."flag"' in sql.replace('"new__testmodel"."field_1"', ''):
++            self.fail("Table name prefix is incorrectly included in the OR part of the constraint")
++        else:
++            self.assertTrue(True, "Table name prefix is correctly handled")
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file
+diff --git a/test_check_constraint.py b/test_check_constraint.py
+new file mode 100644
+index 0000000000..d9da86aa3b
+--- /dev/null
++++ b/test_check_constraint.py
+@@ -0,0 +1,95 @@
++import os
++import sys
++import django
++from django.db import models, migrations
++from django.db.models import Q
++
++# Set up Django with minimal settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++os.environ.setdefault('SECRET_KEY', 'dummy')
++django.setup()
++
++class TestConstraint(models.Model):
++    field_1 = models.IntegerField(blank=True, null=True)
++    flag = models.BooleanField(blank=False, null=False)
++
++    class Meta:
++        constraints = [
++            models.CheckConstraint(
++                check=Q(flag__exact=True, field_1__isnull=False) | Q(flag__exact=False),
++                name='field_1_has_value_if_flag_set'
++            ),
++        ]
++
++class Migration(migrations.Migration):
++    dependencies = [
++        # ('app', '0001_initial'),
++    ]
++
++    operations = [
++        migrations.CreateModel(
++            name='TestConstraint',
++            fields=[
++                ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
++                ('field_1', models.IntegerField(blank=True, null=True)),
++                ('flag', models.BooleanField()),
++            ],
++        ),
++        migrations.AddConstraint(
++            model_name='testconstraint',
++            constraint=models.CheckConstraint(
++                check=Q((('field_1__isnull', False), ('flag__exact', True)), ('flag__exact', False), _connector='OR'),
++                name='field_1_has_value_if_flag_set'
++            ),
++        ),
++    ]
++
++# Function to test the SQL generation
++def test_check_constraint_sql():
++    # Get the constraint
++    constraint = TestConstraint._meta.constraints[0]
++
++    # Create a mock schema editor
++    class MockSchemaEditor:
++        def __init__(self):
++            self.connection = None
++
++        def quote_value(self, value):
++            if value is True:
++                return 1
++            elif value is False:
++                return 0
++            elif value is None:
++                return 'NULL'
++            return value
++
++        def _check_sql(self, name, check):
++            return f"CONSTRAINT {name} CHECK ({check})"
++
++        def _create_check_sql(self, model, name, check):
++            return f"CREATE TABLE new__testconstraint (id int, field_1 int, flag bool, CONSTRAINT {name} CHECK ({check}));"
++
++    # Create a mock connection
++    class MockConnection:
++        def quote_name_unless_alias(self, name):
++            return f'"{name}"'
++
++    # Set up the schema editor
++    schema_editor = MockSchemaEditor()
++    schema_editor.connection = MockConnection()
++
++    # Get the SQL for the constraint
++    sql = constraint._get_check_sql(TestConstraint, schema_editor)
++    print(f"Generated SQL: {sql}")
++
++    # Check if the SQL contains the table name prefix in the OR part
++    if '"new__testconstraint"."field_1"' in sql and '"new__testconstraint"."flag"' in sql.replace('"new__testconstraint"."field_1"', ''):
++        print("ERROR: Table name prefix is incorrectly included in the OR part of the constraint")
++        return False
++    else:
++        print("SUCCESS: Table name prefix is correctly handled")
++        return True
++
++if __name__ == "__main__":
++    success = test_check_constraint_sql()
++    sys.exit(0 if success else 1)
+\ No newline at end of file

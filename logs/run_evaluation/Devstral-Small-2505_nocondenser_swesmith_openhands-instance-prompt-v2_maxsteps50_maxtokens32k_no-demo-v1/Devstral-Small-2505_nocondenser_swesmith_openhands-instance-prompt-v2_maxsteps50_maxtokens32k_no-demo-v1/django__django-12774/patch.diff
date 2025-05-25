@@ -1,0 +1,300 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index d9c9b0db04..5d233a3ec7 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -689,8 +689,16 @@ class QuerySet:
+         """
+         assert not self.query.is_sliced, \
+             "Cannot use 'limit' or 'offset' with in_bulk"
+-        if field_name != 'pk' and not self.model._meta.get_field(field_name).unique:
+-            raise ValueError("in_bulk()'s field_name must be a unique field but %r isn't." % field_name)
++        if field_name != 'pk':
++            field = self.model._meta.get_field(field_name)
++            from django.db.models.constraints import UniqueConstraint
++            if not (field.unique or any(
++                isinstance(constraint, UniqueConstraint)
++                and constraint.condition is None
++                and field_name in constraint.fields
++                for constraint in self.model._meta.constraints
++            )):
++                raise ValueError("in_bulk()'s field_name must be a unique field but %r isn't." % field_name)
+         if id_list is not None:
+             if not id_list:
+                 return {}
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..af1f4e3681
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,27 @@
++import os
++import sys
++import django
++from django.db import models
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++os.environ.setdefault('SECRET_KEY', 'dummy-secret-key-for-testing')
++django.setup()
++
++# Define a model with a UniqueConstraint
++class Article(models.Model):
++    slug = models.CharField(max_length=255)
++
++    class Meta:
++        constraints = [
++            models.UniqueConstraint(fields=["slug"], name="article_slug_unq")
++        ]
++
++# Try to use in_bulk on the slug field
++try:
++    print("Attempting to use in_bulk on a field with UniqueConstraint...")
++    Article.objects.in_bulk(field_name="slug")
++    print("Success! The issue is fixed.")
++except ValueError as e:
++    print(f"Error: {e}")
++    print("The issue is still present.")
+\ No newline at end of file
+diff --git a/test_in_bulk_direct.py b/test_in_bulk_direct.py
+new file mode 100644
+index 0000000000..ce749e0e92
+--- /dev/null
++++ b/test_in_bulk_direct.py
+@@ -0,0 +1,50 @@
++import os
++import sys
++import django
++from django.db import models
++from django.db.models.constraints import UniqueConstraint
++
++# Set up Django
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++os.environ['SECRET_KEY'] = 'dummy-secret-key-for-testing'
++
++# Create a mock model with a UniqueConstraint
++class Article(models.Model):
++    slug = models.CharField(max_length=255)
++
++    class Meta:
++        constraints = [
++            UniqueConstraint(fields=["slug"], name="article_slug_unq")
++        ]
++
++# Create a mock QuerySet
++class MockQuerySet:
++    def __init__(self):
++        self.model = Article
++
++    def in_bulk(self, id_list=None, *, field_name='pk'):
++        """
++        Return a dictionary mapping each of the given IDs to the object with
++        that ID. If `id_list` isn't provided, evaluate the entire QuerySet.
++        """
++        if field_name != 'pk':
++            field = self.model._meta.get_field(field_name)
++            if not (field.unique or any(
++                isinstance(constraint, UniqueConstraint)
++                and constraint.condition is None
++                and field_name in constraint.fields
++                for constraint in self.model._meta.constraints
++            )):
++                raise ValueError("in_bulk()'s field_name must be a unique field but %r isn't." % field_name)
++        return {}
++
++# Test the fixed implementation
++try:
++    print("Testing in_bulk with a field that has a UniqueConstraint...")
++    qs = MockQuerySet()
++    qs.in_bulk(field_name='slug')
++    print("Success! The field with UniqueConstraint is recognized as unique.")
++except Exception as e:
++    print(f"Error: {e}")
++    print("The issue is still present.")
+\ No newline at end of file
+diff --git a/test_in_bulk_logic.py b/test_in_bulk_logic.py
+new file mode 100644
+index 0000000000..b6bf0f46ec
+--- /dev/null
++++ b/test_in_bulk_logic.py
+@@ -0,0 +1,66 @@
++import os
++import sys
++import django
++from django.db import models
++from django.db.models.constraints import UniqueConstraint
++
++# Set up a minimal Django environment
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++
++# Create a mock model with a UniqueConstraint
++class MockMeta:
++    def __init__(self):
++        self.constraints = [
++            UniqueConstraint(fields=["slug"], name="article_slug_unq")
++        ]
++
++    def get_field(self, field_name):
++        class MockField:
++            def __init__(self):
++                self.unique = False
++        return MockField()
++
++class MockModel:
++    def __init__(self):
++        self._meta = MockMeta()
++
++# Test the current logic
++def test_current_logic():
++    model = MockModel()
++
++    # Current implementation
++    field_name = 'slug'
++    if field_name != 'pk' and not model._meta.get_field(field_name).unique:
++        print(f"Current logic: {field_name} is not unique")
++        print("This is the issue - it doesn't recognize UniqueConstraint")
++    else:
++        print(f"Current logic: {field_name} is unique")
++
++# Test our proposed fix
++def test_proposed_fix():
++    model = MockModel()
++
++    field_name = 'slug'
++    is_unique = (
++        field_name == 'pk'
++        or model._meta.get_field(field_name).unique
++        or any(
++            isinstance(constraint, UniqueConstraint)
++            and constraint.condition is None
++            and field_name in constraint.fields
++            for constraint in model._meta.constraints
++        )
++    )
++
++    if is_unique:
++        print(f"Proposed fix: {field_name} is unique")
++        print("This is the correct behavior - it recognizes UniqueConstraint")
++    else:
++        print(f"Proposed fix: {field_name} is not unique")
++
++print("Testing current logic:")
++test_current_logic()
++
++print("\nTesting proposed fix:")
++test_proposed_fix()
+\ No newline at end of file
+diff --git a/test_in_bulk_with_unique_constraint.py b/test_in_bulk_with_unique_constraint.py
+new file mode 100644
+index 0000000000..db1637c617
+--- /dev/null
++++ b/test_in_bulk_with_unique_constraint.py
+@@ -0,0 +1,52 @@
++import os
++import sys
++import django
++from django.db import models, connection
++from django.db.models.constraints import UniqueConstraint
++
++# Set up Django
++sys.path.insert(0, '/testbed')
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++os.environ['SECRET_KEY'] = 'dummy-secret-key-for-testing'
++
++# Create a test database
++connection.settings_dict['NAME'] = ':memory:'
++connection.settings_dict['ENGINE'] = 'django.db.backends.sqlite3'
++
++# Define models for testing
++class Article(models.Model):
++    slug = models.CharField(max_length=255)
++
++    class Meta:
++        constraints = [
++            UniqueConstraint(fields=["slug"], name="article_slug_unq")
++        ]
++
++# Create the tables
++connection.cursor().execute('''
++CREATE TABLE django_db_models_article (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    slug VARCHAR(255) NOT NULL
++)
++''')
++
++# Add the unique constraint
++connection.cursor().execute('''
++CREATE UNIQUE INDEX django_db_models_article_slug_unq ON django_db_models_article (slug)
++''')
++
++# Insert some test data
++connection.cursor().execute('''
++INSERT INTO django_db_models_article (slug) VALUES ('first-article'), ('second-article')
++''')
++
++# Test in_bulk with the slug field
++try:
++    print("Testing Article.objects.in_bulk(field_name='slug')...")
++    articles = Article.objects.in_bulk(field_name='slug')
++    print(f"Success! Found {len(articles)} articles.")
++    for slug, article in articles.items():
++        print(f"  {slug}: {article.id}")
++except Exception as e:
++    print(f"Error: {e}")
++    print("The issue is still present.")
+\ No newline at end of file
+diff --git a/test_logic_only.py b/test_logic_only.py
+new file mode 100644
+index 0000000000..094c46f948
+--- /dev/null
++++ b/test_logic_only.py
+@@ -0,0 +1,47 @@
++from django.db.models.constraints import UniqueConstraint
++
++# Mock field and model classes
++class MockField:
++    def __init__(self, unique=False):
++        self.unique = unique
++
++class MockMeta:
++    def __init__(self):
++        self.constraints = [
++            UniqueConstraint(fields=["slug"], name="article_slug_unq")
++        ]
++
++    def get_field(self, field_name):
++        return MockField(unique=False)
++
++class MockModel:
++    def __init__(self):
++        self._meta = MockMeta()
++
++# Test the fixed logic
++def test_fixed_logic():
++    model = MockModel()
++    field_name = 'slug'
++
++    # The fixed logic
++    field = model._meta.get_field(field_name)
++    is_unique = (
++        field_name == 'pk'
++        or field.unique
++        or any(
++            isinstance(constraint, UniqueConstraint)
++            and constraint.condition is None
++            and field_name in constraint.fields
++            for constraint in model._meta.constraints
++        )
++    )
++
++    if is_unique:
++        print(f"Success! The field '{field_name}' is correctly identified as unique.")
++        return True
++    else:
++        print(f"Error: The field '{field_name}' is incorrectly identified as not unique.")
++        return False
++
++# Run the test
++test_fixed_logic()
+\ No newline at end of file

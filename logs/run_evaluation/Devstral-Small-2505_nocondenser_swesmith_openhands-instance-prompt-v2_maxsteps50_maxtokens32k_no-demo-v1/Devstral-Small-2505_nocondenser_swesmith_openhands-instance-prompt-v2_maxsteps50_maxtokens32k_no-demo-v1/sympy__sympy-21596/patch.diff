@@ -1,0 +1,22 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..8574e188a9
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,15 @@
++from sympy import imageset, Lambda, S, I, symbols
++n = symbols('n')
++
++# Create the image set as described in the issue
++S1 = imageset(Lambda(n, n + (n - 1)*(n + 1)*I), S.Integers)
++print("S1:", S1)
++
++# Check if 2 is in S1
++print("2 in S1:", 2 in S1)
++
++# Check if 2 is in the intersection of S1 and Reals
++print("2 in S1.intersect(S.Reals):", 2 in S1.intersect(S.Reals))
++
++# Print the intersection of S1 and Reals
++print("S1.intersect(S.Reals):", S1.intersect(S.Reals))
+\ No newline at end of file

@@ -1,0 +1,166 @@
+diff --git a/django/utils/http.py b/django/utils/http.py
+index 572cfb4347..be5af0d82d 100644
+--- a/django/utils/http.py
++++ b/django/utils/http.py
+@@ -176,10 +176,20 @@ def parse_http_date(date):
+     try:
+         year = int(m.group('year'))
+         if year < 100:
+-            if year < 70:
+-                year += 2000
++            current_year = datetime.datetime.now().year
++            # RFC 7231: If a date appears to be more than 50 years in the future,
++            # interpret it as representing the most recent year in the past
++            # that had the same last two digits.
++            # Calculate the year difference if interpreted with 2000 base
++            year_2000 = 2000 + year
++            year_diff = current_year - year_2000
++
++            if year_2000 > current_year + 50:
++                # More than 50 years in the future, use 1900 base instead
++                year = 1900 + year
+             else:
+-                year += 1900
++                # Within 50 years, use 2000 base
++                year = 2000 + year
+         month = MONTHS.index(m.group('mon').lower()) + 1
+         day = int(m.group('day'))
+         hour = int(m.group('hour'))
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..72c43f1ea4
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,91 @@
++import datetime
++import sys
++from django.utils.http import parse_http_date
++
++def main():
++    # Get current year
++    current_year = datetime.datetime.now().year
++    print(f"Current year: {current_year}")
++
++    print("\nFIXED IMPLEMENTATION:")
++    print("=====================")
++
++    # Test with a date in the future (assuming we're in 2023 or later)
++    # This should be interpreted as 19XX, not 20XX according to RFC
++    future_date = 'Sunday, 06-Nov-65 08:49:37 GMT'
++    print(f"\nTesting with date: {future_date}")
++    try:
++        parsed = parse_http_date(future_date)
++        parsed_date = datetime.datetime.utcfromtimestamp(parsed)
++        print(f"Parsed as: {parsed_date}")
++        print(f"Year interpreted as: {parsed_date.year}")
++
++        # Check if this is more than 50 years in the future
++        year_diff = current_year - parsed_date.year
++        if year_diff > 50:
++            print("OK: Date more than 50 years in the past was correctly interpreted")
++        elif year_diff < 50:
++            print("ISSUE: Date should be interpreted as more than 50 years in the past")
++        else:
++            print("OK: Date interpreted correctly according to RFC 7231")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    # Test with a date in the recent past
++    recent_date = 'Sunday, 06-Nov-22 08:49:37 GMT'
++    print(f"\nTesting with date: {recent_date}")
++    try:
++        parsed = parse_http_date(recent_date)
++        parsed_date = datetime.datetime.utcfromtimestamp(parsed)
++        print(f"Parsed as: {parsed_date}")
++        print(f"Year interpreted as: {parsed_date.year}")
++
++        # Check if this is within 50 years
++        year_diff = abs(current_year - parsed_date.year)
++        if year_diff < 50:
++            print("OK: Date within 50 years was correctly interpreted")
++        else:
++            print("ISSUE: Date should be interpreted as within 50 years")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    # Test with a date that's exactly 50 years ago from current year
++    fifty_years_ago = (current_year - 50) % 100
++    date_50_years = f'Sunday, 06-Nov-{fifty_years_ago:02d} 08:49:37 GMT'
++    print(f"\nTesting with date: {date_50_years}")
++    try:
++        parsed = parse_http_date(date_50_years)
++        parsed_date = datetime.datetime.utcfromtimestamp(parsed)
++        print(f"Parsed as: {parsed_date}")
++        print(f"Year interpreted as: {parsed_date.year}")
++
++        # Check if this is exactly 50 years ago
++        year_diff = current_year - parsed_date.year
++        if 49 <= year_diff <= 51:  # Allow for a range to account for year rollover
++            print("OK: Date exactly 50 years ago was correctly interpreted")
++        else:
++            print(f"ISSUE: Date should be interpreted as exactly 50 years ago (got {year_diff} years difference)")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    # Test with a date that's just over 50 years in the future
++    just_over_50 = (current_year + 51) % 100
++    date_just_over_50 = f'Sunday, 06-Nov-{just_over_50:02d} 08:49:37 GMT'
++    print(f"\nTesting with date: {date_just_over_50}")
++    try:
++        parsed = parse_http_date(date_just_over_50)
++        parsed_date = datetime.datetime.utcfromtimestamp(parsed)
++        print(f"Parsed as: {parsed_date}")
++        print(f"Year interpreted as: {parsed_date.year}")
++
++        # Check if this is interpreted as a past year
++        year_diff = current_year - parsed_date.year
++        if year_diff > 50:
++            print("OK: Date more than 50 years in the future was correctly interpreted as past date")
++        else:
++            print(f"ISSUE: Date should be interpreted as more than 50 years in the future (got {year_diff} years difference)")
++    except Exception as e:
++        print(f"Error: {e}")
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..ab65488216
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,34 @@
++import datetime
++from django.utils.http import parse_http_date
++
++def test_parse_http_date():
++    current_year = datetime.datetime.now().year
++    print(f"Current year: {current_year}")
++
++    # Test cases
++    test_cases = [
++        # (date_string, expected_year, description)
++        ("Sunday, 06-Nov-65 08:49:37 GMT", 1965, "Year 65 should be interpreted as 1965"),
++        ("Sunday, 06-Nov-22 08:49:37 GMT", 2022, "Year 22 should be interpreted as 2022"),
++        ("Sunday, 06-Nov-75 08:49:37 GMT", 1975, "Year 75 should be interpreted as 1975"),
++        ("Sunday, 06-Nov-76 08:49:37 GMT", 1976, "Year 76 should be interpreted as 1976"),
++    ]
++
++    for date_str, expected_year, description in test_cases:
++        print(f"
++Testing: {date_str} - {description}")
++        try:
++            parsed = parse_http_date(date_str)
++            parsed_date = datetime.datetime.utcfromtimestamp(parsed)
++            print(f"Parsed as: {parsed_date}")
++            print(f"Year interpreted as: {parsed_date.year}")
++
++            if parsed_date.year == expected_year:
++                print("✅ PASS: Year interpreted correctly")
++            else:
++                print(f"❌ FAIL: Expected year {expected_year}, got {parsed_date.year}")
++        except Exception as e:
++            print(f"Error: {e}")
++
++if __name__ == "__main__":
++    test_parse_http_date()

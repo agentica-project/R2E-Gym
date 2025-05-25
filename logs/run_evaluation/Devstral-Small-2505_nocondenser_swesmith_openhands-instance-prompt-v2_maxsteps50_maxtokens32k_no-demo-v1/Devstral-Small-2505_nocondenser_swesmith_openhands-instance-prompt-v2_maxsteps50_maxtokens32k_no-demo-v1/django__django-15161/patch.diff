@@ -1,0 +1,165 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 8642e1f151..3d91934ff9 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -390,7 +390,7 @@ class BaseExpression:
+         return sql, params
+ 
+ 
+-@deconstructible
++@deconstructible(path='django.db.models.Expression')
+ class Expression(BaseExpression, Combinable):
+     """An expression that can be combined with other expressions."""
+ 
+@@ -628,7 +628,7 @@ class ResolvedOuterRef(F):
+         col = super().resolve_expression(*args, **kwargs)
+         # FIXME: Rename possibly_multivalued to multivalued and fix detection
+         # for non-multivalued JOINs (e.g. foreign key fields). This should take
+-        # into account only many-to-many and one-to-many relationships.
++        # into accountÂ only many-to-many and one-to-many relationships.
+         col.possibly_multivalued = LOOKUP_SEP in self.name
+         return col
+ 
+@@ -651,6 +651,7 @@ class OuterRef(F):
+         return self
+ 
+ 
++@deconstructible(path='django.db.models.Func')
+ class Func(SQLiteNumericMixin, Expression):
+     """An SQL function call."""
+     function = None
+@@ -731,6 +732,7 @@ class Func(SQLiteNumericMixin, Expression):
+         return copy
+ 
+ 
++@deconstructible(path='django.db.models.Value')
+ class Value(SQLiteNumericMixin, Expression):
+     """Represent a wrapped value as a node within an expression."""
+     # Provide a default value for `for_save` in order to allow unresolved
+@@ -912,6 +914,7 @@ class Ref(Expression):
+         return [self]
+ 
+ 
++@deconstructible(path='django.db.models.ExpressionList')
+ class ExpressionList(Func):
+     """
+     An expression containing multiple expressions. Can be used to provide a
+@@ -953,6 +956,7 @@ class OrderByList(Func):
+         return super().as_sql(*args, **kwargs)
+ 
+ 
++@deconstructible(path='django.db.models.ExpressionWrapper')
+ class ExpressionWrapper(SQLiteNumericMixin, Expression):
+     """
+     An expression that can wrap another expression so that it can provide
+@@ -985,6 +989,7 @@ class ExpressionWrapper(SQLiteNumericMixin, Expression):
+         return "{}({})".format(self.__class__.__name__, self.expression)
+ 
+ 
++@deconstructible(path='django.db.models.When')
+ class When(Expression):
+     template = 'WHEN %(condition)s THEN %(result)s'
+     # This isn't a complete conditional expression, must be used in Case().
+@@ -1052,6 +1057,7 @@ class When(Expression):
+         return cols
+ 
+ 
++@deconstructible(path='django.db.models.Case')
+ class Case(SQLiteNumericMixin, Expression):
+     """
+     An SQL searched CASE expression:
+@@ -1133,6 +1139,7 @@ class Case(SQLiteNumericMixin, Expression):
+         return super().get_group_by_cols(alias)
+ 
+ 
++@deconstructible(path='django.db.models.Subquery')
+ class Subquery(BaseExpression, Combinable):
+     """
+     An explicit subquery. It may contain OuterRef() references to the outer
+@@ -1225,6 +1232,7 @@ class Exists(Subquery):
+         return sql, params
+ 
+ 
++@deconstructible(path='django.db.models.OrderBy')
+ class OrderBy(Expression):
+     template = '%(expression)s %(ordering)s'
+     conditional = False
+@@ -1307,6 +1315,7 @@ class OrderBy(Expression):
+         self.descending = True
+ 
+ 
++@deconstructible(path='django.db.models.Window')
+ class Window(SQLiteNumericMixin, Expression):
+     template = '%(expression)s OVER (%(window)s)'
+     # Although the main expression may either be an aggregate or an
+@@ -1412,6 +1421,7 @@ class Window(SQLiteNumericMixin, Expression):
+         return []
+ 
+ 
++@deconstructible(path='django.db.models.WindowFrame')
+ class WindowFrame(Expression):
+     """
+     Model the frame clause in window expressions. There are two types of frame
+@@ -1471,6 +1481,7 @@ class WindowFrame(Expression):
+         raise NotImplementedError('Subclasses must implement window_frame_start_end().')
+ 
+ 
++@deconstructible(path='django.db.models.RowRange')
+ class RowRange(WindowFrame):
+     frame_type = 'ROWS'
+ 
+@@ -1478,6 +1489,7 @@ class RowRange(WindowFrame):
+         return connection.ops.window_frame_rows_start_end(start, end)
+ 
+ 
++@deconstructible(path='django.db.models.ValueRange')
+ class ValueRange(WindowFrame):
+     frame_type = 'RANGE'
+ 
+diff --git a/test_deconstruct.py b/test_deconstruct.py
+new file mode 100644
+index 0000000000..687b523462
+--- /dev/null
++++ b/test_deconstruct.py
+@@ -0,0 +1,40 @@
++import sys
++import os
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath('/testbed'))
++
++from django.db.models import F, Value, ExpressionWrapper, Case, When
++
++def print_deconstructed(obj, obj_name):
++    """Print the deconstructed representation of an object."""
++    path, args, kwargs = obj.deconstruct()
++    print(f"{obj_name} deconstructs to: {path}, {args}, {kwargs}")
++
++# Test F expression
++f_expr = F('field_name')
++print_deconstructed(f_expr, "F")
++
++# Test Value expression
++value_expr = Value(42)
++print_deconstructed(value_expr, "Value")
++
++# Test ExpressionWrapper
++expr_wrapper = ExpressionWrapper(F('field_name'), output_field=Value(1).output_field)
++print_deconstructed(expr_wrapper, "ExpressionWrapper")
++
++# Test Case/When expressions
++from django.db.models import Q
++case_expr = Case(
++    When(Q(pk=1), then=Value('yes')),
++    default=Value('no')
++)
++print_deconstructed(case_expr, "Case")
++
++# Test Func (if available)
++try:
++    from django.db.models import Func
++    func_expr = Func(F('field_name'))
++    print_deconstructed(func_expr, "Func")
++except ImportError:
++    print("Func not available in this Django version")
+\ No newline at end of file

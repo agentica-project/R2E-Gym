@@ -1,0 +1,243 @@
+diff --git a/requests/auth.py b/requests/auth.py
+index eeface39..fd93179d 100644
+--- a/requests/auth.py
++++ b/requests/auth.py
+@@ -62,9 +62,17 @@ def _basic_auth_str(username, password):
+     if isinstance(password, str):
+         password = password.encode('latin1')
+ 
+-    authstr = 'Basic ' + to_native_string(
+-        b64encode(b':'.join((username, password))).strip()
+-    )
++    # Encode the credentials and ensure ASCII encoding for compatibility with Python 3.8.12
++    encoded = b':'.join((username, password))
++    base64_encoded = b64encode(encoded).strip()
++
++    # Explicitly decode to ASCII string for compatibility
++    if isinstance(base64_encoded, bytes):
++        base64_str = base64_encoded.decode('ascii')
++    else:
++        base64_str = base64_encoded
++
++    authstr = 'Basic ' + base64_str
+ 
+     return authstr
+ 
+diff --git a/test_proxy_auth.py b/test_proxy_auth.py
+new file mode 100644
+index 00000000..c377f627
+--- /dev/null
++++ b/test_proxy_auth.py
+@@ -0,0 +1,55 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++
++"""
++Test script to reproduce the proxy authentication bug in Python 3.8.12.
++"""
++
++import sys
++import base64
++import requests
++from requests.auth import _basic_auth_str
++from requests._internal_utils import to_native_string
++
++def test_basic_auth_string():
++    """Test the _basic_auth_str function to see if it produces the expected output."""
++    username = "testuser"
++    password = "testpass"
++
++    # Generate the basic auth string
++    auth_str = _basic_auth_str(username, password)
++    print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
++    print(f"Auth string: {auth_str}")
++
++    # Expected format: "Basic base64(username:password)"
++    expected_prefix = "Basic "
++    assert auth_str.startswith(expected_prefix), f"Auth string should start with '{expected_prefix}'"
++
++    # Extract the base64 part
++    base64_part = auth_str[len(expected_prefix):]
++    print(f"Base64 part: {base64_part}")
++
++    # The base64 part should be ASCII
++    try:
++        base64_part.encode('ascii')
++        print("Base64 part is ASCII compatible")
++    except UnicodeEncodeError:
++        print("Base64 part is NOT ASCII compatible")
++
++    # Let's also check the raw base64 encoding
++    raw_base64 = base64.b64encode(f"{username}:{password}".encode('utf-8')).decode('ascii')
++    print(f"Raw base64: {raw_base64}")
++
++    # Check the type of the base64 part in the auth string
++    print(f"Type of base64 part: {type(base64_part)}")
++
++    # Check if the to_native_string function might be causing issues
++    encoded_bytes = base64.b64encode(f"{username}:{password}".encode('utf-8'))
++    native_str = to_native_string(encoded_bytes)
++    print(f"Native string from to_native_string: {native_str}")
++    print(f"Type of native string: {type(native_str)}")
++
++    return auth_str
++
++if __name__ == "__main__":
++    test_basic_auth_string()
+\ No newline at end of file
+diff --git a/test_proxy_auth_full.py b/test_proxy_auth_full.py
+new file mode 100644
+index 00000000..b9a186b6
+--- /dev/null
++++ b/test_proxy_auth_full.py
+@@ -0,0 +1,85 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++
++"""
++Test script to reproduce the proxy authentication bug in Python 3.8.12.
++This script simulates a proxy authentication scenario.
++"""
++
++import sys
++import base64
++import requests
++from requests.auth import _basic_auth_str
++from requests._internal_utils import to_native_string
++from requests.adapters import HTTPAdapter
++from requests.models import PreparedRequest
++from urllib3.connection import HTTPConnection
++from urllib3.util import parse_url
++
++# Mock proxy URL
++PROXY_URL = "http://testuser:testpass@proxy.example.com:8080"
++
++def test_proxy_auth_header():
++    """Test how proxy auth headers are generated."""
++    print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
++
++    # Parse the proxy URL
++    from requests.utils import get_auth_from_url
++    username, password = get_auth_from_url(PROXY_URL)
++    proxy_host = parse_url(PROXY_URL).host
++
++    print(f"Proxy URL: {PROXY_URL}")
++    print(f"Username: {username}")
++    print(f"Password: {password}")
++    print(f"Host: {proxy_host}")
++
++    # Test the _basic_auth_str function
++    auth_str = _basic_auth_str(username, password)
++    print(f"Auth string: {auth_str}")
++
++    # Expected format: "Basic base64(username:password)"
++    expected_prefix = "Basic "
++    assert auth_str.startswith(expected_prefix), f"Auth string should start with '{expected_prefix}'"
++
++    # Extract the base64 part
++    base64_part = auth_str[len(expected_prefix):]
++    print(f"Base64 part: {base64_part}")
++
++    # The base64 part should be ASCII
++    try:
++        base64_part.encode('ascii')
++        print("Base64 part is ASCII compatible")
++    except UnicodeEncodeError:
++        print("Base64 part is NOT ASCII compatible")
++
++    # Let's also check the raw base64 encoding
++    raw_base64 = base64.b64encode(f"{username}:{password}".encode('utf-8')).decode('ascii')
++    print(f"Raw base64: {raw_base64}")
++
++    # Check if the to_native_string function might be causing issues
++    encoded_bytes = base64.b64encode(f"{username}:{password}".encode('utf-8'))
++    native_str = to_native_string(encoded_bytes)
++    print(f"Native string from to_native_string: {native_str}")
++    print(f"Type of native string: {type(native_str)}")
++
++    # Check if the auth string is the same as the raw base64
++    if auth_str[len(expected_prefix):] == raw_base64:
++        print("Auth string matches raw base64")
++    else:
++        print("Auth string DOES NOT match raw base64")
++
++    # Simulate how the proxy headers are generated
++    from requests.utils import get_auth_from_url
++    proxy_auth = get_auth_from_url(PROXY_URL)
++    print(f"Proxy auth from URL: {proxy_auth}")
++
++    # Simulate the proxy_headers method in HTTPAdapter
++    headers = {}
++    if proxy_auth[0]:
++        headers['Proxy-Authorization'] = _basic_auth_str(proxy_auth[0], proxy_auth[1])
++        print(f"Proxy headers: {headers}")
++
++    return auth_str
++
++if __name__ == "__main__":
++    test_proxy_auth_header()
+\ No newline at end of file
+diff --git a/test_proxy_request.py b/test_proxy_request.py
+new file mode 100644
+index 00000000..f2dd5521
+--- /dev/null
++++ b/test_proxy_request.py
+@@ -0,0 +1,57 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++
++"""
++Test script to simulate a proxy request with authentication.
++"""
++
++import sys
++import requests
++from requests.auth import _basic_auth_str
++
++def test_proxy_request():
++    """Test a proxy request with authentication."""
++    print(f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
++
++    # Create a session
++    session = requests.Session()
++
++    # Set up proxy with authentication
++    proxies = {
++        'http': 'http://testuser:testpass@proxy.example.com:8080',
++        'https': 'http://testuser:testpass@proxy.example.com:8080'
++    }
++
++    # Make a request through the proxy
++    try:
++        # This will fail with a connection error since the proxy doesn't exist,
++        # but we can still check if the Proxy-Authorization header is correctly set
++        response = session.get('http://example.org/', proxies=proxies)
++        print(f"Response status code: {response.status_code}")
++    except requests.exceptions.RequestException as e:
++        # Print exception
++        print(f"\nException: {e}")
++
++        # Print the proxy headers directly
++        adapter = session.get_adapter('http://example.org/')
++        proxy_headers = adapter.proxy_headers(proxies['http'])
++        print("\nProxy headers:")
++        for key, value in proxy_headers.items():
++            print(f"  {key}: {value}")
++
++        # Verify the auth string format
++        auth_str = proxy_headers.get('Proxy-Authorization', '')
++        if auth_str.startswith('Basic '):
++            base64_part = auth_str[len('Basic '):]
++            try:
++                # Try to decode the base64 part to verify it's valid
++                import base64
++                decoded = base64.b64decode(base64_part).decode('utf-8')
++                username, password = decoded.split(':', 1)
++                print(f"\nDecoded credentials: username='{username}', password='{password}'")
++                print("Authentication string is valid!")
++            except Exception as decode_error:
++                print(f"\nFailed to decode authentication string: {decode_error}")
++
++if __name__ == "__main__":
++    test_proxy_request()
+\ No newline at end of file

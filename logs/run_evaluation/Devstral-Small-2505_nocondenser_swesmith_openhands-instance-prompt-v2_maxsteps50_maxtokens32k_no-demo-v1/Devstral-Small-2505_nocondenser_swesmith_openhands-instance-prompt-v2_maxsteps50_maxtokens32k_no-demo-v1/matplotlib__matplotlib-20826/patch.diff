@@ -1,0 +1,136 @@
+diff --git a/after_clear.png b/after_clear.png
+new file mode 100644
+index 0000000000..def53d184b
+Binary files /dev/null and b/after_clear.png differ
+diff --git a/before_clear.png b/before_clear.png
+new file mode 100644
+index 0000000000..7ffab121a9
+Binary files /dev/null and b/before_clear.png differ
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..42832ce3e2
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,32 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Create a figure with shared axes
++fig, axes = plt.subplots(2, 2, sharex=True, sharey=True)
++
++# Set some properties to make the issue more visible
++for ax in axes.flatten():
++    # Hide top and right ticks for all axes
++    ax.xaxis.set_ticks_position('bottom')
++    ax.yaxis.set_ticks_position('left')
++
++# Plot some data
++x = np.arange(0.0, 2*np.pi, 0.01)
++y = np.sin(x)
++
++# Save the figure before clearing
++plt.suptitle('Before clear()')
++plt.tight_layout(rect=[0, 0, 1, 0.95])
++plt.savefig('before_clear.png')
++
++# Now clear and replot
++for ax in axes.flatten():
++    ax.clear()
++    ax.plot(x, y)
++
++# Save the figure after clearing
++plt.suptitle('After clear()')
++plt.tight_layout(rect=[0, 0, 1, 0.95])
++plt.savefig('after_clear.png')
++
++plt.close()
+\ No newline at end of file
+diff --git a/lib/matplotlib/axes/_base.py b/lib/matplotlib/axes/_base.py
+index 802fd3c997..1022961abc 100644
+--- a/lib/matplotlib/axes/_base.py
++++ b/lib/matplotlib/axes/_base.py
+@@ -1192,9 +1192,25 @@ class _AxesBase(martist.Artist):
+         xaxis_visible = self.xaxis.get_visible()
+         yaxis_visible = self.yaxis.get_visible()
+ 
++        # Store tick positions for shared axes
++        x_tick_labels_above = self.xaxis.get_ticklabel_position('above')
++        x_tick_labels_below = self.xaxis.get_ticklabel_position('below')
++        y_tick_labels_left = self.yaxis.get_ticklabel_position('left')
++        y_tick_labels_right = self.yaxis.get_ticklabel_position('right')
++
+         self.xaxis.clear()
+         self.yaxis.clear()
+ 
++        # Restore tick positions for shared axes
++        if x_tick_labels_above:
++            self.xaxis.set_ticklabel_position('above', True)
++        if x_tick_labels_below:
++            self.xaxis.set_ticklabel_position('below', True)
++        if y_tick_labels_left:
++            self.yaxis.set_ticklabel_position('left', True)
++        if y_tick_labels_right:
++            self.yaxis.set_ticklabel_position('right', True)
++
+         for name, spine in self.spines.items():
+             spine.clear()
+ 
+@@ -1760,7 +1776,7 @@ class _AxesBase(martist.Artist):
+ 
+         if aspect is not None:
+             aspect = float(aspect)
+-            # when box_aspect is set to other than ´None`,
++            # when box_aspect is set to other than Â´None`,
+             # adjustable must be "datalim"
+             for ax in axs:
+                 ax.set_adjustable("datalim")
+diff --git a/lib/matplotlib/axis.py b/lib/matplotlib/axis.py
+index 887cf97ef1..7fd3ae4c20 100644
+--- a/lib/matplotlib/axis.py
++++ b/lib/matplotlib/axis.py
+@@ -799,6 +799,9 @@ class Axis(martist.Artist):
+         - registered callbacks
+         """
+ 
++        # Store visibility state for shared axes
++        visible = self.get_visible()
++
+         self.label.set_text('')  # self.set_label_text would change isDefault_
+ 
+         self._set_scale('linear')
+@@ -815,6 +818,9 @@ class Axis(martist.Artist):
+         self.set_units(None)
+         self.stale = True
+ 
++        # Restore visibility state for shared axes
++        self.set_visible(visible)
++
+     @_api.deprecated("3.4", alternative="Axis.clear()")
+     def cla(self):
+         """Clear this axis."""
+diff --git a/output.png b/output.png
+new file mode 100644
+index 0000000000..d0e728c48a
+Binary files /dev/null and b/output.png differ
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..27e4b67930
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,15 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++fig, axes = plt.subplots(2, 2, sharex=True, sharey=True)
++
++x = np.arange(0.0, 2*np.pi, 0.01)
++y = np.sin(x)
++
++for ax in axes.flatten():
++    ax.clear()
++    ax.plot(x, y)
++
++plt.tight_layout()
++plt.savefig('output.png')
++plt.close()
+\ No newline at end of file

@@ -1,0 +1,130 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..5f307809b7
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,44 @@
++import matplotlib.pyplot as plt
++import numpy as np
++
++# Test 1: Basic test with two 3D subplots
++fig, (ax1, ax2) = plt.subplots(1, 2, subplot_kw={'projection': '3d'})
++ax1.scatter([0,1], [0,1], [0,1])
++ax2.scatter([0,1], [1,0], [1,1], c='r')
++ax1.set_visible(False)
++plt.savefig('/testbed/test1.png')
++plt.close()
++
++# Test 2: Multiple 3D subplots with some visible and some not
++fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, subplot_kw={'projection': '3d'})
++ax1.scatter([0,1], [0,1], [0,1])
++ax2.scatter([0,1], [1,0], [1,1], c='r')
++ax3.scatter([1,0], [1,1], [0,1], c='g')
++ax4.scatter([1,1], [0,1], [1,0], c='m')
++ax2.set_visible(False)  # Hide only the second subplot
++plt.savefig('/testbed/test2.png')
++plt.close()
++
++# Test 3: Test with GridSpec
++fig = plt.figure()
++gs = plt.GridSpec(2, 2)
++ax1 = fig.add_subplot(gs[0, 0], projection='3d')
++ax2 = fig.add_subplot(gs[0, 1], projection='3d')
++ax3 = fig.add_subplot(gs[1, :], projection='3d')
++ax1.scatter([0,1], [0,1], [0,1])
++ax2.scatter([0,1], [1,0], [1,1], c='r')
++ax3.scatter([1,0], [1,1], [0,1], c='g')
++ax2.set_visible(False)  # Hide the middle subplot
++plt.savefig('/testbed/test3.png')
++plt.close()
++
++# Test 4: Test toggling visibility
++fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
++ax.scatter([0,1], [0,1], [0,1])
++ax.set_visible(False)
++plt.savefig('/testbed/test4_off.png')
++ax.set_visible(True)
++plt.savefig('/testbed/test4_on.png')
++plt.close()
++
++print("All tests completed. Check the PNG files in the /testbed directory.")
+\ No newline at end of file
+diff --git a/lib/mpl_toolkits/mplot3d/axes3d.py b/lib/mpl_toolkits/mplot3d/axes3d.py
+index 9db44b7994..74342ed180 100644
+--- a/lib/mpl_toolkits/mplot3d/axes3d.py
++++ b/lib/mpl_toolkits/mplot3d/axes3d.py
+@@ -387,6 +387,11 @@ class Axes3D(Axes):
+ 
+     @martist.allow_rasterization
+     def draw(self, renderer):
++        if renderer is None:
++            raise RuntimeError('No renderer defined')
++        if not self.get_visible():
++            return
++
+         self._unstale_viewLim()
+ 
+         # draw the background patch
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..80f8c1435b
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,28 @@
++import matplotlib.pyplot as plt
++from matplotlib.gridspec import GridSpec
++
++# Test with 3D projection
++fig, (ax1, ax2) = plt.subplots(1, 2, subplot_kw={'projection': '3d'})
++ax1.scatter(1,1,1)
++ax2.scatter(1,1,1, c='r')
++ax1.set_visible(False)
++
++print("ax1 visible:", ax1.get_visible())
++print("ax2 visible:", ax2.get_visible())
++
++# Save the figure to verify visually
++plt.savefig('/testbed/test_3d_visible.png')
++plt.close()
++
++# Test with 2D projection for comparison
++fig2, (ax3, ax4) = plt.subplots(1, 2)
++ax3.plot([0,1], [0,1])
++ax4.plot([0,1], [1,0], c='r')
++ax3.set_visible(False)
++
++print("ax3 visible:", ax3.get_visible())
++print("ax4 visible:", ax4.get_visible())
++
++# Save the figure to verify visually
++plt.savefig('/testbed/test_2d_visible.png')
++plt.close()
+\ No newline at end of file
+diff --git a/test1.png b/test1.png
+new file mode 100644
+index 0000000000..30d6c84799
+Binary files /dev/null and b/test1.png differ
+diff --git a/test2.png b/test2.png
+new file mode 100644
+index 0000000000..f620a93970
+Binary files /dev/null and b/test2.png differ
+diff --git a/test3.png b/test3.png
+new file mode 100644
+index 0000000000..088906524f
+Binary files /dev/null and b/test3.png differ
+diff --git a/test4_off.png b/test4_off.png
+new file mode 100644
+index 0000000000..c2d69b0827
+Binary files /dev/null and b/test4_off.png differ
+diff --git a/test4_on.png b/test4_on.png
+new file mode 100644
+index 0000000000..c378bf9562
+Binary files /dev/null and b/test4_on.png differ
+diff --git a/test_2d_visible.png b/test_2d_visible.png
+new file mode 100644
+index 0000000000..9b76cb5925
+Binary files /dev/null and b/test_2d_visible.png differ
+diff --git a/test_3d_visible.png b/test_3d_visible.png
+new file mode 100644
+index 0000000000..bad2070faf
+Binary files /dev/null and b/test_3d_visible.png differ

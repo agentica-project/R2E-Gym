@@ -1,0 +1,191 @@
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+index cf4df76882..6c074a0e17 100644
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -18,12 +18,26 @@ class DatabaseClient(BaseDatabaseClient):
+         user = conn_params.get('user', '')
+         passwd = conn_params.get('password', '')
+ 
++        # SSL options
++        sslmode = conn_params.get('sslmode', '')
++        sslrootcert = conn_params.get('sslrootcert', '')
++        sslcert = conn_params.get('sslcert', '')
++        sslkey = conn_params.get('sslkey', '')
++
+         if user:
+             args += ['-U', user]
+         if host:
+             args += ['-h', host]
+         if port:
+             args += ['-p', str(port)]
++        if sslmode:
++            args += ['--sslmode', sslmode]
++        if sslrootcert:
++            args += ['--sslrootcert', sslrootcert]
++        if sslcert:
++            args += ['--sslcert', sslcert]
++        if sslkey:
++            args += ['--sslkey', sslkey]
+         args += [dbname]
+ 
+         sigint_handler = signal.getsignal(signal.SIGINT)
+diff --git a/test_dbshell_ssl.py b/test_dbshell_ssl.py
+new file mode 100644
+index 0000000000..1557116a7b
+--- /dev/null
++++ b/test_dbshell_ssl.py
+@@ -0,0 +1,42 @@
++import os
++import sys
++from unittest import mock
++import subprocess
++
++from django.db.backends.postgresql.client import DatabaseClient
++
++# Store the command arguments
++command_args = None
++
++# Mock subprocess.run to capture the command without actually executing it
++def mock_subprocess_run(*args, env=os.environ, **kwargs):
++    global command_args
++    command_args = list(*args)
++    print(f"Command: {command_args}")
++    print(f"Environment: {env}")
++    return subprocess.CompletedProcess(command_args, 0)
++
++# Test with SSL options
++conn_params = {
++    'database': 'testdb',
++    'user': 'testuser',
++    'host': 'localhost',
++    'port': '5432',
++    'sslmode': 'verify-ca',
++    'sslrootcert': '/path/to/ca.crt',
++    'sslcert': '/path/to/client_cert_chain.crt',
++    'sslkey': '/path/to/client_key.key'
++}
++
++with mock.patch('subprocess.run', new=mock_subprocess_run):
++    DatabaseClient.runshell_db(conn_params)
++
++expected_command = ['psql', '-U', 'testuser', '-h', 'localhost', '-p', '5432',
++                      '--sslmode', 'verify-ca', '--sslrootcert', '/path/to/ca.crt',
++                      '--sslcert', '/path/to/client_cert_chain.crt', '--sslkey', '/path/to/client_key.key',
++                      'testdb']
++
++print("\nTest passed! The command now includes SSL options.")
++print(f"Expected: {expected_command}")
++print(f"Actual: {command_args}")
++assert command_args == expected_command, "Command doesn't match expected output"
+\ No newline at end of file
+diff --git a/test_dbshell_ssl_comprehensive.py b/test_dbshell_ssl_comprehensive.py
+new file mode 100644
+index 0000000000..de305b5b8b
+--- /dev/null
++++ b/test_dbshell_ssl_comprehensive.py
+@@ -0,0 +1,104 @@
++import os
++import sys
++from unittest import mock
++import subprocess
++
++from django.db.backends.postgresql.client import DatabaseClient
++
++def test_with_ssl_options():
++    """Test that SSL options are correctly passed to psql command."""
++    # Store the command arguments
++    command_args = None
++
++    # Mock subprocess.run to capture the command without actually executing it
++    def mock_subprocess_run(*args, env=os.environ, **kwargs):
++        nonlocal command_args
++        command_args = list(*args)
++        return subprocess.CompletedProcess(command_args, 0)
++
++    # Test with SSL options
++    conn_params = {
++        'database': 'testdb',
++        'user': 'testuser',
++        'host': 'localhost',
++        'port': '5432',
++        'sslmode': 'verify-ca',
++        'sslrootcert': '/path/to/ca.crt',
++        'sslcert': '/path/to/client_cert_chain.crt',
++        'sslkey': '/path/to/client_key.key'
++    }
++
++    with mock.patch('subprocess.run', new=mock_subprocess_run):
++        DatabaseClient.runshell_db(conn_params)
++
++    expected_command = ['psql', '-U', 'testuser', '-h', 'localhost', '-p', '5432',
++                        '--sslmode', 'verify-ca', '--sslrootcert', '/path/to/ca.crt',
++                        '--sslcert', '/path/to/client_cert_chain.crt', '--sslkey', '/path/to/client_key.key',
++                        'testdb']
++
++    assert command_args == expected_command, f"Command doesn't match expected output\nExpected: {expected_command}\nActual: {command_args}"
++    print("SSL options test passed!")
++
++def test_without_ssl_options():
++    """Test that commands without SSL options still work."""
++    # Store the command arguments
++    command_args = None
++
++    # Mock subprocess.run to capture the command without actually executing it
++    def mock_subprocess_run(*args, env=os.environ, **kwargs):
++        nonlocal command_args
++        command_args = list(*args)
++        return subprocess.CompletedProcess(command_args, 0)
++
++    # Test without SSL options
++    conn_params = {
++        'database': 'testdb',
++        'user': 'testuser',
++        'host': 'localhost',
++        'port': '5432'
++    }
++
++    with mock.patch('subprocess.run', new=mock_subprocess_run):
++        DatabaseClient.runshell_db(conn_params)
++
++    expected_command = ['psql', '-U', 'testuser', '-h', 'localhost', '-p', '5432', 'testdb']
++
++    assert command_args == expected_command, f"Command doesn't match expected output\nExpected: {expected_command}\nActual: {command_args}"
++    print("Non-SSL options test passed!")
++
++def test_with_partial_ssl_options():
++    """Test with only some SSL options provided."""
++    # Store the command arguments
++    command_args = None
++
++    # Mock subprocess.run to capture the command without actually executing it
++    def mock_subprocess_run(*args, env=os.environ, **kwargs):
++        nonlocal command_args
++        command_args = list(*args)
++        return subprocess.CompletedProcess(command_args, 0)
++
++    # Test with partial SSL options
++    conn_params = {
++        'database': 'testdb',
++        'user': 'testuser',
++        'host': 'localhost',
++        'port': '5432',
++        'sslmode': 'verify-ca',
++        'sslrootcert': '/path/to/ca.crt'
++    }
++
++    with mock.patch('subprocess.run', new=mock_subprocess_run):
++        DatabaseClient.runshell_db(conn_params)
++
++    expected_command = ['psql', '-U', 'testuser', '-h', 'localhost', '-p', '5432',
++                        '--sslmode', 'verify-ca', '--sslrootcert', '/path/to/ca.crt',
++                        'testdb']
++
++    assert command_args == expected_command, f"Command doesn't match expected output\nExpected: {expected_command}\nActual: {command_args}"
++    print("Partial SSL options test passed!")
++
++if __name__ == "__main__":
++    test_with_ssl_options()
++    test_without_ssl_options()
++    test_with_partial_ssl_options()
++    print("\nAll tests passed!")
+\ No newline at end of file

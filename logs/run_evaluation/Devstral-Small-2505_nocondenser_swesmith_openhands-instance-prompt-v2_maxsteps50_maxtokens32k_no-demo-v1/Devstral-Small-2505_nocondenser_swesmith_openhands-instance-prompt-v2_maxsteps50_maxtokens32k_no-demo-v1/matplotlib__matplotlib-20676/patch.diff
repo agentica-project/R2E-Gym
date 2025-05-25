@@ -1,0 +1,128 @@
+diff --git a/issue_example.py b/issue_example.py
+new file mode 100644
+index 0000000000..8885e31b69
+--- /dev/null
++++ b/issue_example.py
+@@ -0,0 +1,9 @@
++from matplotlib import pyplot as plt
++from matplotlib.widgets import SpanSelector
++
++fig, ax = plt.subplots()
++ax.plot([10, 20], [10, 20])
++print(f"Initial xlim: {ax.get_xlim()}")
++ss = SpanSelector(ax, print, "horizontal", interactive=True)
++print(f"After SpanSelector xlim: {ax.get_xlim()}")
++plt.show()
+\ No newline at end of file
+diff --git a/lib/matplotlib/widgets.py b/lib/matplotlib/widgets.py
+index a199e45d40..89f8da30c7 100644
+--- a/lib/matplotlib/widgets.py
++++ b/lib/matplotlib/widgets.py
+@@ -2156,12 +2156,20 @@ class SpanSelector(_SelectorWidget):
+             self.artists.append(self._rect)
+ 
+     def _setup_edge_handle(self, props):
++        # Store current axis limits to restore them after adding handles
++        xlim = self.ax.get_xlim()
++        ylim = self.ax.get_ylim()
++
+         self._edge_handles = ToolLineHandles(self.ax, self.extents,
+                                              direction=self.direction,
+                                              line_props=props,
+                                              useblit=self.useblit)
+         self.artists.extend([line for line in self._edge_handles.artists])
+ 
++        # Restore original axis limits
++        self.ax.set_xlim(xlim)
++        self.ax.set_ylim(ylim)
++
+     def _press(self, event):
+         """Button press event handler."""
+         if self._interactive and self._rect.get_visible():
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..5721eaa589
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,11 @@
++from matplotlib import pyplot as plt
++from matplotlib.widgets import SpanSelector
++
++def onselect(vmin, vmax):
++    print(f"Selected range: {vmin}, {vmax}")
++
++fig, ax = plt.subplots()
++ax.plot([10, 20], [10, 20])
++print(f"Initial xlim: {ax.get_xlim()}")
++ss = SpanSelector(ax, onselect, "horizontal", interactive=True)
++plt.show()
+\ No newline at end of file
+diff --git a/test_interactive_functionality.py b/test_interactive_functionality.py
+new file mode 100644
+index 0000000000..b0b5f9a412
+--- /dev/null
++++ b/test_interactive_functionality.py
+@@ -0,0 +1,22 @@
++from matplotlib import pyplot as plt
++from matplotlib.widgets import SpanSelector
++import numpy as np
++
++def onselect(vmin, vmax):
++    print(f"Selected range: {vmin}, {vmax}")
++
++# Create a figure with data that includes 0
++x = np.linspace(-5, 5, 100)
++y = np.sin(x)
++
++fig, ax = plt.subplots()
++ax.plot(x, y)
++print(f"Initial xlim: {ax.get_xlim()}")
++
++# Add SpanSelector with interactive=True
++ss = SpanSelector(ax, onselect, "horizontal", interactive=True)
++print(f"After SpanSelector xlim: {ax.get_xlim()}")
++
++# Try to interact with the SpanSelector
++# (This won't work in the headless environment, but the code should run without errors)
++plt.show()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..f79e8fcfe9
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,33 @@
++from matplotlib import pyplot as plt
++from matplotlib.widgets import SpanSelector
++import numpy as np
++
++def onselect(vmin, vmax):
++    print(f"Selected range: {vmin}, {vmax}")
++
++# Create a figure with two subplots to compare behavior
++fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
++
++# Plot data that doesn't include 0
++x = np.linspace(10, 20, 100)
++y = np.sin(x) + x
++
++# First plot without interactive SpanSelector
++ax1.plot(x, y)
++ax1.set_title('Without interactive SpanSelector')
++print(f"ax1 initial xlim: {ax1.get_xlim()}")
++
++# Second plot with interactive SpanSelector
++ax2.plot(x, y)
++ss = SpanSelector(ax2, onselect, "horizontal", interactive=True)
++ax2.set_title('With interactive SpanSelector')
++print(f"ax2 initial xlim: {ax2.get_xlim()}")
++
++# Add a text annotation to show the xlim values on the plot
++ax1.text(0.95, 0.95, f"xlim: {ax1.get_xlim()}",
++         transform=ax1.transAxes, ha='right', va='top')
++ax2.text(0.95, 0.95, f"xlim: {ax2.get_xlim()}",
++         transform=ax2.transAxes, ha='right', va='top')
++
++plt.tight_layout()
++plt.show()
+\ No newline at end of file

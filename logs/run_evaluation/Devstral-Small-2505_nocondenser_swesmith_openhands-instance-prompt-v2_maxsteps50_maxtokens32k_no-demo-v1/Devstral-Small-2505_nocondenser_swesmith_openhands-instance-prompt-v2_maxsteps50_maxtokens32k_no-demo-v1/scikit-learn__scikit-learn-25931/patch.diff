@@ -1,0 +1,172 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..3def45999
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,46 @@
++import pandas as pd
++import numpy as np
++from sklearn.ensemble import IsolationForest
++
++# Test 1: Basic functionality with DataFrame
++print("Test 1: Basic functionality with DataFrame")
++X = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++clf = IsolationForest(random_state=0, contamination=0.05).fit(X)
++predictions = clf.predict(X)
++print(f"Predictions: {predictions}")
++print()
++
++# Test 2: Check that feature names are preserved
++print("Test 2: Check that feature names are preserved")
++print(f"Feature names in model: {clf.feature_names_in_}")
++print()
++
++# Test 3: Test with numpy array
++print("Test 3: Test with numpy array")
++X_array = np.array([-1.1, 0.3, 0.5, 100]).reshape(-1, 1)
++clf_array = IsolationForest(random_state=0, contamination=0.05).fit(X_array)
++predictions_array = clf_array.predict(X_array)
++print(f"Predictions with array: {predictions_array}")
++print()
++
++# Test 4: Test predict with different input types
++print("Test 4: Test predict with different input types")
++# Fit with DataFrame
++clf_df = IsolationForest(random_state=0, contamination=0.05).fit(X)
++# Predict with DataFrame
++predictions_df = clf_df.predict(X)
++print(f"Predictions with DataFrame: {predictions_df}")
++# Predict with array
++predictions_array_from_df = clf_df.predict(X_array)
++print(f"Predictions with array from DataFrame model: {predictions_array_from_df}")
++print()
++
++# Test 5: Test with different contamination values
++print("Test 5: Test with different contamination values")
++for contamination in ["auto", 0.05, 0.1]:
++    clf = IsolationForest(random_state=0, contamination=contamination).fit(X)
++    predictions = clf.predict(X)
++    print(f"Contamination={contamination}, Predictions: {predictions}")
++print()
++
++print("All tests completed successfully!")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..3e5a40580
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,19 @@
++import pandas as pd
++import warnings
++from sklearn.ensemble import IsolationForest
++
++# Enable all warnings to be displayed
++warnings.filterwarnings('always')
++
++# Create a simple DataFrame with feature names
++X = pd.DataFrame({"a": [-1.1, 0.3, 0.5, 100]})
++
++# Fit IsolationForest with contamination="auto" (should not warn)
++print("Fitting with contamination='auto':")
++clf_auto = IsolationForest(random_state=0, contamination="auto").fit(X)
++print("Done.\n")
++
++# Fit IsolationForest with contamination=0.05 (should warn)
++print("Fitting with contamination=0.05:")
++clf_005 = IsolationForest(random_state=0, contamination=0.05).fit(X)
++print("Done.")
+\ No newline at end of file
+diff --git a/sklearn/ensemble/_iforest.py b/sklearn/ensemble/_iforest.py
+index 4d6c1c3f0..7ec9096e9 100644
+--- a/sklearn/ensemble/_iforest.py
++++ b/sklearn/ensemble/_iforest.py
+@@ -345,11 +345,13 @@ class IsolationForest(OutlierMixin, BaseBagging):
+             return self
+ 
+         # else, define offset_ wrt contamination parameter
+-        self.offset_ = np.percentile(self.score_samples(X), 100.0 * self.contamination)
++        # Use check_input=False to avoid feature names validation warning
++        # when X has feature names but was fitted with feature names
++        self.offset_ = np.percentile(self.score_samples(X, check_input=False), 100.0 * self.contamination)
+ 
+         return self
+ 
+-    def predict(self, X):
++    def predict(self, X, check_input=True):
+         """
+         Predict if a particular sample is an outlier or not.
+ 
+@@ -360,6 +362,10 @@ class IsolationForest(OutlierMixin, BaseBagging):
+             ``dtype=np.float32`` and if a sparse matrix is provided
+             to a sparse ``csr_matrix``.
+ 
++        check_input : bool, default=True
++            Whether to check the contents of X. If False, the input array is
++            assumed to be valid.
++
+         Returns
+         -------
+         is_inlier : ndarray of shape (n_samples,)
+@@ -367,12 +373,12 @@ class IsolationForest(OutlierMixin, BaseBagging):
+             be considered as an inlier according to the fitted model.
+         """
+         check_is_fitted(self)
+-        decision_func = self.decision_function(X)
++        decision_func = self.decision_function(X, check_input=check_input)
+         is_inlier = np.ones_like(decision_func, dtype=int)
+         is_inlier[decision_func < 0] = -1
+         return is_inlier
+ 
+-    def decision_function(self, X):
++    def decision_function(self, X, check_input=True):
+         """
+         Average anomaly score of X of the base classifiers.
+ 
+@@ -392,6 +398,10 @@ class IsolationForest(OutlierMixin, BaseBagging):
+             ``dtype=np.float32`` and if a sparse matrix is provided
+             to a sparse ``csr_matrix``.
+ 
++        check_input : bool, default=True
++            Whether to check the contents of X. If False, the input array is
++            assumed to be valid.
++
+         Returns
+         -------
+         scores : ndarray of shape (n_samples,)
+@@ -402,9 +412,9 @@ class IsolationForest(OutlierMixin, BaseBagging):
+         # We subtract self.offset_ to make 0 be the threshold value for being
+         # an outlier:
+ 
+-        return self.score_samples(X) - self.offset_
++        return self.score_samples(X, check_input=check_input) - self.offset_
+ 
+-    def score_samples(self, X):
++    def score_samples(self, X, check_input=True):
+         """
+         Opposite of the anomaly score defined in the original paper.
+ 
+@@ -422,6 +432,10 @@ class IsolationForest(OutlierMixin, BaseBagging):
+         X : {array-like, sparse matrix} of shape (n_samples, n_features)
+             The input samples.
+ 
++        check_input : bool, default=True
++            Whether to check the contents of X. If False, the input array is
++            assumed to be valid.
++
+         Returns
+         -------
+         scores : ndarray of shape (n_samples,)
+@@ -433,7 +447,11 @@ class IsolationForest(OutlierMixin, BaseBagging):
+         check_is_fitted(self)
+ 
+         # Check data
+-        X = self._validate_data(X, accept_sparse="csr", dtype=np.float32, reset=False)
++        if check_input:
++            X = self._validate_data(X, accept_sparse="csr", dtype=np.float32, reset=False)
++        else:
++            # Still need to convert to the right dtype and format
++            X = check_array(X, accept_sparse="csr", dtype=np.float32, force_all_finite=True)
+ 
+         # Take the opposite of the scores as bigger is better (here less
+         # abnormal)

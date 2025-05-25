@@ -1,0 +1,156 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index 27b5cbd379..df20adc0c0 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -120,9 +120,10 @@ class EnumSerializer(BaseSerializer):
+     def serialize(self):
+         enum_class = self.value.__class__
+         module = enum_class.__module__
+-        v_string, v_imports = serializer_factory(self.value.value).serialize()
+-        imports = {'import %s' % module, *v_imports}
+-        return "%s.%s(%s)" % (module, enum_class.__name__, v_string), imports
++        # Use the enum name instead of the value to avoid translation issues
++        name_string = repr(self.value.name)
++        imports = {'import %s' % module}
++        return "%s.%s[%s]" % (module, enum_class.__name__, name_string), imports
+ 
+ 
+ class FloatSerializer(BaseSimpleSerializer):
+diff --git a/reproduce_enum_issue.py b/reproduce_enum_issue.py
+new file mode 100644
+index 0000000000..909372ea1a
+--- /dev/null
++++ b/reproduce_enum_issue.py
+@@ -0,0 +1,22 @@
++from enum import Enum
++import os
++import sys
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Create a simple Enum
++class Status(Enum):
++    GOOD = 'Good'
++    BAD = 'Bad'
++
++    def __str__(self):
++        return self.name
++
++# Import the serializer to test how it handles the Enum
++from django.db.migrations.serializer import serializer_factory
++
++# Test the serialization
++serialized, imports = serializer_factory(Status.GOOD).serialize()
++print(f"Serialized Enum: {serialized}")
++print(f"Imports: {imports}")
+\ No newline at end of file
+diff --git a/test_enum_translation.py b/test_enum_translation.py
+new file mode 100644
+index 0000000000..f2c9e3e8bc
+--- /dev/null
++++ b/test_enum_translation.py
+@@ -0,0 +1,36 @@
++from enum import Enum
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db.migrations.serializer import serializer_factory
++
++# Create an Enum with values that could be translated
++class Status(Enum):
++    GOOD = 'Good'  # This would be translated in a real application
++    BAD = 'Bad'    # This would be translated in a real application
++
++# Simulate the migration file creation
++serialized, imports = serializer_factory(Status.GOOD).serialize()
++print(f"Serialized Enum: {serialized}")
++
++# Simulate a translation that changes the value
++class TranslatedStatus(Enum):
++    GOOD = 'Bien'  # French for 'Good'
++    BAD = 'Mauvais'  # French for 'Bad'
++
++# Try to reconstruct the original enum using the translated value
++# This would fail with the original implementation
++try:
++    # With the old implementation, this would try to do:
++    # TranslatedStatus('Good') which would fail because 'Good' is not a valid value
++    print("With the old implementation, this would fail:")
++    TranslatedStatus('Good')  # This would raise ValueError: 'Good' is not a valid TranslatedStatus
++except ValueError as e:
++    print(f"  ValueError: {e}")
++
++# With our new implementation, we use the name 'GOOD' which is stable
++print("\nWith our new implementation, we use the name 'GOOD':")
++name = serialized.split('[')[-1].split(']')[0].strip("'")
++print(f"  Extracting name: {name}")
++print(f"  Status[{name}] = {Status.GOOD}")
++print(f"  TranslatedStatus[{name}] = {TranslatedStatus.GOOD}")  # This works because we're using the name, not the value
+\ No newline at end of file
+diff --git a/verify_enum_fix.py b/verify_enum_fix.py
+new file mode 100644
+index 0000000000..11ef5c8fff
+--- /dev/null
++++ b/verify_enum_fix.py
+@@ -0,0 +1,59 @@
++from enum import Enum, IntEnum
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db.migrations.serializer import serializer_factory
++
++# Test with string Enum
++class Status(Enum):
++    GOOD = 'Good'
++    BAD = 'Bad'
++
++# Test with integer Enum
++class Priority(IntEnum):
++    LOW = 1
++    MEDIUM = 2
++    HIGH = 3
++
++# Test serialization of string Enum
++status_good_serialized, status_good_imports = serializer_factory(Status.GOOD).serialize()
++print(f"Status.GOOD serialized as: {status_good_serialized}")
++print(f"Imports: {status_good_imports}")
++
++# Test serialization of integer Enum
++priority_high_serialized, priority_high_imports = serializer_factory(Priority.HIGH).serialize()
++print(f"\nPriority.HIGH serialized as: {priority_high_serialized}")
++print(f"Imports: {priority_high_imports}")
++
++# Verify that we can reconstruct the Enum from the serialized form
++try:
++    # Extract the module and class name from the serialized string
++    module_name = status_good_imports.pop().replace('import ', '')
++    class_name = Status.__name__
++
++    # Import the module and class
++    module = __import__(module_name)
++    enum_class = getattr(module, class_name)
++
++    # Extract the name from the serialized string
++    name = status_good_serialized.split('[')[-1].split(']')[0].strip("'")
++
++    # Get the enum member by name
++    reconstructed_status = getattr(enum_class, name)
++    print(f"\nReconstructed Status.GOOD: {reconstructed_status}")
++    print(f"Original == Reconstructed: {Status.GOOD == reconstructed_status}")
++except Exception as e:
++    print(f"\nError reconstructing enum: {e}")
++
++# Test with a more complex Enum structure
++class NestedEnum(Enum):
++    class InnerEnum(Enum):
++        A = 1
++        B = 2
++
++    OUTER_A = InnerEnum.A
++    OUTER_B = InnerEnum.B
++
++nested_serialized, nested_imports = serializer_factory(NestedEnum.OUTER_A).serialize()
++print(f"\nNestedEnum.OUTER_A serialized as: {nested_serialized}")
++print(f"Imports: {nested_imports}")
+\ No newline at end of file

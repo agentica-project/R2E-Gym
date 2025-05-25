@@ -1,0 +1,268 @@
+diff --git a/setup.py b/setup.py
+index a427d5493..978e3d8e0 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/domains/python.py b/sphinx/domains/python.py
+index 3ca730e30..78408ff31 100644
+--- a/sphinx/domains/python.py
++++ b/sphinx/domains/python.py
+@@ -115,10 +115,11 @@ def _parse_annotation(annotation: str) -> List[Node]:
+             return result
+         elif isinstance(node, ast.Tuple):
+             result = []
+-            for elem in node.elts:
+-                result.extend(unparse(elem))
+-                result.append(addnodes.desc_sig_punctuation('', ', '))
+-            result.pop()
++            if node.elts:  # Only process if there are elements
++                for elem in node.elts:
++                    result.extend(unparse(elem))
++                    result.append(addnodes.desc_sig_punctuation('', ', '))
++                result.pop()  # Remove the last comma
+             return result
+         else:
+             raise SyntaxError  # unsupported syntax
+diff --git a/test_empty_tuple.py b/test_empty_tuple.py
+new file mode 100644
+index 000000000..d6378cc37
+--- /dev/null
++++ b/test_empty_tuple.py
+@@ -0,0 +1,5 @@
++from typing import Tuple
++
++def foo() -> Tuple[()]:
++    """Sample text."""
++    return ()
+\ No newline at end of file
+diff --git a/test_parse_annotation.py b/test_parse_annotation.py
+new file mode 100644
+index 000000000..116d0b8f2
+--- /dev/null
++++ b/test_parse_annotation.py
+@@ -0,0 +1,19 @@
++import ast
++from sphinx.domains.python import _parse_annotation
++
++# Test with an empty tuple type annotation
++annotation = "Tuple[()]"
++
++try:
++    result = _parse_annotation(annotation)
++    print("Success! Result:", result)
++    # Print the result in a more readable format
++    for node in result:
++        if hasattr(node, 'children'):
++            print(f"  {type(node).__name__}: {node.children}")
++        else:
++            print(f"  {type(node).__name__}: {node}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/test_sphinx_doc.py b/test_sphinx_doc.py
+new file mode 100644
+index 000000000..dc96b4333
+--- /dev/null
++++ b/test_sphinx_doc.py
+@@ -0,0 +1,53 @@
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for the test
++temp_dir = tempfile.mkdtemp()
++try:
++    # Create a simple package with an empty tuple type annotation
++    pkg_dir = Path(temp_dir) / "test_pkg"
++    pkg_dir.mkdir()
++    (pkg_dir / "__init__.py").write_text("")
++    (pkg_dir / "module.py").write_text("""
++from typing import Tuple
++
++def foo() -> Tuple[()]:
++    \"\"\"Sample text.\"\"\"
++    return ()
++
++def bar() -> Tuple[int, str]:
++    \"\"\"Another function.\"\"\"
++    return (1, "test")
++""")
++
++    # Create a Sphinx project
++    doc_dir = Path(temp_dir) / "docs"
++    doc_dir.mkdir()
++    (doc_dir / "conf.py").write_text("""
++import os
++import sys
++sys.path.insert(0, os.path.abspath('..'))
++
++extensions = ['sphinx.ext.autodoc', 'sphinx.ext.viewcode']
++""")
++    (doc_dir / "index.rst").write_text("""
++.. toctree::
++
++.. automodule:: test_pkg.module
++""")
++
++    # Run sphinx-apidoc to generate reST files
++    os.chdir(doc_dir)
++    os.system("sphinx-apidoc -f -o api ../test_pkg")
++
++    # Build the documentation
++    print("Building documentation...")
++    result = os.system("sphinx-build -M html . _build")
++
++    print(f"Build result: {result}")
++finally:
++    # Clean up
++    shutil.rmtree(temp_dir)
+\ No newline at end of file
+diff --git a/test_sphinx_empty_tuple.py b/test_sphinx_empty_tuple.py
+new file mode 100644
+index 000000000..f08055a3f
+--- /dev/null
++++ b/test_sphinx_empty_tuple.py
+@@ -0,0 +1,49 @@
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for the test
++temp_dir = tempfile.mkdtemp()
++try:
++    # Create a simple package with an empty tuple type annotation
++    pkg_dir = Path(temp_dir) / "test_pkg"
++    pkg_dir.mkdir()
++    (pkg_dir / "__init__.py").write_text("")
++    (pkg_dir / "module.py").write_text("""
++from typing import Tuple
++
++def foo() -> Tuple[()]:
++    \"\"\"Sample text.\"\"\"
++    return ()
++""")
++
++    # Create a Sphinx project
++    doc_dir = Path(temp_dir) / "docs"
++    doc_dir.mkdir()
++    (doc_dir / "conf.py").write_text("""
++import os
++import sys
++sys.path.insert(0, os.path.abspath('..'))
++
++extensions = ['sphinx.ext.autodoc', 'sphinx.ext.viewcode']
++""")
++    (doc_dir / "index.rst").write_text("""
++.. toctree::
++
++.. automodule:: test_pkg.module
++""")
++
++    # Run sphinx-apidoc to generate reST files
++    os.chdir(doc_dir)
++    os.system("sphinx-apidoc -f -o api ../test_pkg")
++
++    # Build the documentation
++    print("Building documentation...")
++    result = os.system("sphinx-build -M html . _build")
++
++    print(f"Build result: {result}")
++finally:
++    # Clean up
++    shutil.rmtree(temp_dir)
+\ No newline at end of file
+diff --git a/test_tuples.py b/test_tuples.py
+new file mode 100644
+index 000000000..ac1a21e7e
+--- /dev/null
++++ b/test_tuples.py
+@@ -0,0 +1,19 @@
++import ast
++from sphinx.domains.python import _parse_annotation
++
++# Test cases
++test_cases = [
++    "Tuple[()]",          # Empty tuple
++    "Tuple[(int, str)]",  # Non-empty tuple
++    "Tuple[(), int]",     # Tuple with mixed types
++]
++
++for annotation in test_cases:
++    print(f"\nTesting: {annotation}")
++    try:
++        result = _parse_annotation(annotation)
++        print(f"Success! Result: {[str(n) for n in result]}")
++    except Exception as e:
++        print(f"Error: {type(e).__name__}: {e}")
++        import traceback
++        traceback.print_exc()
+\ No newline at end of file
+diff --git a/test_unparse_empty_tuple.py b/test_unparse_empty_tuple.py
+new file mode 100644
+index 000000000..d3b75f5f1
+--- /dev/null
++++ b/test_unparse_empty_tuple.py
+@@ -0,0 +1,13 @@
++import ast
++from sphinx.domains.python import _parse_annotation
++
++# Test with an empty tuple type annotation
++annotation = "Tuple[()]"
++
++try:
++    result = _parse_annotation(annotation)
++    print("Success! Result:", result)
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

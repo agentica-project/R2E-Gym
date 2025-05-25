@@ -1,0 +1,88 @@
+diff --git a/test_ignore_paths.py b/test_ignore_paths.py
+new file mode 100755
+index 000000000..76575e36e
+--- /dev/null
++++ b/test_ignore_paths.py
+@@ -0,0 +1,81 @@
++#!/usr/bin/env python3
++
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory structure for testing
++def setup_test_environment():
++    temp_dir = tempfile.mkdtemp()
++    src_dir = os.path.join(temp_dir, "src")
++    gen_dir = os.path.join(src_dir, "gen")
++    os.makedirs(gen_dir, exist_ok=True)
++
++    # Create some Python files
++    with open(os.path.join(src_dir, "__init__.py"), "w") as f:
++        f.write("# src/__init__.py")
++
++    with open(os.path.join(src_dir, "main.py"), "w") as f:
++        f.write("x = 1  # This should be checked\n")
++
++    with open(os.path.join(gen_dir, "__init__.py"), "w") as f:
++        f.write("# gen/__init__.py")
++
++    with open(os.path.join(gen_dir, "auto.py"), "w") as f:
++        f.write("x = 1  # This should NOT be checked\n  # Missing final newline")
++
++    # Create pyproject.toml with ignore-paths
++    pyproject_toml = os.path.join(temp_dir, "pyproject.toml")
++    with open(pyproject_toml, "w") as f:
++        f.write("""[tool.pylint.MASTER]
++ignore-paths = [
++  # Auto generated
++  "^src/gen/.*$",
++]
++""")
++
++    return temp_dir
++
++def cleanup(temp_dir):
++    shutil.rmtree(temp_dir, ignore_errors=True)
++
++def main():
++    temp_dir = setup_test_environment()
++    try:
++        print(f"Created test environment in {temp_dir}")
++        print("Directory structure:")
++        for root, dirs, files in os.walk(temp_dir):
++            level = root.replace(temp_dir, '').count(os.sep)
++            indent = ' ' * 4 * level
++            print(f"{indent}{os.path.basename(root)}/")
++            sub_indent = ' ' * 4 * (level + 1)
++            for f in files:
++                print(f"{sub_indent}{f}")
++
++        # Run pylint with recursive flag
++        print("\nRunning pylint with --recursive=y:")
++        os.chdir(temp_dir)
++        import subprocess
++        result = subprocess.run(
++            ["pylint", "--recursive=y", "src/"],
++            capture_output=True,
++            text=True
++        )
++        print(f"Pylint exit code: {result.returncode}")
++        print("Pylint output:")
++        print(result.stdout)
++
++        # Check if files in gen/ directory were checked
++        print("\nChecking if files in gen/ directory were checked:")
++        if "src/gen/auto.py" in result.stdout:
++            print("FAIL: Files in gen/ directory were checked despite ignore-paths")
++        else:
++            print("PASS: Files in gen/ directory were not checked")
++
++    finally:
++        cleanup(temp_dir)
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file

@@ -1,0 +1,66 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..a8f7597d76
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,39 @@
++from sympy import S
++import inspect
++import types
++
++# Monkey patch Float.__eq__ to add debugging
++from sympy.core.numbers import Float
++original_eq = Float.__eq__
++
++def debug_eq(self, other):
++    print(f"Float.__eq__ called with self={self}, other={other}, type(other)={type(other)}")
++    result = original_eq(self, other)
++    print(f"Float.__eq__ returning {result}")
++    return result
++
++Float.__eq__ = debug_eq
++
++# Test the issue
++zero_float = S(0.0)
++zero_int = S(0)
++false_bool = S.false
++
++print("S(0.0) == S.false:", zero_float == false_bool)
++print("S.false == S(0.0):", false_bool == zero_float)
++print("S(0) == S.false:", zero_int == false_bool)
++print("S.false == S(0):", false_bool == zero_int)
++
++# Print more information
++print("\nType of S(0.0):", type(zero_float))
++print("Type of S.false:", type(false_bool))
++print("Type of S(0):", type(zero_int))
++
++# Print the __eq__ method that's being called
++print("\n__eq__ method called for S(0.0) == S.false:", zero_float.__eq__.__module__ + "." + zero_float.__eq__.__qualname__)
++print("__eq__ method called for S.false == S(0.0):", false_bool.__eq__.__module__ + "." + false_bool.__eq__.__qualname__)
++
++# Print _hashable_content
++print("\n_hashable_content of S(0.0):", zero_float._hashable_content())
++print("_hashable_content of S.false:", false_bool._hashable_content())
++print("_hashable_content of S(0):", zero_int._hashable_content())
+\ No newline at end of file
+diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py
+index 79f6a7d165..b536ff66ec 100644
+--- a/sympy/core/numbers.py
++++ b/sympy/core/numbers.py
+@@ -1386,10 +1386,13 @@ def __eq__(self, other):
+             other = _sympify(other)
+         except SympifyError:
+             return NotImplemented
+-        if not self:
+-            return not other
+         if isinstance(other, Boolean):
++            # Always return False for Boolean objects to ensure symmetry
++            # This fixes the issue where S(0.0) == S.false returns True
++            # but S.false == S(0.0) returns False
+             return False
++        if not self:
++            return not other
+         if other.is_NumberSymbol:
+             if other.is_irrational:
+                 return False

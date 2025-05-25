@@ -1,0 +1,133 @@
+diff --git a/django/core/management/commands/flush.py b/django/core/management/commands/flush.py
+index e8ed3967f7..bc8021cf4e 100644
+--- a/django/core/management/commands/flush.py
++++ b/django/core/management/commands/flush.py
+@@ -60,7 +60,7 @@ Are you sure you want to do this?
+ 
+         if confirm == 'yes':
+             try:
+-                connection.ops.execute_sql_flush(database, sql_list)
++                connection.ops.execute_sql_flush(sql_list)
+             except Exception as exc:
+                 raise CommandError(
+                     "Database %s couldn't be flushed. Possible reasons:\n"
+diff --git a/django/db/backends/base/operations.py b/django/db/backends/base/operations.py
+index 70ac07ae09..f07580c18b 100644
+--- a/django/db/backends/base/operations.py
++++ b/django/db/backends/base/operations.py
+@@ -400,9 +400,9 @@ class BaseDatabaseOperations:
+         """
+         raise NotImplementedError('subclasses of BaseDatabaseOperations must provide a sql_flush() method')
+ 
+-    def execute_sql_flush(self, using, sql_list):
++    def execute_sql_flush(self, sql_list):
+         """Execute a list of SQL statements to flush the database."""
+-        with transaction.atomic(using=using, savepoint=self.connection.features.can_rollback_ddl):
++        with transaction.atomic(using=self.connection.alias, savepoint=self.connection.features.can_rollback_ddl):
+             with self.connection.cursor() as cursor:
+                 for sql in sql_list:
+                     cursor.execute(sql)
+diff --git a/tests/backends/base/test_operations.py b/tests/backends/base/test_operations.py
+index 0485fe8465..b0ffe958c8 100644
+--- a/tests/backends/base/test_operations.py
++++ b/tests/backends/base/test_operations.py
+@@ -172,7 +172,7 @@ class SqlFlushTests(TransactionTestCase):
+             reset_sequences=True,
+             allow_cascade=True,
+         )
+-        connection.ops.execute_sql_flush(connection.alias, sql_list)
++        connection.ops.execute_sql_flush(sql_list)
+ 
+         with transaction.atomic():
+             self.assertIs(Author.objects.exists(), False)
+diff --git a/tests/backends/tests.py b/tests/backends/tests.py
+index d6c2331378..40fc6de7fc 100644
+--- a/tests/backends/tests.py
++++ b/tests/backends/tests.py
+@@ -162,7 +162,7 @@ class LongNameTest(TransactionTestCase):
+             VLM_m2m._meta.db_table,
+         ]
+         sql_list = connection.ops.sql_flush(no_style(), tables, reset_sequences=True)
+-        connection.ops.execute_sql_flush(connection.alias, sql_list)
++        connection.ops.execute_sql_flush(sql_list)
+ 
+ 
+ class SequenceResetTest(TestCase):
+diff --git a/verify_changes.py b/verify_changes.py
+new file mode 100644
+index 0000000000..93667505f8
+--- /dev/null
++++ b/verify_changes.py
+@@ -0,0 +1,71 @@
++#!/usr/bin/env python
++import sys
++import os
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath('/testbed'))
++
++from django.conf import settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.apps.AppConfig',
++        ],
++    )
++
++from django.db.backends.base.operations import BaseDatabaseOperations
++from django.db import connection
++
++# Create a mock connection object
++class MockCursor:
++    def execute(self, sql):
++        pass
++
++    def __enter__(self):
++        return self
++
++    def __exit__(self, exc_type, exc_val, exc_tb):
++        pass
++
++class MockConnection:
++    class MockFeatures:
++        can_rollback_ddl = False
++
++    features = MockFeatures()
++    alias = 'default'
++
++    def cursor(self):
++        return MockCursor()
++
++# Create an instance of BaseDatabaseOperations with our mock connection
++ops = BaseDatabaseOperations(connection=MockConnection())
++
++# Test the execute_sql_flush method with the new signature
++try:
++    # This should work with our new signature
++    ops.execute_sql_flush(['SELECT 1'])
++    print("Success: execute_sql_flush works with the new signature")
++except Exception as e:
++    print(f"Error: execute_sql_flush failed with the new signature: {e}")
++    sys.exit(1)
++
++# Check that the method no longer accepts the 'using' parameter
++try:
++    # This should fail because the method no longer accepts the 'using' parameter
++    ops.execute_sql_flush('default', ['SELECT 1'])
++    print("Error: execute_sql_flush still accepts the 'using' parameter")
++    sys.exit(1)
++except TypeError as e:
++    # This is expected
++    print("Success: execute_sql_flush no longer accepts the 'using' parameter")
++except Exception as e:
++    print(f"Unexpected error: {e}")
++    sys.exit(1)
++
++print("All checks passed!")
+\ No newline at end of file

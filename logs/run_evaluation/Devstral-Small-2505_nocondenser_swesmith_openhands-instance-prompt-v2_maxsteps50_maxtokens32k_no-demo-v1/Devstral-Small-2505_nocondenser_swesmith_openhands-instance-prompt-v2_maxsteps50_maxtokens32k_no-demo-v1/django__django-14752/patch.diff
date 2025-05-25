@@ -1,0 +1,234 @@
+diff --git a/django/contrib/admin/views/autocomplete.py b/django/contrib/admin/views/autocomplete.py
+index 3903e4c98c..5ae43dc5c6 100644
+--- a/django/contrib/admin/views/autocomplete.py
++++ b/django/contrib/admin/views/autocomplete.py
+@@ -26,12 +26,15 @@ class AutocompleteJsonView(BaseListView):
+         context = self.get_context_data()
+         return JsonResponse({
+             'results': [
+-                {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
+-                for obj in context['object_list']
++                self.serialize_result(obj, to_field_name) for obj in context['object_list']
+             ],
+             'pagination': {'more': context['page_obj'].has_next()},
+         })
+ 
++    def serialize_result(self, obj, to_field_name):
++        """Serialize an object to a format suitable for the autocomplete widget."""
++        return {'id': str(getattr(obj, to_field_name)), 'text': str(obj)}
++
+     def get_paginator(self, *args, **kwargs):
+         """Use the ModelAdmin's paginator."""
+         return self.model_admin.get_paginator(self.request, *args, **kwargs)
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..8106d913c9
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,34 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.admin',
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'django.contrib.staticfiles',
++            'tests.admin_views',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        ROOT_URLCONF='tests.admin_views.urls',
++        SECRET_KEY='not-very-secret',
++        MIDDLEWARE_CLASSES=(),
++    )
++    django.setup()
++
++# Now run the tests
++import unittest
++from tests.admin_views.test_autocomplete_view import *
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file
+diff --git a/test_autocomplete_refactor.py b/test_autocomplete_refactor.py
+new file mode 100644
+index 0000000000..58bcd701a6
+--- /dev/null
++++ b/test_autocomplete_refactor.py
+@@ -0,0 +1,87 @@
++import unittest
++from django.contrib.admin.views.autocomplete import AutocompleteJsonView
++from django.http import JsonResponse
++
++# Create a simple mock object for testing
++class MockObject:
++    def __init__(self, id, text):
++        self.id = id
++        self.text = text
++        self.notes = "Custom notes"
++
++# Create a mock context for testing
++class MockContext:
++    def __init__(self):
++        self.object_list = [
++            MockObject(1, "Object 1"),
++            MockObject(2, "Object 2")
++        ]
++        self.page_obj = MockPageObj()
++
++class MockPageObj:
++    def has_next(self):
++        return False
++
++class TestAutocompleteRefactor(unittest.TestCase):
++    def setUp(self):
++        self.view = AutocompleteJsonView()
++        self.context = MockContext()
++        self.to_field_name = 'id'
++
++    def test_current_implementation(self):
++        """Test the current implementation of AutocompleteJsonView"""
++        # Simulate the current implementation
++        response_data = {
++            'results': [
++                {'id': str(getattr(obj, self.to_field_name)), 'text': str(obj)}
++                for obj in self.context.object_list
++            ],
++            'pagination': {'more': self.context.page_obj.has_next()},
++        }
++
++        # Check that each result has 'id' and 'text' fields but not 'notes'
++        for result in response_data['results']:
++            self.assertIn('id', result)
++            self.assertIn('text', result)
++            self.assertNotIn('notes', result)  # Currently no custom fields
++
++    def test_proposed_implementation(self):
++        """Test the proposed implementation with serialize_result method"""
++        # Simulate the proposed implementation
++        response_data = {
++            'results': [
++                self.view.serialize_result(obj, self.to_field_name) for obj in self.context.object_list
++            ],
++            'pagination': {'more': self.context.page_obj.has_next()},
++        }
++
++        # Check that each result has 'id' and 'text' fields but not 'notes'
++        for result in response_data['results']:
++            self.assertIn('id', result)
++            self.assertIn('text', result)
++            self.assertNotIn('notes', result)  # Still no custom fields with default implementation
++
++    def test_custom_implementation(self):
++        """Test a custom implementation that overrides serialize_result"""
++        # Create a custom view that overrides serialize_result
++        class CustomAutocompleteJsonView(AutocompleteJsonView):
++            def serialize_result(self, obj, to_field_name):
++                result = super().serialize_result(obj, to_field_name)
++                result['notes'] = obj.notes
++                return result
++
++        custom_view = CustomAutocompleteJsonView()
++
++        # Simulate the custom implementation
++        response_data = {
++            'results': [
++                custom_view.serialize_result(obj, self.to_field_name) for obj in self.context.object_list
++            ],
++            'pagination': {'more': self.context.page_obj.has_next()},
++        }
++
++        # Check that each result has 'id', 'text', and 'notes' fields
++        for result in response_data['results']:
++            self.assertIn('id', result)
++            self.assertIn('text', result)
++            self.assertIn('notes', result)  # Custom field is present
+\ No newline at end of file
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..c71033be27
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,70 @@
++import os
++
++BASE_DIR = os.path.dirname(os.path.abspath(__file__))
++
++DEBUG = True
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.contrib.admin',
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'django.contrib.sessions',
++    'django.contrib.messages',
++    'django.contrib.staticfiles',
++    'tests.admin_views',
++]
++
++MIDDLEWARE = [
++    'django.middleware.security.SecurityMiddleware',
++    'django.contrib.sessions.middleware.SessionMiddleware',
++    'django.middleware.common.CommonMiddleware',
++    'django.middleware.csrf.CsrfViewMiddleware',
++    'django.contrib.auth.middleware.AuthenticationMiddleware',
++    'django.contrib.messages.middleware.MessageMiddleware',
++    'django.middleware.clickjacking.XFrameOptionsMiddleware',
++]
++
++ROOT_URLCONF = 'tests.admin_views.urls'
++
++TEMPLATES = [
++    {
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++        'DIRS': [],
++        'APP_DIRS': True,
++        'OPTIONS': {
++            'context_processors': [
++                'django.template.context_processors.debug',
++                'django.template.context_processors.request',
++                'django.contrib.auth.context_processors.auth',
++                'django.contrib.messages.context_processors.messages',
++            ],
++        },
++    },
++]
++
++SECRET_KEY = 'not-very-secret'
++
++STATIC_URL = '/static/'
++
++AUTH_PASSWORD_VALIDATORS = []
++
++LOGGING = {
++    'version': 1,
++    'disable_existing_loggers': False,
++    'handlers': {
++        'console': {
++            'class': 'logging.StreamHandler',
++        },
++    },
++    'root': {
++        'handlers': ['console'],
++        'level': 'WARNING',
++    },
++}
+\ No newline at end of file

@@ -1,0 +1,125 @@
+diff --git a/astropy/units/decorators.py b/astropy/units/decorators.py
+index 8bece5a850..cf03916e8b 100644
+--- a/astropy/units/decorators.py
++++ b/astropy/units/decorators.py
+@@ -220,7 +220,8 @@ class QuantityInput:
+             # Call the original function with any equivalencies in force.
+             with add_enabled_equivalencies(self.equivalencies):
+                 return_ = wrapped_function(*func_args, **func_kwargs)
+-            if wrapped_signature.return_annotation is not inspect.Signature.empty:
++            if (wrapped_signature.return_annotation is not inspect.Signature.empty and
++                return_ is not None):
+                 return return_.to(wrapped_signature.return_annotation)
+             else:
+                 return return_
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..b70bef9290
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,87 @@
++import astropy.units as u
++import sys
++
++def test_constructor_with_none_return():
++    """Test constructor with return type hint of None."""
++    class TestClass:
++        @u.quantity_input
++        def __init__(self, value: u.m) -> None:
++            self.value = value
++
++    # This should work without error
++    obj = TestClass(10 * u.m)
++    print("Constructor with None return type passed")
++    return True
++
++def test_constructor_without_return_hint():
++    """Test constructor without return type hint."""
++    class TestClass:
++        @u.quantity_input
++        def __init__(self, value: u.m):
++            self.value = value
++
++    # This should work without error
++    obj = TestClass(10 * u.m)
++    print("Constructor without return type hint passed")
++    return True
++
++def test_function_with_quantity_return():
++    """Test function with quantity return type."""
++    @u.quantity_input
++    def func(value: u.m) -> u.km:
++        return value
++
++    # This should convert meters to kilometers
++    result = func(1000 * u.m)
++    assert result.unit == u.km
++    print("Function with quantity return type passed")
++    return True
++
++def test_function_with_none_return():
++    """Test function with None return type."""
++    @u.quantity_input
++    def func(value: u.m) -> None:
++        pass
++
++    # This should work without error
++    func(10 * u.m)
++    print("Function with None return type passed")
++    return True
++
++def test_function_without_return_hint():
++    """Test function without return type hint."""
++    @u.quantity_input
++    def func(value: u.m):
++        return value
++
++    # This should work without error
++    result = func(10 * u.m)
++    assert result.unit == u.m
++    print("Function without return type hint passed")
++    return True
++
++if __name__ == "__main__":
++    tests = [
++        test_constructor_with_none_return,
++        test_constructor_without_return_hint,
++        test_function_with_quantity_return,
++        test_function_with_none_return,
++        test_function_without_return_hint
++    ]
++
++    success = True
++    for test in tests:
++        try:
++            if not test():
++                success = False
++                print(f"{test.__name__} failed")
++        except Exception as e:
++            success = False
++            print(f"{test.__name__} raised exception: {e}")
++
++    if success:
++        print("\nAll tests passed!")
++        sys.exit(0)
++    else:
++        print("\nSome tests failed!")
++        sys.exit(1)
+diff --git a/reproducer.py b/reproducer.py
+new file mode 100644
+index 0000000000..45b02b2167
+--- /dev/null
++++ b/reproducer.py
+@@ -0,0 +1,11 @@
++import astropy.units as u
++
++class PoC(object):
++
++    @u.quantity_input
++    def __init__(self, voltage: u.V) -> None:
++        pass
++
++if __name__ == '__main__':
++    poc = PoC(1.*u.V)
++    print("Success! No error occurred.")
+\ No newline at end of file

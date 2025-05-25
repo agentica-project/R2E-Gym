@@ -1,0 +1,76 @@
+diff --git a/django/core/files/locks.py b/django/core/files/locks.py
+index c46b00b905..4938347ea7 100644
+--- a/django/core/files/locks.py
++++ b/django/core/files/locks.py
+@@ -107,9 +107,15 @@ else:
+             return True
+     else:
+         def lock(f, flags):
+-            ret = fcntl.flock(_fd(f), flags)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), flags)
++                return True
++            except OSError:
++                return False
+ 
+         def unlock(f):
+-            ret = fcntl.flock(_fd(f), fcntl.LOCK_UN)
+-            return ret == 0
++            try:
++                fcntl.flock(_fd(f), fcntl.LOCK_UN)
++                return True
++            except OSError:
++                return False
+diff --git a/test_lock_issue.py b/test_lock_issue.py
+new file mode 100644
+index 0000000000..cbf05baf4c
+--- /dev/null
++++ b/test_lock_issue.py
+@@ -0,0 +1,45 @@
++import os
++import tempfile
++import sys
++from django.core.files import locks
++
++def test_posix_lock():
++    """Test the posix implementation of file locking."""
++    # Create a temporary file
++    with tempfile.NamedTemporaryFile(delete=False) as f:
++        temp_file = f.name
++
++    try:
++        # Open the file and try to acquire a lock
++        with open(temp_file, 'wb') as f:
++            # Try to acquire a non-blocking exclusive lock
++            result = locks.lock(f, locks.LOCK_EX | locks.LOCK_NB)
++            print(f"Lock acquisition result: {result}")
++
++            # Try to acquire another lock on the same file (should fail)
++            with open(temp_file, 'wb') as f2:
++                second_result = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++                print(f"Second lock acquisition result: {second_result}")
++
++            # Release the lock
++            unlock_result = locks.unlock(f)
++            print(f"Unlock result: {unlock_result}")
++
++            # Now we should be able to acquire the lock
++            with open(temp_file, 'wb') as f2:
++                final_result = locks.lock(f2, locks.LOCK_EX | locks.LOCK_NB)
++                print(f"Final lock acquisition result: {final_result}")
++
++    finally:
++        # Clean up
++        if os.path.exists(temp_file):
++            os.unlink(temp_file)
++
++if __name__ == "__main__":
++    # Check if we're on a posix system with fcntl support
++    if os.name != 'posix' or not hasattr(locks, 'LOCK_EX'):
++        print("This test requires a posix system with fcntl support")
++        sys.exit(1)
++
++    print("Testing posix file locking implementation...")
++    test_posix_lock()
+\ No newline at end of file

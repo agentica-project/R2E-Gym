@@ -1,0 +1,88 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..04d02b063
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,8 @@
++from _pytest.mark.expression import Expression
++
++# This should crash in a debug build of Python 3.8+
++try:
++    Expression.compile("False")
++    print("Successfully compiled 'False'")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file
+diff --git a/src/_pytest/mark/expression.py b/src/_pytest/mark/expression.py
+index 04c73411a..eff1c871c 100644
+--- a/src/_pytest/mark/expression.py
++++ b/src/_pytest/mark/expression.py
+@@ -161,6 +161,8 @@ def not_expr(s: Scanner) -> ast.expr:
+         return ret
+     ident = s.accept(TokenType.IDENT)
+     if ident:
++        # Create a Name node for all identifiers, including special constants
++        # This allows the matcher to handle them properly
+         return ast.Name(ident.value, ast.Load())
+     s.reject((TokenType.NOT, TokenType.LPAREN, TokenType.IDENT))
+ 
+@@ -198,6 +200,7 @@ class Expression:
+ 
+         :param input: The input expression - one line.
+         """
++        # Normal case - parse and compile the expression
+         astexpr = expression(Scanner(input))
+         code = compile(
+             astexpr, filename="<pytest match expression>", mode="eval",
+@@ -212,7 +215,22 @@ class Expression:
+ 
+         Returns whether the expression matches or not.
+         """
+-        ret = eval(
+-            self.code, {"__builtins__": {}}, MatcherAdapter(matcher)
+-        )  # type: bool
+-        return ret
++        try:
++            ret = eval(
++                self.code, {"__builtins__": {}}, MatcherAdapter(matcher)
++            )  # type: bool
++            return ret
++        except ValueError as e:
++            # Handle the case where the identifier is a special constant
++            if "Name node can't be used with" in str(e):
++                # Extract the constant name from the error message
++                const_name = e.args[0].split("'")[1]
++                # Return the value of the constant
++                if const_name == "None":
++                    return False
++                elif const_name == "True":
++                    return True
++                elif const_name == "False":
++                    return False
++            # Re-raise other errors
++            raise
+diff --git a/test_expression.py b/test_expression.py
+new file mode 100644
+index 000000000..e1fd95010
+--- /dev/null
++++ b/test_expression.py
+@@ -0,0 +1,18 @@
++import sys
++from _pytest.mark.expression import Expression
++
++def test_special_constants():
++    """Test that special constants like None, True, and False work correctly."""
++    special_values = ["None", "True", "False"]
++
++    for value in special_values:
++        try:
++            expr = Expression.compile(value)
++            # Try to evaluate it with a matcher that always returns False
++            result = expr.evaluate(lambda x: False)
++            print(f"Successfully compiled and evaluated '{value}'")
++        except Exception as e:
++            print(f"Error with '{value}': {type(e).__name__}: {e}")
++
++if __name__ == "__main__":
++    test_special_constants()
+\ No newline at end of file

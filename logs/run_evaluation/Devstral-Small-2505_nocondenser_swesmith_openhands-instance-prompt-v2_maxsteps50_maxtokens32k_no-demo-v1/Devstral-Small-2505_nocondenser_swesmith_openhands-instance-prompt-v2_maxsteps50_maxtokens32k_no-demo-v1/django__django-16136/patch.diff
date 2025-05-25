@@ -1,0 +1,206 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..9b052d3774
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,109 @@
++import asyncio
++from django.conf import settings
++from django.http import HttpResponse, HttpResponseNotAllowed
++from django.urls import path
++from django.views import View
++import asyncio
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    ROOT_URLCONF='comprehensive_test',
++    MIDDLEWARE=[],
++)
++
++# Define an async view with only a post method
++class AsyncDemo(View):
++    """Async view with only POST method"""
++    async def post(self, request):
++        return HttpResponse("Async POST ok")
++
++# Define a sync view with only a post method
++class SyncDemo(View):
++    """Sync view with only POST method"""
++    def post(self, request):
++        return HttpResponse("Sync POST ok")
++
++# URL patterns
++urlpatterns = [
++    path("async-demo", AsyncDemo.as_view()),
++    path("sync-demo", SyncDemo.as_view()),
++]
++
++async def test_async_view():
++    from django.test import RequestFactory
++
++    # Create a request factory
++    factory = RequestFactory()
++
++    # Test async view with GET request (should return HttpResponseNotAllowed)
++    request = factory.get('/async-demo')
++    view = AsyncDemo()
++    view.setup(request)
++
++    try:
++        response = await view.dispatch(request)
++        if isinstance(response, HttpResponseNotAllowed):
++            print("✅ Async view with GET request: Success - returned HttpResponseNotAllowed")
++        else:
++            print("❌ Async view with GET request: Failed - expected HttpResponseNotAllowed but got:", type(response))
++    except Exception as e:
++        print("❌ Async view with GET request: Failed with exception:", type(e).__name__, str(e))
++
++    # Test async view with POST request (should return HttpResponse)
++    request = factory.post('/async-demo')
++    view = AsyncDemo()
++    view.setup(request)
++
++    try:
++        response = await view.dispatch(request)
++        if isinstance(response, HttpResponse) and response.content == b"Async POST ok":
++            print("✅ Async view with POST request: Success - returned correct HttpResponse")
++        else:
++            print("❌ Async view with POST request: Failed - expected correct HttpResponse")
++    except Exception as e:
++        print("❌ Async view with POST request: Failed with exception:", type(e).__name__, str(e))
++
++def test_sync_view():
++    from django.test import RequestFactory
++
++    # Create a request factory
++    factory = RequestFactory()
++
++    # Test sync view with GET request (should return HttpResponseNotAllowed)
++    request = factory.get('/sync-demo')
++    view = SyncDemo()
++    view.setup(request)
++
++    try:
++        response = view.dispatch(request)
++        if isinstance(response, HttpResponseNotAllowed):
++            print("✅ Sync view with GET request: Success - returned HttpResponseNotAllowed")
++        else:
++            print("❌ Sync view with GET request: Failed - expected HttpResponseNotAllowed but got:", type(response))
++    except Exception as e:
++        print("❌ Sync view with GET request: Failed with exception:", type(e).__name__, str(e))
++
++    # Test sync view with POST request (should return HttpResponse)
++    request = factory.post('/sync-demo')
++    view = SyncDemo()
++    view.setup(request)
++
++    try:
++        response = view.dispatch(request)
++        if isinstance(response, HttpResponse) and response.content == b"Sync POST ok":
++            print("✅ Sync view with POST request: Success - returned correct HttpResponse")
++        else:
++            print("❌ Sync view with POST request: Failed - expected correct HttpResponse")
++    except Exception as e:
++        print("❌ Sync view with POST request: Failed with exception:", type(e).__name__, str(e))
++
++def run_tests():
++    # Run the async tests
++    asyncio.run(test_async_view())
++
++    # Run the sync tests
++    test_sync_view()
++
++if __name__ == "__main__":
++    run_tests()
+\ No newline at end of file
+diff --git a/django/views/generic/base.py b/django/views/generic/base.py
+index db1842e3e5..7683af018e 100644
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -148,7 +148,11 @@ class View:
+             request.path,
+             extra={"status_code": 405, "request": request},
+         )
+-        return HttpResponseNotAllowed(self._allowed_methods())
++        response = HttpResponseNotAllowed(self._allowed_methods())
++        if self.view_is_async:
++            # If the view is async, return a coroutine that resolves to the response
++            return asyncio.sleep(0, result=response)
++        return response
+ 
+     def options(self, request, *args, **kwargs):
+         """Handle responding to requests for the OPTIONS HTTP verb."""
+diff --git a/reproduce_bug.py b/reproduce_bug.py
+new file mode 100644
+index 0000000000..236bc9bccb
+--- /dev/null
++++ b/reproduce_bug.py
+@@ -0,0 +1,66 @@
++import asyncio
++import sys
++import os
++from django.conf import settings
++from django.http import HttpResponse, HttpResponseNotAllowed
++from django.urls import path
++from django.views import View
++from django.core.handlers.wsgi import WSGIHandler
++import asyncio
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    ROOT_URLCONF='reproduce_bug',
++    MIDDLEWARE=[],
++)
++
++# Define a view with only an async post method
++class Demo(View):
++    """This basic view supports only POST requests"""
++    async def post(self, request):
++        return HttpResponse("ok")
++
++# URL pattern
++urlpatterns = [
++    path("demo", Demo.as_view()),
++]
++
++# Create a WSGI application
++application = WSGIHandler()
++
++# Simulate a GET request to the view
++async def test_async_view():
++    from django.test import RequestFactory
++
++    # Create a request factory
++    factory = RequestFactory()
++
++    # Create a GET request
++    request = factory.get('/demo')
++
++    # Get the view instance
++    view = Demo()
++
++    # Setup the view
++    view.setup(request)
++
++    # Call dispatch directly
++    try:
++        # This should trigger the await on HttpResponseNotAllowed
++        response = await view.dispatch(request)
++        print("Test failed: Expected TypeError but got response:", response)
++    except TypeError as e:
++        if "object HttpResponseNotAllowed can't be used in 'await' expression" in str(e):
++            print("Successfully reproduced the bug!")
++        else:
++            print("Got a TypeError but with a different message:", str(e))
++    except Exception as e:
++        print("Got an unexpected exception:", type(e).__name__, str(e))
++
++def run_test():
++    # Run the async test
++    asyncio.run(test_async_view())
++
++if __name__ == "__main__":
++    run_test()
+\ No newline at end of file

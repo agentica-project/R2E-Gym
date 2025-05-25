@@ -1,0 +1,55 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..dbaeb8cb1
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,15 @@
++from sklearn.model_selection import RepeatedKFold, RepeatedStratifiedKFold
++
++# Test RepeatedKFold
++rkf = RepeatedKFold()
++print("RepeatedKFold repr:")
++print(repr(rkf))
++print("\nExpected:")
++print("RepeatedKFold(n_splits=5, n_repeats=10, random_state=None)")
++
++# Test RepeatedStratifiedKFold
++rskf = RepeatedStratifiedKFold()
++print("\nRepeatedStratifiedKFold repr:")
++print(repr(rskf))
++print("\nExpected:")
++print("RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=None)")
+\ No newline at end of file
+diff --git a/sklearn/model_selection/_split.py b/sklearn/model_selection/_split.py
+index c49a3ce6a..c6c7fb63e 100644
+--- a/sklearn/model_selection/_split.py
++++ b/sklearn/model_selection/_split.py
+@@ -1213,9 +1213,14 @@ class RepeatedKFold(_RepeatedSplits):
+     RepeatedStratifiedKFold: Repeats Stratified K-Fold n times.
+     """
+     def __init__(self, n_splits=5, n_repeats=10, random_state=None):
++        self.n_splits = n_splits
+         super().__init__(
+             KFold, n_repeats, random_state, n_splits=n_splits)
+ 
++    def __repr__(self):
++        return ("RepeatedKFold(n_splits=%s, n_repeats=%s, random_state=%s)" %
++                (self.n_splits, self.n_repeats, self.random_state))
++
+ 
+ class RepeatedStratifiedKFold(_RepeatedSplits):
+     """Repeated Stratified K-Fold cross validator.
+@@ -1266,8 +1271,13 @@ class RepeatedStratifiedKFold(_RepeatedSplits):
+     RepeatedKFold: Repeats K-Fold n times.
+     """
+     def __init__(self, n_splits=5, n_repeats=10, random_state=None):
++        self.n_splits = n_splits
+         super().__init__(
+             StratifiedKFold, n_repeats, random_state, n_splits=n_splits)
++    def __repr__(self):
++        return ("RepeatedStratifiedKFold(n_splits=%s, n_repeats=%s, random_state=%s)" %
++                (self.n_splits, self.n_repeats, self.random_state))
++        return _build_repr(self)
+ 
+ 
+ class BaseShuffleSplit(metaclass=ABCMeta):

@@ -1,0 +1,55 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..9c4f786f73
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import os
++import sys
++import django
++from django.db.models import Sum, F
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++django.setup()
++
++# Create a simple model for testing
++from django.db import models, connection
++
++# Let's use a simpler approach - just create a test case that demonstrates the issue
++from django.db.models.sql.compiler import SQLAggregateCompiler
++
++# Create a mock query to demonstrate the issue
++class MockQuery:
++    def __init__(self):
++        self.annotation_select = {
++            'id__sum': MockAggregate(Sum('id'), default=0)
++        }
++        self.inner_query = MockQuery()
++
++class MockAggregate:
++    def __init__(self, aggregate, default=None):
++        self.aggregate = aggregate
++        self.default = default
++        self.contains_aggregate = True
++
++    def select_format(self, compiler, sql, params):
++        return sql, params
++
++    def as_sql(self, compiler, connection, **extra_context):
++        # This is where the issue would be - the default value isn't properly handled
++        return f"COALESCE({self.aggregate.as_sql(compiler, connection)[0]}, {self.default})", []
++
++# Create a mock compiler
++compiler = SQLAggregateCompiler(MockQuery(), None, None)
++
++# Try to generate SQL
++try:
++    sql, params = compiler.as_sql()
++    print(f"Generated SQL: {sql}")
++    print(f"Parameters: {params}")
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file

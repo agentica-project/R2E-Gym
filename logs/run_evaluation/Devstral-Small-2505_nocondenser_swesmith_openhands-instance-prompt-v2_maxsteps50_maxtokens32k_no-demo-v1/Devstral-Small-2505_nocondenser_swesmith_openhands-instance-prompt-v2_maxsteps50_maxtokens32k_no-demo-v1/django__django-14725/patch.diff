@@ -1,0 +1,351 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..d22b9a7755
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,164 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.core.exceptions import ValidationError
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        ROOT_URLCONF='',
++        SECRET_KEY='fake-key',
++    )
++django.setup()
++
++from django import forms
++from django.db import models, connection
++from django.forms import modelformset_factory
++
++# Create the model table
++cursor = connection.cursor()
++cursor.execute('''
++    CREATE TABLE IF NOT EXISTS test_item (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        name VARCHAR(100),
++        description TEXT
++    )
++''')
++
++# Define a simple model
++class Item(models.Model):
++    name = models.CharField(max_length=100)
++    description = models.TextField()
++
++    class Meta:
++        # Use the table we created
++        db_table = 'test_item'
++        app_label = 'comprehensive_test'
++        managed = False  # Don't let Django manage this table
++
++    def __str__(self):
++        return self.name
++
++# Create a model form
++class ItemForm(forms.ModelForm):
++    class Meta:
++        model = Item
++        fields = ['name', 'description']
++
++# Test cases
++def test_can_add_true():
++    """Test that formsets with can_add=True allow new objects."""
++    ItemFormSet = modelformset_factory(Item, form=ItemForm, can_add=True, extra=0)
++
++    # Simulate POST data with an extra form
++    from django.http import QueryDict
++    post_data = QueryDict('', mutable=True)
++    post_data.update({
++        'form-TOTAL_FORMS': '1',
++        'form-INITIAL_FORMS': '0',
++        'form-0-name': 'New Item',
++        'form-0-description': 'New description',
++    })
++
++    formset = ItemFormSet(post_data)
++    assert formset.is_valid(), f"Formset should be valid: {formset.errors}"
++    objects = formset.save()
++    assert len(objects) == 1, f"Should have created 1 object, got {len(objects)}"
++    assert objects[0].name == 'New Item'
++    print("✓ test_can_add_true: Formset with can_add=True allows new objects")
++
++def test_can_add_false():
++    """Test that formsets with can_add=False disallow new objects."""
++    ItemFormSet = modelformset_factory(Item, form=ItemForm, can_add=False, extra=0)
++
++    # Simulate POST data with an extra form
++    from django.http import QueryDict
++    post_data = QueryDict('', mutable=True)
++    post_data.update({
++        'form-TOTAL_FORMS': '1',
++        'form-INITIAL_FORMS': '0',
++        'form-0-name': 'New Item',
++        'form-0-description': 'New description',
++    })
++
++    formset = ItemFormSet(post_data)
++    try:
++        valid = formset.is_valid()
++        assert not valid, "Formset should be invalid when can_add=False"
++        print("✓ test_can_add_false: Formset with can_add=False correctly rejects new objects")
++    except ValidationError:
++        print("✓ test_can_add_false: Formset with can_add=False raises ValidationError as expected")
++
++def test_edit_only():
++    """Test that formsets with can_add=False can still edit existing objects."""
++    # Create a test item
++    item = Item(name="Test Item", description="This is a test item")
++    item.save()
++
++    ItemFormSet = modelformset_factory(Item, form=ItemForm, can_add=False, extra=0)
++
++    # Simulate POST data with an existing form
++    from django.http import QueryDict
++    post_data = QueryDict('', mutable=True)
++    post_data.update({
++        'form-TOTAL_FORMS': '1',
++        'form-INITIAL_FORMS': '1',
++        'form-0-id': str(item.pk),
++        'form-0-name': 'Updated Item',
++        'form-0-description': 'Updated description',
++    })
++
++    formset = ItemFormSet(post_data, queryset=Item.objects.filter(pk=item.pk))
++    assert formset.is_valid(), f"Formset should be valid: {formset.errors}"
++    objects = formset.save()
++    assert len(objects) == 1, f"Should have updated 1 object, got {len(objects)}"
++    assert objects[0].name == 'Updated Item'
++    print("✓ test_edit_only: Formset with can_add=False can still edit existing objects")
++
++def test_backward_compatibility():
++    """Test that existing code using extra=0 still works."""
++    # Create a test item
++    item = Item(name="Test Item", description="This is a test item")
++    item.save()
++
++    # This is how users currently try to create "edit only" formsets
++    ItemFormSet = modelformset_factory(Item, form=ItemForm, extra=0)
++
++    # Simulate POST data with an existing form
++    from django.http import QueryDict
++    post_data = QueryDict('', mutable=True)
++    post_data.update({
++        'form-TOTAL_FORMS': '1',
++        'form-INITIAL_FORMS': '1',
++        'form-0-id': str(item.pk),
++        'form-0-name': 'Updated Item',
++        'form-0-description': 'Updated description',
++    })
++
++    formset = ItemFormSet(post_data, queryset=Item.objects.filter(pk=item.pk))
++    assert formset.is_valid(), f"Formset should be valid: {formset.errors}"
++    objects = formset.save()
++    assert len(objects) == 1, f"Should have updated 1 object, got {len(objects)}"
++    assert objects[0].name == 'Updated Item'
++    print("✓ test_backward_compatibility: Existing code using extra=0 still works")
++
++if __name__ == "__main__":
++    # Run all tests
++    test_can_add_true()
++    test_can_add_false()
++    test_edit_only()
++    test_backward_compatibility()
++
++    print("\nAll tests passed!")
+\ No newline at end of file
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 7effb202e3..609a75b7ba 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -813,6 +813,10 @@ class BaseModelFormSet(BaseFormSet):
+ 
+     def save_new_objects(self, commit=True):
+         self.new_objects = []
++        # If max_num is set to 0, don't save any new objects
++        if getattr(self, 'max_num', None) == 0:
++            return self.new_objects
++
+         for form in self.extra_forms:
+             if not form.has_changed():
+                 continue
+@@ -825,6 +829,16 @@ class BaseModelFormSet(BaseFormSet):
+                 self.saved_forms.append(form)
+         return self.new_objects
+ 
++    def clean(self):
++        """Validate the formset and add a non-form error if new objects are not allowed."""
++        super().clean()
++        # If max_num is 0, add a non-form error to prevent new objects from being created
++        if getattr(self, 'max_num', None) == 0 and self.extra_forms:
++            raise ValidationError(
++                "New objects cannot be created in this formset.",
++                code='cannot_add'
++            )
++
+     def add_fields(self, form, index):
+         """Add a hidden field for the object's primary key."""
+         from django.db.models import AutoField, ForeignKey, OneToOneField
+@@ -875,7 +889,8 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                          widgets=None, validate_max=False, localized_fields=None,
+                          labels=None, help_texts=None, error_messages=None,
+                          min_num=None, validate_min=False, field_classes=None,
+-                         absolute_max=None, can_delete_extra=True, renderer=None):
++                         absolute_max=None, can_delete_extra=True, renderer=None,
++                         can_add=True):
+     """Return a FormSet class for the given Django model class."""
+     meta = getattr(form, 'Meta', None)
+     if (getattr(meta, 'fields', fields) is None and
+@@ -890,7 +905,7 @@ def modelformset_factory(model, form=ModelForm, formfield_callback=None,
+                              widgets=widgets, localized_fields=localized_fields,
+                              labels=labels, help_texts=help_texts,
+                              error_messages=error_messages, field_classes=field_classes)
+-    FormSet = formset_factory(form, formset, extra=extra, min_num=min_num, max_num=max_num,
++    FormSet = formset_factory(form, formset, extra=extra, min_num=min_num, max_num=0 if not can_add else max_num,
+                               can_order=can_order, can_delete=can_delete,
+                               validate_min=validate_min, validate_max=validate_max,
+                               absolute_max=absolute_max, can_delete_extra=can_delete_extra,
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..05579a99ec
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,122 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        ROOT_URLCONF='',
++        SECRET_KEY='fake-key',
++    )
++django.setup()
++
++from django import forms
++from django.db import models, connection
++from django.forms import modelformset_factory
++
++# Create the model table
++cursor = connection.cursor()
++cursor.execute('''
++    CREATE TABLE IF NOT EXISTS test_item (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        name VARCHAR(100),
++        description TEXT
++    )
++''')
++
++# Define a simple model
++class Item(models.Model):
++    name = models.CharField(max_length=100)
++    description = models.TextField()
++
++    class Meta:
++        # Use the table we created
++        db_table = 'test_item'
++        app_label = 'reproduce_issue'
++        managed = False  # Don't let Django manage this table
++
++    def __str__(self):
++        return self.name
++
++# Create a model form
++class ItemForm(forms.ModelForm):
++    class Meta:
++        model = Item
++        fields = ['name', 'description']
++
++# Test with extra=0 and can_add=True (old behavior)
++ItemFormSetOld = modelformset_factory(Item, form=ItemForm, extra=0, can_add=True)
++
++# Test with can_add=False (new behavior)
++ItemFormSetNew = modelformset_factory(Item, form=ItemForm, extra=1, can_add=False)
++
++# Create a test item
++item = Item(name="Test Item", description="This is a test item")
++item.save()
++
++print("=== Testing with extra=0, can_add=True (old behavior) ===")
++# Create a formset with the item
++formset = ItemFormSetOld(queryset=Item.objects.all())
++
++# Simulate POST data with an extra form (which should be disallowed with can_add=False)
++from django.http import QueryDict
++post_data = QueryDict('', mutable=True)
++post_data.update({
++    'form-TOTAL_FORMS': '1',  # Only 1 form should be valid
++    'form-INITIAL_FORMS': '1',
++    'form-0-id': str(item.pk),
++    'form-0-name': 'Updated Item',
++    'form-0-description': 'Updated description',
++
++    # This is the extra form that should be disallowed
++    'form-1-name': 'New Item',
++    'form-1-description': 'New description',
++})
++
++formset = ItemFormSetOld(post_data)
++if formset.is_valid():
++    print("Old behavior: Formset with extra=0 still allows new objects to be created")
++    objects = formset.save()
++    print(f"Saved objects: {objects}")
++else:
++    print("Old behavior: Formset is invalid as expected")
++    print(formset.errors)
++
++print("\n=== Testing with can_add=False (new behavior) ===")
++# Create a formset with the item
++formset = ItemFormSetNew(queryset=Item.objects.all())
++
++# Simulate POST data with an extra form (which should be disallowed with can_add=False)
++post_data = QueryDict('', mutable=True)
++post_data.update({
++    'form-TOTAL_FORMS': '2',  # 1 existing + 1 extra form
++    'form-INITIAL_FORMS': '1',
++    'form-0-id': str(item.pk),
++    'form-0-name': 'Updated Item',
++    'form-0-description': 'Updated description',
++
++    # This is the extra form that should be disallowed
++    'form-1-name': 'New Item',
++    'form-1-description': 'New description',
++})
++
++formset = ItemFormSetNew(post_data)
++if formset.is_valid():
++    print("New behavior: Formset with can_add=False allows new objects to be created (BUG!)")
++    objects = formset.save()
++    print(f"Saved objects: {objects}")
++else:
++    print("New behavior: Formset with can_add=False correctly prevents new objects")
++    print(f"Errors: {formset.errors}")
+\ No newline at end of file

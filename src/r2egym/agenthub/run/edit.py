@@ -139,8 +139,11 @@ def runagent(
         #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
         # )
         if swesmith_wrapper:
+            # agent_args = AgentArgs.from_yaml(
+            #     Path("./src/r2egym/agenthub/config/edit_swesmith.yaml")
+            # )
             agent_args = AgentArgs.from_yaml(
-                Path("./src/r2egym/agenthub/config/edit_swesmith.yaml")
+                Path("./src/r2egym/agenthub/config/edit_openhands-v2.yaml")
             )
         else:
             agent_args = AgentArgs.from_yaml(

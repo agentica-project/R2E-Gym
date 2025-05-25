@@ -1,0 +1,84 @@
+diff --git a/django/db/models/fields/files.py b/django/db/models/fields/files.py
+index e10a5bb6d9..2c18d3eb88 100644
+--- a/django/db/models/fields/files.py
++++ b/django/db/models/fields/files.py
+@@ -227,7 +227,11 @@ class FileField(Field):
+     def __init__(self, verbose_name=None, name=None, upload_to='', storage=None, **kwargs):
+         self._primary_key_set_explicitly = 'primary_key' in kwargs
+ 
+-        self.storage = storage or default_storage
++        # Store the original storage (which might be callable)
++        self._storage = storage or default_storage
++
++        # If storage is callable, evaluate it for actual use but preserve the callable
++        self.storage = self._storage
+         if callable(self.storage):
+             self.storage = self.storage()
+             if not isinstance(self.storage, Storage):
+@@ -278,8 +282,9 @@ class FileField(Field):
+         if kwargs.get("max_length") == 100:
+             del kwargs["max_length"]
+         kwargs['upload_to'] = self.upload_to
+-        if self.storage is not default_storage:
+-            kwargs['storage'] = self.storage
++        # Use the original storage (which might be callable) instead of the evaluated one
++        if hasattr(self, '_storage') and self._storage is not default_storage:
++            kwargs['storage'] = self._storage
+         return name, path, args, kwargs
+ 
+     def get_internal_type(self):
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..c466a806df
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import sys
++import os
++from django.core.files.storage import Storage, default_storage
++from django.db.models.fields.files import FileField
++
++class CustomStorage(Storage):
++    """A custom storage backend for testing."""
++    def _save(self, name, content):
++        return name
++
++    def generate_filename(self, filename):
++        return filename
++
++    def exists(self, name):
++        return False
++
++def get_custom_storage():
++    """A callable that returns a custom storage backend."""
++    return CustomStorage()
++
++def test_filefield_deconstruct_with_callable_storage():
++    """Test that FileField.deconstruct() preserves callable storage."""
++    # Create a FileField with a callable storage
++    field = FileField(storage=get_custom_storage)
++
++    # Deconstruct the field
++    name, path, args, kwargs = field.deconstruct()
++
++    # Check if the storage in kwargs is the original callable or the evaluated storage
++    print("Storage in kwargs:", kwargs.get('storage'))
++    print("Is callable:", callable(kwargs.get('storage')))
++
++    # If the storage is not callable, the issue is present
++    if not callable(kwargs.get('storage')):
++        print("ISSUE DETECTED: The callable storage was evaluated during deconstruction")
++        return False
++    else:
++        print("SUCCESS: The callable storage was preserved during deconstruction")
++        return True
++
++if __name__ == "__main__":
++    # Set up Django environment
++    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
++    from django.conf import settings
++
++    # Run the test
++    success = test_filefield_deconstruct_with_callable_storage()
++    sys.exit(0 if success else 1)
+\ No newline at end of file

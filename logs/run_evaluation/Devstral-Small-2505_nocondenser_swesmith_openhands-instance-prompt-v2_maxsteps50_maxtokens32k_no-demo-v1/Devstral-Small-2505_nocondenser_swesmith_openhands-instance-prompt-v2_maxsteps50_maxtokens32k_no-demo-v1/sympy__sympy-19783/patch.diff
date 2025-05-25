@@ -1,0 +1,75 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..95dedf2459
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,22 @@
++from sympy.physics.quantum.dagger import Dagger
++from sympy.physics.quantum.operator import Operator
++from sympy.physics.quantum import IdentityOperator
++
++# Create an operator A
++A = Operator('A')
++Identity = IdentityOperator()
++
++# Test A * Identity (should simplify to A)
++result1 = A * Identity
++print("A * Identity =", result1)
++
++# Create a dagger operator B = Dagger(A)
++B = Dagger(A)
++
++# Test B * Identity (should simplify to B, but currently doesn't)
++result2 = B * Identity
++print("B * Identity =", result2)
++
++# Also test Identity * B
++result3 = Identity * B
++print("Identity * B =", result3)
+\ No newline at end of file
+diff --git a/sympy/physics/quantum/dagger.py b/sympy/physics/quantum/dagger.py
+index 17da3cfd2c..2e0da14dcd 100644
+--- a/sympy/physics/quantum/dagger.py
++++ b/sympy/physics/quantum/dagger.py
+@@ -76,6 +76,9 @@ class Dagger(adjoint):
+     .. [2] https://en.wikipedia.org/wiki/Hermitian_transpose
+     """
+ 
++    # Class attribute to identify Dagger objects
++    is_Dagger = True
++
+     def __new__(cls, arg):
+         if hasattr(arg, 'adjoint'):
+             obj = arg.adjoint()
+@@ -85,5 +88,18 @@ def __new__(cls, arg):
+             return obj
+         return Expr.__new__(cls, arg)
+ 
++    def __mul__(self, other):
++        """Multiply Dagger with other objects.
++
++        If the other object is an IdentityOperator, return self.
++        """
++        from sympy.physics.quantum.operator import IdentityOperator
++        from sympy import Mul
++
++        if isinstance(other, IdentityOperator):
++            return self
++
++        return Mul(self, other)
++
+ adjoint.__name__ = "Dagger"
+ adjoint._sympyrepr = lambda a, b: "Dagger(%s)" % b._print(a.args[0])
+diff --git a/sympy/physics/quantum/operator.py b/sympy/physics/quantum/operator.py
+index 306bfee64f..59e634269e 100644
+--- a/sympy/physics/quantum/operator.py
++++ b/sympy/physics/quantum/operator.py
+@@ -309,6 +309,8 @@ def __mul__(self, other):
+ 
+         if isinstance(other, Operator):
+             return other
++        if hasattr(other, 'is_Dagger'):
++            return other
+ 
+         return Mul(self, other)
+ 

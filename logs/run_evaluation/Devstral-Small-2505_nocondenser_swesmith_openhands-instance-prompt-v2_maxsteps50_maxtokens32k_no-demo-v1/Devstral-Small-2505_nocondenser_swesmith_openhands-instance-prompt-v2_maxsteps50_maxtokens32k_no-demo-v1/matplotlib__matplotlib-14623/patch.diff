@@ -1,0 +1,56 @@
+diff --git a/lib/matplotlib/axis.py b/lib/matplotlib/axis.py
+index 2bb9e41586..97f76342f6 100644
+--- a/lib/matplotlib/axis.py
++++ b/lib/matplotlib/axis.py
+@@ -1886,7 +1886,15 @@ def _make_getset_interval(method_name, lim_name, attr_name):
+     def setter(self, vmin, vmax, ignore=False):
+         # docstring inherited.
+         if ignore:
+-            setattr(getattr(self.axes, lim_name), attr_name, (vmin, vmax))
++            # When setting limits directly, we need to handle the case where
++            # vmin > vmax for log scale properly
++            if vmin > vmax and hasattr(self, '_scale') and self._scale.name == 'log':
++                # For log scale, we need to swap the limits and use the inverted transform
++                setattr(getattr(self.axes, lim_name), attr_name, (vmax, vmin))
++                # Ensure the axis is using the inverted transform
++                self.axes._invert_xaxis if self.axis_name == 'x' else self.axes._invert_yaxis = True
++            else:
++                setattr(getattr(self.axes, lim_name), attr_name, (vmin, vmax))
+         else:
+             oldmin, oldmax = getter(self)
+             if oldmin < oldmax:
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..40e4450332
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,20 @@
++import numpy as np
++import matplotlib.pyplot as plt
++
++# Create test data
++y = np.linspace(1000e2, 1, 100)
++x = np.exp(-np.linspace(0, 1, y.size))
++
++# Test with both linear and log scales
++for yscale in ('linear', 'log'):
++    fig, ax = plt.subplots()
++    ax.plot(x, y)
++    ax.set_yscale(yscale)
++    ax.set_ylim(y.max(), y.min())  # This should invert the axis
++    ax.set_title(f'Scale: {yscale}')
++    plt.savefig(f'test_{yscale}.png')
++    plt.close()
++
++print("Test images saved as 'test_linear.png' and 'test_log.png'")
++print("In the linear scale image, the axis should be inverted (values increasing downwards)")
++print("In the log scale image, the axis is not properly inverted")
+\ No newline at end of file
+diff --git a/test_linear.png b/test_linear.png
+new file mode 100644
+index 0000000000..251fee29c5
+Binary files /dev/null and b/test_linear.png differ
+diff --git a/test_log.png b/test_log.png
+new file mode 100644
+index 0000000000..41f7e597b9
+Binary files /dev/null and b/test_log.png differ

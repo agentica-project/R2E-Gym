@@ -1,0 +1,61 @@
+diff --git a/sympy/functions/elementary/miscellaneous.py b/sympy/functions/elementary/miscellaneous.py
+index 5f9fe73c5c..22b4009a2e 100644
+--- a/sympy/functions/elementary/miscellaneous.py
++++ b/sympy/functions/elementary/miscellaneous.py
+@@ -340,7 +340,8 @@ def real_root(arg, n=None, evaluate=None):
+ class MinMaxBase(Expr, LatticeOp):
+     def __new__(cls, *args, **assumptions):
+         if not args:
+-            raise ValueError("The Max/Min functions must have arguments.")
++            # Return infinity values for empty sets as per the issue description
++            return cls.identity
+ 
+         args = (sympify(arg) for arg in args)
+ 
+diff --git a/sympy/functions/elementary/tests/test_miscellaneous.py b/sympy/functions/elementary/tests/test_miscellaneous.py
+index 00dc946005..9181c64bce 100644
+--- a/sympy/functions/elementary/tests/test_miscellaneous.py
++++ b/sympy/functions/elementary/tests/test_miscellaneous.py
+@@ -85,7 +85,7 @@ def test_Min():
+     assert Min(p, p_).func is Min
+ 
+     # lists
+-    raises(ValueError, lambda: Min())
++    assert Min() == oo
+     assert Min(x, y) == Min(y, x)
+     assert Min(x, y, z) == Min(z, y, x)
+     assert Min(x, Min(y, z)) == Min(z, y, x)
+@@ -156,7 +156,7 @@ def test_Max():
+ 
+     # lists
+ 
+-    raises(ValueError, lambda: Max())
++    assert Max() == -oo
+     assert Max(x, y) == Max(y, x)
+     assert Max(x, y, z) == Max(z, y, x)
+     assert Max(x, Max(y, z)) == Max(z, y, x)
+diff --git a/test_min_max_no_args.py b/test_min_max_no_args.py
+new file mode 100644
+index 0000000000..2edcd44346
+--- /dev/null
++++ b/test_min_max_no_args.py
+@@ -0,0 +1,18 @@
++from sympy import Min, Max, oo, S
++
++# Test Min() with no arguments
++result = Min()
++print("Min() returned:", result)
++print("Is Min() equal to oo?", result == oo)
++print("Is Min() equal to S.Infinity?", result == S.Infinity)
++
++# Test Max() with no arguments
++result = Max()
++print("\nMax() returned:", result)
++print("Is Max() equal to -oo?", result == -oo)
++print("Is Max() equal to S.NegativeInfinity?", result == S.NegativeInfinity)
++
++# Verify that Min and Max still work with arguments
++print("\nVerifying Min and Max still work with arguments:")
++print("Min(1, 2, 3) =", Min(1, 2, 3))
++print("Max(1, 2, 3) =", Max(1, 2, 3))
+\ No newline at end of file

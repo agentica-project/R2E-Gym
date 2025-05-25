@@ -1,0 +1,144 @@
+diff --git a/reproduce_hnf_issue.py b/reproduce_hnf_issue.py
+new file mode 100644
+index 0000000000..406c5a49c0
+--- /dev/null
++++ b/reproduce_hnf_issue.py
+@@ -0,0 +1,38 @@
++from sympy import Matrix
++from sympy.matrices.normalforms import hermite_normal_form
++
++# Create the matrix from the issue description
++original_matrix = Matrix([[5, 8, 12], [0, 0, 1]])
++print("Original matrix:")
++print(original_matrix)
++
++# Flip the matrix
++flipped_matrix = Matrix([[0, 0, 1], [5, 8, 12]])
++print("\nFlipped matrix:")
++print(flipped_matrix)
++
++# Compute HNF
++hnf_result = hermite_normal_form(flipped_matrix)
++print("\nHNF of flipped matrix:")
++print(hnf_result)
++print(f"HNF shape: {hnf_result.shape[0]} rows, {hnf_result.shape[1]} columns")
++
++# Let's try the exact operation from the issue description
++matrix_T = flipped_matrix.T
++hnf_T = hermite_normal_form(matrix_T)
++print("\nTrying the exact operation from the issue description:")
++print(f"Transposed matrix shape: {matrix_T.shape}")
++print(f"HNF shape: {hnf_T.shape}")
++print("HNF result:")
++print(hnf_T)
++
++# Expected result after flipping back
++expected = Matrix([[5, 8, 0], [0, 0, 1]])
++print("\nExpected result after flipping back:")
++print(expected)
++
++# Check if the HNF has the expected number of rows
++if hnf_result.rows == 2 and hnf_result.cols == 3:
++    print("\nTest PASSED: HNF has the expected dimensions (2x3)")
++else:
++    print(f"\nTest FAILED: HNF has {hnf_result.rows} rows and {hnf_result.cols} columns, expected 2x3")
+\ No newline at end of file
+diff --git a/sympy/polys/matrices/normalforms.py b/sympy/polys/matrices/normalforms.py
+index 30f5534b08..4a69260fb9 100644
+--- a/sympy/polys/matrices/normalforms.py
++++ b/sympy/polys/matrices/normalforms.py
+@@ -210,6 +210,18 @@ def _hermite_normal_form(A):
+     m, n = A.shape
+     rows = min(m, n)
+     A = A.to_dense().rep.copy()
++
++    # Store information about zero rows in the original matrix
++    zero_rows = []
++    for i in range(m):
++        is_zero_row = True
++        for j in range(n):
++            if A[i][j] != 0:
++                is_zero_row = False
++                break
++        if is_zero_row:
++            zero_rows.append(i)
++
+     # Our goal is to put pivot entries in the rightmost columns.
+     # Invariant: Before processing each row, k should be the index of the
+     # leftmost column in which we have so far put a pivot.
+@@ -243,9 +255,19 @@ def _hermite_normal_form(A):
+             for j in range(k + 1, n):
+                 q = A[i][j] // b
+                 add_columns(A, j, k, 1, -q, 0, 1)
++
+     # Finally, the HNF consists of those columns of A in which we succeeded in making
+     # a nonzero pivot.
+-    return DomainMatrix.from_rep(A)[:, k:]
++    result = DomainMatrix.from_rep(A)[:, k:]
++
++    # Add back any zero rows that were in the original matrix but not in the result
++    for row_idx in zero_rows:
++        if row_idx >= result.shape[0]:
++            # This row was zero in the original matrix but was dropped
++            # Add it back to the HNF as a row of zeros
++            result = DomainMatrix.vstack((result, DomainMatrix.zeros(1, result.shape[1], A.domain)))
++
++    return result
+ 
+ 
+ def _hermite_normal_form_modulo_D(A, D):
+diff --git a/verify_issue_fix.py b/verify_issue_fix.py
+new file mode 100644
+index 0000000000..94fb8db244
+--- /dev/null
++++ b/verify_issue_fix.py
+@@ -0,0 +1,48 @@
++from sympy import Matrix
++from sympy.matrices.normalforms import hermite_normal_form
++
++# Create the matrix from the issue description
++original_matrix = Matrix([[5, 8, 12], [0, 0, 1]])
++print("Original matrix:")
++print(original_matrix)
++
++# Flip the matrix
++flipped_matrix = Matrix([[0, 0, 1], [5, 8, 12]])
++print("\nFlipped matrix:")
++print(flipped_matrix)
++
++# Compute HNF of the flipped matrix
++hnf_result = hermite_normal_form(flipped_matrix)
++print("\nHNF of flipped matrix:")
++print(hnf_result)
++
++# Expected result
++expected = Matrix([[0, 1, 0], [0, 0, 1]])
++print("\nExpected HNF of flipped matrix:")
++print(expected)
++
++# Check if the results match
++if hnf_result == expected:
++    print("\nTest PASSED: HNF of flipped matrix matches expected output")
++else:
++    print("\nTest FAILED: HNF of flipped matrix does not match expected output")
++
++# Now let's check the transposed case
++print("\n--- Testing transposed case ---")
++matrix_T = flipped_matrix.T
++hnf_T = hermite_normal_form(matrix_T)
++print("\nTransposed matrix:")
++print(matrix_T)
++print("\nHNF of transposed matrix:")
++print(hnf_T)
++
++# Expected HNF of transposed matrix
++expected_T = Matrix([[5, 0], [8, 0], [0, 1]])
++print("\nExpected HNF of transposed matrix:")
++print(expected_T)
++
++# Check if the results match
++if hnf_T == expected_T:
++    print("\nTest PASSED: HNF of transposed matrix matches expected output")
++else:
++    print("\nTest FAILED: HNF of transposed matrix does not match expected output")
+\ No newline at end of file

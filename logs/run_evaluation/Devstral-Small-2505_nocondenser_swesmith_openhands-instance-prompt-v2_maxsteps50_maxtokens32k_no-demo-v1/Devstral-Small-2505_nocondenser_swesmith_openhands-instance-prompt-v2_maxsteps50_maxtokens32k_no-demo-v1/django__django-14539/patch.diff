@@ -1,0 +1,218 @@
+diff --git a/debug_test.py b/debug_test.py
+new file mode 100644
+index 0000000000..7c6346fc01
+--- /dev/null
++++ b/debug_test.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python
++import html
++from django.utils.html import urlize
++
++def debug_trim_punctuation():
++    # Simulate the trim_punctuation function with the problematic input
++    lead, middle, trail = '', 'google.com/?q=1&lt', '!'
++
++    print("Original:")
++    print(f"lead: '{lead}'")
++    print(f"middle: '{middle}'")
++    print(f"trail: '{trail}'")
++
++    # Unescape middle
++    middle_unescaped = html.unescape(middle)
++    print(f"middle_unescaped: '{middle_unescaped}'")
++
++    # Strip trailing punctuation from unescaped middle
++    stripped = middle_unescaped.rstrip('.,:;!')
++    print(f"stripped: '{stripped}'")
++
++    # Calculate how much to remove from middle
++    print(f"len(middle): {len(middle)}")
++    print(f"len(middle_unescaped): {len(middle_unescaped)}")
++    print(f"len(stripped): {len(stripped)}")
++
++    # The punctuation in the original string
++    punct = middle[len(stripped):]
++    print(f"punct: '{punct}'")
++
++    # Update trail
++    trail = punct + trail
++    print(f"new trail: '{trail}'")
++
++    # Update middle
++    middle = middle[:len(stripped)]
++    print(f"new middle: '{middle}'")
++
++    print("\nAfter processing:")
++    print(f"lead: '{lead}'")
++    print(f"middle: '{middle}'")
++    print(f"trail: '{trail}'")
++
++    # What the final URL should look like
++    print("\nFinal URL:")
++    print(f"<a href=\"http://{html.unescape(middle)}\">{middle}</a>{trail}")
++
++if __name__ == "__main__":
++    debug_trim_punctuation()
+\ No newline at end of file
+diff --git a/django/utils/html.py b/django/utils/html.py
+index 3bc02b8dd3..6d072fb6c9 100644
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -254,7 +254,7 @@ def urlize(text, trim_url_limit=None, nofollow=False, autoescape=False):
+     def trim_url(x, limit=trim_url_limit):
+         if limit is None or len(x) <= limit:
+             return x
+-        return '%s…' % x[:max(0, limit - 1)]
++        return '%sâ€¦' % x[:max(0, limit - 1)]
+ 
+     def trim_punctuation(lead, middle, trail):
+         """
+@@ -283,8 +283,15 @@ def urlize(text, trim_url_limit=None, nofollow=False, autoescape=False):
+             middle_unescaped = html.unescape(middle)
+             stripped = middle_unescaped.rstrip(TRAILING_PUNCTUATION_CHARS)
+             if middle_unescaped != stripped:
+-                trail = middle[len(stripped):] + trail
+-                middle = middle[:len(stripped) - len(middle_unescaped)]
++                # Get the punctuation from the unescaped string
++                punct = middle_unescaped[len(stripped):]
++                # Add it to the trail
++                trail = punct + trail
++                # Update middle to remove the punctuation
++                # We need to calculate how many characters to remove from the original middle
++                # based on the difference in length between the unescaped middle and the stripped version
++                chars_to_remove = len(middle_unescaped) - len(stripped)
++                middle = middle[:len(middle) - chars_to_remove]
+                 trimmed_something = True
+         return lead, middle, trail
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..0fbd983fe5
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,40 @@
++#!/usr/bin/env python
++from django.utils.html import urlize
++
++def test_urlize_with_html_escaped_string():
++    test_cases = [
++        {
++            'input': 'Search for google.com/?q=1&lt! and see.',
++            'expected': 'Search for <a href="http://google.com/?q=1%3C">google.com/?q=1&lt</a>! and see.'
++        },
++        {
++            'input': 'Visit example.com/?q=1&lt; for more info.',
++            'expected': 'Visit <a href="http://example.com/?q=1%3C">example.com/?q=1&lt</a>; for more info.'
++        },
++        {
++            'input': 'Check out test.org/?q=1&lt., it\'s great!',
++            'expected': 'Check out <a href="http://test.org/?q=1%3C">test.org/?q=1&lt</a>., it\'s great!'
++        },
++        {
++            'input': 'Multiple entities: google.com/?q=1&lt;2&amp;3!',
++            'expected': 'Multiple entities: <a href="http://google.com/?q=1%3C2%263">google.com/?q=1&lt;2&amp;3</a>!'
++        }
++    ]
++
++    all_passed = True
++    for i, test in enumerate(test_cases):
++        actual = urlize(test['input'])
++        passed = actual == test['expected']
++        all_passed = all_passed and passed
++
++        print(f"Test case {i+1}:")
++        print("Input:", test['input'])
++        print("Expected:", test['expected'])
++        print("Actual:", actual)
++        print("Test passed:", passed)
++        print()
++
++    print("All tests passed:", all_passed)
++
++if __name__ == "__main__":
++    test_urlize_with_html_escaped_string()
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..8a3ceef07a
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,15 @@
++#!/usr/bin/env python
++from django.utils.html import urlize
++
++def test_exact_issue():
++    input_text = 'Search for google.com/?q=1&lt! and see.'
++    expected_output = 'Search for <a href="http://google.com/?q=1%3C">google.com/?q=1&lt</a>! and see.'
++    actual_output = urlize(input_text)
++
++    print("Input:", input_text)
++    print("Expected:", expected_output)
++    print("Actual:", actual_output)
++    print("Test passed:", actual_output == expected_output)
++
++if __name__ == "__main__":
++    test_exact_issue()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..09f0d26812
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,55 @@
++#!/usr/bin/env python
++from django.utils.html import urlize
++
++def test_urlize_with_html_escaped_string():
++    # Test the specific case from the issue description
++    input_text = 'Search for google.com/?q=1&lt! and see.'
++    expected_output = 'Search for <a href="http://google.com/?q=1%3C">google.com/?q=1&lt</a>! and see.'
++    actual_output = urlize(input_text)
++
++    print("Test case from issue description:")
++    print("Input:", input_text)
++    print("Expected:", expected_output)
++    print("Actual:", actual_output)
++    print("Test passed:", actual_output == expected_output)
++    print()
++
++    # Test a few more cases to ensure we haven't broken anything
++    test_cases = [
++        {
++            'input': 'Visit http://example.com for more info.',
++            'description': 'Simple URL'
++        },
++        {
++            'input': 'Check out https://test.org/path?query=value',
++            'description': 'HTTPS URL with query'
++        },
++        {
++            'input': 'Email me at user@example.com',
++            'description': 'Email address'
++        },
++        {
++            'input': 'URL with trailing period: http://example.com/.',
++            'description': 'URL with trailing period'
++        }
++    ]
++
++    all_passed = True
++    for test in test_cases:
++        # We don't know the exact expected output for these, so we just check if
++        # the URL is properly detected (i.e., the output is different from the input)
++        input_text = test['input']
++        actual_output = urlize(input_text)
++
++        print(f"Test case: {test['description']}")
++        print("Input:", input_text)
++        print("Actual:", actual_output)
++        print("URL detected:", actual_output != input_text)
++        print()
++
++        all_passed = all_passed and (actual_output != input_text)
++
++    print("All basic URL detection tests passed:", all_passed)
++
++if __name__ == "__main__":
++    test_urlize_with_html_escaped_string()
+\ No newline at end of file

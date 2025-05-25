@@ -1,0 +1,75 @@
+diff --git a/reproduce_fowlkes_mallows_issue.py b/reproduce_fowlkes_mallows_issue.py
+new file mode 100644
+index 000000000..3ab4c75bb
+--- /dev/null
++++ b/reproduce_fowlkes_mallows_issue.py
+@@ -0,0 +1,55 @@
++import numpy as np
++import warnings
++from sklearn.metrics.cluster import fowlkes_mallows_score
++
++# Create a scenario where pk * qk is large enough to cause overflow
++# We'll create a large number of samples with a few clusters
++n_samples = 1000000  # Increased sample size
++n_clusters_true = 100  # More clusters
++n_clusters_pred = 100  # More clusters
++
++# Create labels with many samples in each cluster
++np.random.seed(42)
++labels_true = np.repeat(np.arange(n_clusters_true), n_samples // n_clusters_true)
++labels_pred = np.repeat(np.arange(n_clusters_pred), n_samples // n_clusters_pred)
++
++# Add some noise to make the clustering not perfect
++labels_pred[np.random.choice(len(labels_pred), len(labels_pred)//10, replace=False)] += 1
++labels_pred = np.mod(labels_pred, n_clusters_pred)
++
++print("Number of samples:", len(labels_true))
++print("Clusters in true labels:", np.unique(labels_true))
++print("Clusters in predicted labels:", np.unique(labels_pred))
++
++# Try to calculate the score
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++    score = fowlkes_mallows_score(labels_true, labels_pred)
++    if len(w) > 0:
++        print("Warnings encountered:", [str(warning.message) for warning in w])
++    else:
++        print("No warnings encountered")
++
++print("Calculated score:", score)
++
++# Now let's manually calculate the components to verify the issue
++from sklearn.metrics.cluster.supervised import contingency_matrix, check_clusterings
++
++labels_true, labels_pred = check_clusterings(labels_true, labels_pred)
++c = contingency_matrix(labels_true, labels_pred, sparse=True)
++tk = np.dot(c.data, c.data) - n_samples
++pk = np.sum(np.asarray(c.sum(axis=0)).ravel() ** 2) - n_samples
++qk = np.sum(np.asarray(c.sum(axis=1)).ravel() ** 2) - n_samples
++
++print("\nComponents:")
++print("tk:", tk)
++print("pk:", pk)
++print("qk:", qk)
++print("pk * qk:", pk * qk)
++
++# Try the proposed fix
++try:
++    proposed_score = np.sqrt(tk / pk) * np.sqrt(tk / qk) if tk != 0. else 0.
++    print("\nProposed fix result:", proposed_score)
++except Exception as e:
++    print("\nProposed fix failed with error:", str(e))
+\ No newline at end of file
+diff --git a/sklearn/metrics/cluster/supervised.py b/sklearn/metrics/cluster/supervised.py
+index a987778ae..9bcca75a2 100644
+--- a/sklearn/metrics/cluster/supervised.py
++++ b/sklearn/metrics/cluster/supervised.py
+@@ -856,7 +856,7 @@ def fowlkes_mallows_score(labels_true, labels_pred, sparse=False):
+     tk = np.dot(c.data, c.data) - n_samples
+     pk = np.sum(np.asarray(c.sum(axis=0)).ravel() ** 2) - n_samples
+     qk = np.sum(np.asarray(c.sum(axis=1)).ravel() ** 2) - n_samples
+-    return tk / np.sqrt(pk * qk) if tk != 0. else 0.
++    return np.sqrt(tk / pk) * np.sqrt(tk / qk) if tk != 0. else 0.
+ 
+ 
+ def entropy(labels):

@@ -1,0 +1,149 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..8e8b34de6d
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,51 @@
++import matplotlib.pyplot as plt
++import pickle
++import numpy as np
++
++def test_pickle_unpickle_with_align():
++    # Create a figure with aligned labels
++    fig = plt.figure()
++    ax1 = fig.add_subplot(211)
++    ax2 = fig.add_subplot(212)
++    time = [0, 1, 2, 3, 4]
++    speed = [40000, 4300, 4500, 4700, 4800]
++    acc = [10, 11, 12, 13, 14]
++    ax1.plot(time, speed)
++    ax1.set_ylabel('speed')
++    ax2.plot(time, acc)
++    ax2.set_ylabel('acc')
++
++    # Align labels
++    fig.align_labels()
++
++    # Pickle the figure
++    pickle_data = pickle.dumps(fig)
++
++    # Unpickle the figure
++    unpickled_fig = pickle.loads(pickle_data)
++
++    # Verify that the unpickled figure has the same properties
++    assert len(unpickled_fig.axes) == 2, "Unpickled figure should have 2 axes"
++    assert unpickled_fig.axes[0].get_ylabel() == 'speed', "Ylabel of first axis should be 'speed'"
++    assert unpickled_fig.axes[1].get_ylabel() == 'acc', "Ylabel of second axis should be 'acc'"
++
++    # Verify that the data is preserved
++    lines1 = unpickled_fig.axes[0].get_lines()
++    lines2 = unpickled_fig.axes[1].get_lines()
++    assert len(lines1) == 1, "First axis should have 1 line"
++    assert len(lines2) == 1, "Second axis should have 1 line"
++
++    xdata1, ydata1 = lines1[0].get_xydata().T
++    xdata2, ydata2 = lines2[0].get_xydata().T
++
++    # Check that the x and y data match the original data
++    assert np.allclose(xdata1, time), "X data in first axis should match original time data"
++    assert np.allclose(ydata1, speed), "Y data in first axis should match original speed data"
++    assert np.allclose(xdata2, time), "X data in second axis should match original time data"
++    assert np.allclose(ydata2, acc), "Y data in second axis should match original acc data"
++
++    print("Pickling and unpickling with align_labels successful!")
++    print("All assertions passed!")
++
++if __name__ == "__main__":
++    test_pickle_unpickle_with_align()
+\ No newline at end of file
+diff --git a/lib/matplotlib/cbook.py b/lib/matplotlib/cbook.py
+index c9699b2e21..71d1292fe2 100644
+--- a/lib/matplotlib/cbook.py
++++ b/lib/matplotlib/cbook.py
+@@ -846,6 +846,30 @@ class Grouper:
+         siblings = self._mapping.get(weakref.ref(a), [weakref.ref(a)])
+         return [x() for x in siblings]
+ 
++    def __getstate__(self):
++        """
++        Convert weak references to strong references for pickling.
++        """
++        state = self.__dict__.copy()
++        # Convert weak references to strong references
++        state['_mapping'] = {
++            key(): [ref() if ref() is not None else None for ref in value]
++            for key, value in state['_mapping'].items()
++        }
++        return state
++
++    def __setstate__(self, state):
++        """
++        Convert strong references back to weak references after unpickling.
++        """
++        # Convert strong references back to weak references
++        state['_mapping'] = {
++            weakref.ref(key): [weakref.ref(ref) if ref is not None else None
++                              for ref in value]
++            for key, value in state['_mapping'].items()
++        }
++        self.__dict__.update(state)
++
+ 
+ class GrouperView:
+     """Immutable view over a `.Grouper`."""
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..d3ec09df87
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,49 @@
++import matplotlib.pyplot as plt
++import pickle
++
++def test_pickle_without_align():
++    fig = plt.figure()
++    ax1 = fig.add_subplot(211)
++    ax2 = fig.add_subplot(212)
++    time = [0, 1, 2, 3, 4]
++    speed = [40000, 4300, 4500, 4700, 4800]
++    acc = [10, 11, 12, 13, 14]
++    ax1.plot(time, speed)
++    ax1.set_ylabel('speed')
++    ax2.plot(time, acc)
++    ax2.set_ylabel('acc')
++
++    # Try to pickle without align_labels
++    try:
++        pickle_data = pickle.dumps(fig)
++        print("Pickling successful without align_labels")
++    except Exception as e:
++        print(f"Pickling failed without align_labels: {e}")
++
++def test_pickle_with_align():
++    fig = plt.figure()
++    ax1 = fig.add_subplot(211)
++    ax2 = fig.add_subplot(212)
++    time = [0, 1, 2, 3, 4]
++    speed = [40000, 4300, 4500, 4700, 4800]
++    acc = [10, 11, 12, 13, 14]
++    ax1.plot(time, speed)
++    ax1.set_ylabel('speed')
++    ax2.plot(time, acc)
++    ax2.set_ylabel('acc')
++
++    # Call align_labels
++    fig.align_labels()
++
++    # Try to pickle with align_labels
++    try:
++        pickle_data = pickle.dumps(fig)
++        print("Pickling successful with align_labels")
++    except Exception as e:
++        print(f"Pickling failed with align_labels: {e}")
++
++if __name__ == "__main__":
++    print("Testing pickling without align_labels:")
++    test_pickle_without_align()
++    print("\nTesting pickling with align_labels:")
++    test_pickle_with_align()
+\ No newline at end of file

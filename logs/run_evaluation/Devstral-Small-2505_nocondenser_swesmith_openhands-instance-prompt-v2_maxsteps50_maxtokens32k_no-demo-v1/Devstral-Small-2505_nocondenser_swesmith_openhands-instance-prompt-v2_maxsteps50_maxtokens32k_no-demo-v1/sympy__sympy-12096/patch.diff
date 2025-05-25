@@ -1,0 +1,245 @@
+diff --git a/debug_composition.py b/debug_composition.py
+new file mode 100644
+index 0000000000..06438887ae
+--- /dev/null
++++ b/debug_composition.py
+@@ -0,0 +1,23 @@
++from sympy.utilities.lambdify import implemented_function
++import inspect
++
++# Create two implemented functions
++f = implemented_function('f', lambda x: x ** 2)
++g = implemented_function('g', lambda x: 2 * x)
++
++# Create the composition
++composition = f(g(2))
++
++# Print information about the composition
++print("Type of composition:", type(composition))
++print("Dir of composition:", dir(composition))
++print("Composition args:", composition.args)
++print("First arg type:", type(composition.args[0]))
++print("First arg dir:", dir(composition.args[0]))
++print("Has _imp_?", hasattr(composition.args[0], '_imp_'))
++print("Has evalf?", hasattr(composition.args[0], 'evalf'))
++
++# Print the source code of Function._eval_evalf
++from sympy.core.function import Function
++print("\nSource code of Function._eval_evalf:")
++print(inspect.getsource(Function._eval_evalf))
+\ No newline at end of file
+diff --git a/debug_float_conversion.py b/debug_float_conversion.py
+new file mode 100644
+index 0000000000..9ed9aa7c0a
+--- /dev/null
++++ b/debug_float_conversion.py
+@@ -0,0 +1,37 @@
++from sympy.utilities.lambdify import implemented_function
++from sympy import Float, symbols
++import inspect
++
++# Create two implemented functions
++f = implemented_function('f', lambda x: x ** 2)
++g = implemented_function('g', lambda x: 2 * x)
++
++# Create a symbolic variable
++x = symbols('x')
++
++# Test with a numeric value
++print("Testing with numeric value:")
++g2 = g(2)
++print("g(2) =", g2)
++print("g(2).evalf() =", g2.evalf())
++print("Type of g(2).evalf() =", type(g2.evalf()))
++
++# Try to convert to float
++try:
++    float_val = float(g2.evalf())
++    print("float(g(2).evalf()) =", float_val)
++    print("Type of float conversion =", type(float_val))
++except Exception as e:
++    print("Error converting to float:", e)
++
++# Test the lambda function directly
++print("\nTesting lambda function directly:")
++try:
++    print("f._imp_(float(g2.evalf())) =", f._imp_(float(g2.evalf())))
++except Exception as e:
++    print("Error calling f._imp_ with float conversion:", e)
++
++# Test the composition
++print("\nTesting composition:")
++print("f(g(2)) =", f(g2))
++print("f(g(2)).evalf() =", f(g2).evalf())
+\ No newline at end of file
+diff --git a/debug_implemented_function.py b/debug_implemented_function.py
+new file mode 100644
+index 0000000000..80fe098b6a
+--- /dev/null
++++ b/debug_implemented_function.py
+@@ -0,0 +1,44 @@
++from sympy.utilities.lambdify import implemented_function
++from sympy import Float, symbols
++import inspect
++
++# Create two implemented functions
++f = implemented_function('f', lambda x: x ** 2)
++g = implemented_function('g', lambda x: 2 * x)
++
++# Print information about the functions
++print("Function f:")
++print("Type:", type(f))
++print("Dir:", dir(f))
++print("Has _imp_?", hasattr(f, '_imp_'))
++print("_imp_ function:", f._imp_)
++
++print("\nFunction g:")
++print("Type:", type(g))
++print("Dir:", dir(g))
++print("Has _imp_?", hasattr(g, '_imp_'))
++print("_imp_ function:", g._imp_)
++
++# Create a symbolic variable
++x = symbols('x')
++
++# Test the functions with a symbolic variable
++print("\nTesting with symbolic variable:")
++print("f(x) =", f(x))
++print("g(x) =", g(x))
++print("f(g(x)) =", f(g(x)))
++
++# Test the functions with a numeric value
++print("\nTesting with numeric value:")
++print("f(2) =", f(2))
++print("f(2).evalf() =", f(2).evalf())
++print("g(2) =", g(2))
++print("g(2).evalf() =", g(2).evalf())
++print("f(g(2)) =", f(g(2)))
++print("f(g(2)).evalf() =", f(g(2)).evalf())
++
++# Print the source code of the _imp_ functions
++print("\nSource code of f._imp_:")
++print(inspect.getsource(f._imp_))
++print("\nSource code of g._imp_:")
++print(inspect.getsource(g._imp_))
+\ No newline at end of file
+diff --git a/debug_step_by_step.py b/debug_step_by_step.py
+new file mode 100644
+index 0000000000..de1376ccca
+--- /dev/null
++++ b/debug_step_by_step.py
+@@ -0,0 +1,31 @@
++from sympy.utilities.lambdify import implemented_function
++from sympy import Float
++
++# Create two implemented functions
++f = implemented_function('f', lambda x: x ** 2)
++g = implemented_function('g', lambda x: 2 * x)
++
++# Test individual evaluations
++print("Testing individual evaluations:")
++print(f(2).evalf())  # Should print 4.00000000000000
++print(g(2).evalf())  # Should print 4.00000000000000
++
++# Debug the composition step by step
++print("\nDebugging composition step by step:")
++g2 = g(2)
++print("g(2) =", g2)
++print("g(2) is implemented function:", hasattr(g2, '_imp_'))
++print("g(2) can evalf:", hasattr(g2, 'evalf'))
++
++g2_evalf = g2.evalf()
++print("g(2).evalf() =", g2_evalf)
++print("Type of g(2).evalf() =", type(g2_evalf))
++
++f_g2 = f(g2)
++print("f(g(2)) =", f_g2)
++print("f(g(2)) args =", f_g2.args)
++print("First arg is implemented function:", hasattr(f_g2.args[0], '_imp_'))
++
++# Test the final composition
++print("\nTesting composition evaluation:")
++print(f(g(2)).evalf())
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..54d32d7edb
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,14 @@
++from sympy.utilities.lambdify import implemented_function
++
++# Create two implemented functions
++f = implemented_function('f', lambda x: x ** 2)
++g = implemented_function('g', lambda x: 2 * x)
++
++# Test individual evaluations
++print("Testing individual evaluations:")
++print(f(2).evalf())  # Should print 4.00000000000000
++print(g(2).evalf())  # Should print 4.00000000000000
++
++# Test composition evaluation
++print("\nTesting composition evaluation:")
++print(f(g(2)).evalf())  # Currently prints f(g(2)), should print 4.00000000000000
+\ No newline at end of file
+diff --git a/sympy/core/function.py b/sympy/core/function.py
+index 1b8005e1d2..f1786fac82 100644
+--- a/sympy/core/function.py
++++ b/sympy/core/function.py
+@@ -507,7 +507,24 @@ def _eval_evalf(self, prec):
+             func = getattr(mpmath, fname)
+         except (AttributeError, KeyError):
+             try:
+-                return Float(self._imp_(*self.args), prec)
++                # First evaluate all arguments that are implemented functions
++                evaluated_args = []
++                for arg in self.args:
++                    if hasattr(arg, '_imp_') and hasattr(arg, 'evalf'):
++                        # Evaluate the argument to a Float
++                        evaluated = arg.evalf(prec)
++                        # Convert to a Python float if possible
++                        try:
++                            evaluated_args.append(float(evaluated))
++                        except (TypeError, ValueError):
++                            evaluated_args.append(evaluated)
++                    else:
++                        evaluated_args.append(arg)
++
++                # Call the implementation with the evaluated arguments
++                result = self._imp_(*evaluated_args)
++                # Convert the result to a Float
++                return Float(result, prec)
+             except (AttributeError, TypeError, ValueError):
+                 return
+ 
+diff --git a/test_lambda_behavior.py b/test_lambda_behavior.py
+new file mode 100644
+index 0000000000..606905c782
+--- /dev/null
++++ b/test_lambda_behavior.py
+@@ -0,0 +1,24 @@
++from sympy.utilities.lambdify import implemented_function
++from sympy import Float
++
++# Create two implemented functions
++f = implemented_function('f', lambda x: x ** 2)
++g = implemented_function('g', lambda x: 2 * x)
++
++# Test with a numeric value
++print("Testing with numeric value:")
++print("g(2) =", g(2))
++print("Type of g(2) =", type(g(2)))
++print("g(2).evalf() =", g(2).evalf())
++print("Type of g(2).evalf() =", type(g(2).evalf()))
++
++# Test the lambda function directly
++print("\nTesting lambda function directly:")
++print("f._imp_(2) =", f._imp_(2))
++print("f._imp_(g(2)) =", f._imp_(g(2)))
++print("f._imp_(g(2).evalf()) =", f._imp_(g(2).evalf()))
++
++# Test the composition
++print("\nTesting composition:")
++print("f(g(2)) =", f(g(2)))
++print("f(g(2)).evalf() =", f(g(2)).evalf())
+\ No newline at end of file

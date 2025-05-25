@@ -1,0 +1,643 @@
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 000000000..2e17a1165
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,37 @@
++import os
++import tempfile
++from pathlib import Path
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        # Check symlink properties
++        print(f"Symlink exists: {os.path.exists(symlink_dir)}")
++        print(f"Symlink is link: {os.path.islink(symlink_dir)}")
++        print(f"Symlink is dir (follow_symlinks=True): {os.path.isdir(symlink_dir, follow_symlinks=True)}")
++        print(f"Symlink is dir (follow_symlinks=False): {os.path.isdir(symlink_dir, follow_symlinks=False)}")
++
++        # List all files using os.walk
++        print("\nUsing os.walk:")
++        for root, dirs, files in os.walk(temp_dir):
++            level = root.replace(temp_dir, '').count(os.sep)
++            indent = ' ' * 4 * level
++            print(f"{indent}{os.path.basename(root)}/")
++            sub_indent = ' ' * 4 * (level + 1)
++            for f in files:
++                print(f"{sub_indent}{f}")
+\ No newline at end of file
+diff --git a/test_dir_entry.py b/test_dir_entry.py
+new file mode 100644
+index 000000000..9834b97be
+--- /dev/null
++++ b/test_dir_entry.py
+@@ -0,0 +1,50 @@
++import os
++import tempfile
++from pathlib import Path
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        # Use os.scandir to examine the directory
++        print("\nUsing os.scandir:")
++        with os.scandir(temp_dir) as it:
++            for entry in it:
++                print(f"Entry: {entry.name}")
++                print(f"  Path: {entry.path}")
++                print(f"  Is directory (entry.is_dir()): {entry.is_dir()}")
++                print(f"  Is directory (os.path.isdir(entry.path)): {os.path.isdir(entry.path)}")
++                print(f"  Is symlink (os.path.islink(entry.path)): {os.path.islink(entry.path)}")
++
++                # Try both ways of checking if it's a directory
++                if entry.is_dir():
++                    print(f"  Following into directory {entry.path}")
++                    with os.scandir(entry.path) as sub_it:
++                        for sub_entry in sub_it:
++                            print(f"    Sub-entry: {sub_entry.name}")
++                            print(f"    Sub-entry path: {sub_entry.path}")
++
++                # Check with and without follow_symlinks
++                try:
++                    print(f"  Is directory with follow_symlinks=True: {entry.is_dir(follow_symlinks=True)}")
++                except TypeError:
++                    print("  entry.is_dir() doesn't accept follow_symlinks parameter")
++
++                try:
++                    print(f"  Is directory with follow_symlinks=False: {entry.is_dir(follow_symlinks=False)}")
++                except TypeError:
++                    print("  entry.is_dir() doesn't accept follow_symlinks parameter")
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..1777b7c92
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,86 @@
++import os
++import tempfile
++from pathlib import Path
++import sys
++
++# Add the pytest source to the path
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
++
++# Original visit function
++def original_visit(path, recurse):
++    entries = sorted(os.scandir(path), key=lambda entry: entry.name)
++    yield from entries
++    for entry in entries:
++        if entry.is_dir(follow_symlinks=False) and recurse(entry):
++            yield from original_visit(entry.path, recurse)
++
++# Fixed visit function
++def fixed_visit(path, recurse):
++    entries = sorted(os.scandir(path), key=lambda entry: entry.name)
++    yield from entries
++    for entry in entries:
++        if entry.is_dir() and recurse(entry):
++            yield from fixed_visit(entry.path, recurse)
++
++def recurse(entry):
++    return True
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        # Test original function
++        print("\nOriginal visit function:")
++        original_files = []
++        for entry in original_visit(temp_dir, recurse):
++            if entry.is_file():
++                original_files.append(entry.path)
++                print(f"File: {entry.path}")
++            elif entry.is_dir():
++                print(f"Dir: {entry.path}")
++                if os.path.islink(entry.path):
++                    print(f"  (symlink to {os.readlink(entry.path)})")
++
++        # Test fixed function
++        print("\nFixed visit function:")
++        fixed_files = []
++        for entry in fixed_visit(temp_dir, recurse):
++            if entry.is_file():
++                fixed_files.append(entry.path)
++                print(f"File: {entry.path}")
++            elif entry.is_dir():
++                print(f"Dir: {entry.path}")
++                if os.path.islink(entry.path):
++                    print(f"  (symlink to {os.readlink(entry.path)})")
++
++        # Check if we found the file in the symlinked directory
++        symlinked_file_path = str(real_dir / "test_file.py")
++        found_in_original = any(f.endswith(symlinked_file_path) for f in original_files)
++        found_in_fixed = any(f.endswith(symlinked_file_path) for f in fixed_files)
++
++        print("\nResults:")
++        print(f"File in symlinked directory found with original function: {found_in_original}")
++        print(f"File in symlinked directory found with fixed function: {found_in_fixed}")
++
++        if found_in_original != found_in_fixed:
++            print("\nThe fix changes the behavior!")
++            if found_in_fixed:
++                print("The fix allows following symlinks to directories.")
++            else:
++                print("The fix prevents following symlinks to directories.")
++        else:
++            print("\nThe fix does not change the behavior.")
+\ No newline at end of file
+diff --git a/test_os_direntry.py b/test_os_direntry.py
+new file mode 100644
+index 000000000..1f8458034
+--- /dev/null
++++ b/test_os_direntry.py
+@@ -0,0 +1,87 @@
++import os
++import tempfile
++from pathlib import Path
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        # Test os.DirEntry.is_dir with and without follow_symlinks
++        print("\nTesting os.DirEntry.is_dir:")
++
++        # Get DirEntry objects for both directories
++        real_entry = os.scandir(temp_dir).__next__()
++        while real_entry.name != "real_dir":
++            real_entry = os.scandir(temp_dir).__next__()
++
++        symlink_entry = os.scandir(temp_dir).__next__()
++        while symlink_entry.name != "symlink_dir":
++            symlink_entry = os.scandir(temp_dir).__next__()
++
++        # Test the real directory
++        print("\nReal directory entry:")
++        print(f"Name: {real_entry.name}")
++        print(f"Path: {real_entry.path}")
++        print(f"Is directory: {real_entry.is_dir()}")
++        print(f"Is symlink: {os.path.islink(real_entry.path)}")
++
++        # Test the symlinked directory
++        print("\nSymlinked directory entry:")
++        print(f"Name: {symlink_entry.name}")
++        print(f"Path: {symlink_entry.path}")
++        print(f"Is symlink: {os.path.islink(symlink_entry.path)}")
++
++        # Test is_dir with different parameters
++        try:
++            print(f"Is directory (default): {symlink_entry.is_dir()}")
++        except Exception as e:
++            print(f"Error with default is_dir: {e}")
++
++        try:
++            print(f"Is directory (follow_symlinks=True): {symlink_entry.is_dir(follow_symlinks=True)}")
++        except Exception as e:
++            print(f"Error with follow_symlinks=True: {e}")
++
++        try:
++            print(f"Is directory (follow_symlinks=False): {symlink_entry.is_dir(follow_symlinks=False)}")
++        except Exception as e:
++            print(f"Error with follow_symlinks=False: {e}")
++
++        # Test os.path.isdir with different parameters
++        try:
++            print(f"os.path.isdir (default): {os.path.isdir(symlink_entry.path)}")
++        except Exception as e:
++            print(f"Error with default os.path.isdir: {e}")
++
++        try:
++            print(f"os.path.isdir (follow_symlinks=True): {os.path.isdir(symlink_entry.path, follow_symlinks=True)}")
++        except Exception as e:
++            print(f"Error with follow_symlinks=True: {e}")
++
++        try:
++            print(f"os.path.isdir (follow_symlinks=False): {os.path.isdir(symlink_entry.path, follow_symlinks=False)}")
++        except Exception as e:
++            print(f"Error with follow_symlinks=False: {e}")
++
++        # Test if we can follow into the symlinked directory
++        print("\nTrying to follow into the symlinked directory:")
++        try:
++            with os.scandir(symlink_entry.path) as it:
++                for entry in it:
++                    print(f"Found entry: {entry.name}")
++        except Exception as e:
++            print(f"Error following into symlinked directory: {e}")
+\ No newline at end of file
+diff --git a/test_pytest_collection.py b/test_pytest_collection.py
+new file mode 100644
+index 000000000..05e0975a8
+--- /dev/null
++++ b/test_pytest_collection.py
+@@ -0,0 +1,80 @@
++import os
++import tempfile
++import shutil
++from pathlib import Path
++import sys
++
++# Add the pytest source to the path
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
++
++from _pytest.pathlib import visit
++
++def recurse(entry):
++    """Simulate pytest's _recurse method."""
++    if entry.name == "__pycache__":
++        return False
++
++    # Check if the entry is a symlink
++    if os.path.islink(entry.path):
++        print(f"Checking symlink: {entry.path} -> {os.readlink(entry.path)}")
++
++    return True
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        print("\nUsing visit() function:")
++        found_files = []
++        found_dirs = []
++        for entry in visit(temp_dir, recurse):
++            if entry.is_file():
++                found_files.append(entry.path)
++                print(f"Found file: {entry.path}")
++            elif entry.is_dir():
++                found_dirs.append(entry.path)
++                print(f"Entering directory: {entry.path}")
++
++                # Check if this is a symlink
++                if os.path.islink(entry.path):
++                    print(f"  NOTE: {entry.path} is a symlink to {os.readlink(entry.path)}")
++
++        # Check if we found the file in the symlinked directory
++        symlinked_file_path = str(real_dir / "test_file.py")
++        symlinked_file_in_results = any(f.endswith(symlinked_file_path) for f in found_files)
++
++        # Check if we entered the symlinked directory
++        symlink_dir_in_results = symlink_dir in found_dirs
++
++        print("\nRESULTS:")
++        print(f"Found {len(found_files)} files")
++        print(f"Found {len(found_dirs)} directories")
++        print(f"Symlinked directory '{symlink_dir}' was {'found' if symlink_dir_in_results else 'NOT found'}")
++        print(f"File in symlinked directory '{symlinked_file_path}' was {'found' if symlinked_file_in_results else 'NOT found'}")
++
++        # Print the actual paths for debugging
++        print("\nDEBUG INFO:")
++        print(f"Found files: {found_files}")
++        print(f"Found directories: {found_dirs}")
++
++        # Check if we're following symlinks correctly
++        if os.path.islink(symlink_dir):
++            target = os.readlink(symlink_dir)
++            print(f"Symlink target exists: {os.path.exists(target)}")
++            print(f"Symlink target is directory: {os.path.isdir(target)}")
++            print(f"Symlink target with follow_symlinks=True: {os.path.isdir(symlink_dir, follow_symlinks=True)}")
++            print(f"Symlink target with follow_symlinks=False: {os.path.isdir(symlink_dir, follow_symlinks=False)}")
+\ No newline at end of file
+diff --git a/test_symlink_behavior.py b/test_symlink_behavior.py
+new file mode 100644
+index 000000000..1c8044fb2
+--- /dev/null
++++ b/test_symlink_behavior.py
+@@ -0,0 +1,72 @@
++import os
++import tempfile
++from pathlib import Path
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        # Test different ways of checking if something is a directory
++        print("\nTesting different directory checks:")
++
++        # Check the symlink itself
++        print("\nChecking symlink directory:")
++        print(f"os.path.isdir(symlink_dir): {os.path.isdir(symlink_dir)}")
++        print(f"os.path.islink(symlink_dir): {os.path.islink(symlink_dir)}")
++        print(f"os.path.exists(symlink_dir): {os.path.exists(symlink_dir)}")
++
++        # Check the target of the symlink
++        target = os.readlink(symlink_dir)
++        print(f"\nChecking symlink target: {target}")
++        print(f"os.path.isdir(target): {os.path.isdir(target)}")
++        print(f"os.path.exists(target): {os.path.exists(target)}")
++
++        # Use os.scandir to examine the directory
++        print("\nUsing os.scandir on the parent directory:")
++        with os.scandir(temp_dir) as it:
++            for entry in it:
++                print(f"\nEntry: {entry.name}")
++                print(f"  Path: {entry.path}")
++                print(f"  Is directory (entry.is_dir()): {entry.is_dir()}")
++                print(f"  Is symlink (os.path.islink(entry.path)): {os.path.islink(entry.path)}")
++
++                # Try to follow the directory
++                if entry.is_dir():
++                    print(f"  Following into directory {entry.path}")
++                    try:
++                        with os.scandir(entry.path) as sub_it:
++                            sub_entries = list(sub_it)
++                            print(f"    Found {len(sub_entries)} sub-entries")
++                            for sub_entry in sub_entries:
++                                print(f"    Sub-entry: {sub_entry.name}")
++                    except Exception as e:
++                        print(f"    Error following into directory: {e}")
++
++        # Test with os.walk
++        print("\nUsing os.walk:")
++        for root, dirs, files in os.walk(temp_dir):
++            level = root.replace(temp_dir, '').count(os.sep)
++            indent = ' ' * 4 * level
++            rel_root = os.path.basename(root)
++            if level > 0:
++                parent = os.path.dirname(root)
++                rel_root = os.path.basename(root)
++
++            print(f"{indent}{rel_root}/")
++            sub_indent = ' ' * 4 * (level + 1)
++            for f in files:
++                print(f"{sub_indent}{f}")
+\ No newline at end of file
+diff --git a/test_symlink_issue.py b/test_symlink_issue.py
+new file mode 100644
+index 000000000..42c176cf2
+--- /dev/null
++++ b/test_symlink_issue.py
+@@ -0,0 +1,69 @@
++import os
++import tempfile
++import shutil
++from pathlib import Path
++import sys
++
++# Add the pytest source to the path
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
++
++from _pytest.pathlib import visit
++
++def recurse(entry):
++    """Always recurse into directories."""
++    return True
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        # Use the visit function to traverse the directory
++        print(f"Contents of {temp_dir}:")
++        for root, dirs, files in os.walk(temp_dir):
++            level = root.replace(temp_dir, '').count(os.sep)
++            indent = ' ' * 4 * level
++            print(f"{indent}{os.path.basename(root)}/")
++            sub_indent = ' ' * 4 * (level + 1)
++            for f in files:
++                print(f"{sub_indent}{f}")
++
++        print("\nUsing visit() function:")
++        found_files = []
++        found_dirs = []
++        for entry in visit(temp_dir, recurse):
++            if entry.is_file():
++                found_files.append(entry.path)
++                print(f"Found file: {entry.path}")
++            elif entry.is_dir():
++                found_dirs.append(entry.path)
++                print(f"Entering directory: {entry.path}")
++
++                # Check if this is a symlink
++                if os.path.islink(entry.path):
++                    print(f"  NOTE: {entry.path} is a symlink to {os.readlink(entry.path)}")
++
++        # Check if we found the file in the symlinked directory
++        symlinked_file_path = str(real_dir / "test_file.py")
++        symlinked_file_in_results = any(f.endswith(symlinked_file_path) for f in found_files)
++
++        # Check if we entered the symlinked directory
++        symlink_dir_in_results = symlink_dir in found_dirs
++
++        print("\nRESULTS:")
++        print(f"Found {len(found_files)} files")
++        print(f"Found {len(found_dirs)} directories")
++        print(f"Symlinked directory '{symlink_dir}' was {'found' if symlink_dir_in_results else 'NOT found'}")
++        print(f"File in symlinked directory '{symlinked_file_path}' was {'found' if symlinked_file_in_results else 'NOT found'}")
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/test_visit_modified.py b/test_visit_modified.py
+new file mode 100644
+index 000000000..309d42c3b
+--- /dev/null
++++ b/test_visit_modified.py
+@@ -0,0 +1,106 @@
++import os
++import tempfile
++import shutil
++from pathlib import Path
++import sys
++
++# Add the pytest source to the path
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
++
++from _pytest.pathlib import visit as original_visit
++
++# Create a modified version of the visit function
++def modified_visit(
++    path: str, recurse: callable
++):
++    """Walk a directory recursively, in breadth-first order.
++
++    Entries at each directory level are sorted.
++    """
++    entries = sorted(os.scandir(path), key=lambda entry: entry.name)
++    yield from entries
++    for entry in entries:
++        # Modified: Removed follow_symlinks=False
++        if entry.is_dir() and recurse(entry):
++            yield from modified_visit(entry.path, recurse)
++
++def recurse(entry):
++    """Simulate pytest's _recurse method."""
++    if entry.name == "__pycache__":
++        return False
++
++    # Check if the entry is a symlink
++    if os.path.islink(entry.path):
++        print(f"Checking symlink: {entry.path} -> {os.readlink(entry.path)}")
++
++    return True
++
++def main():
++    # Create a temporary directory structure
++    with tempfile.TemporaryDirectory() as temp_dir:
++        temp_path = Path(temp_dir)
++
++        # Create a directory with a test file
++        real_dir = temp_path / "real_dir"
++        real_dir.mkdir()
++        (real_dir / "test_file.py").write_text("def test_something(): pass")
++
++        # Create a symlinked directory
++        symlink_dir = temp_path / "symlink_dir"
++        os.symlink(real_dir, symlink_dir, target_is_directory=True)
++
++        print(f"Directory structure created at {temp_dir}")
++        print(f"Real directory: {real_dir}")
++        print(f"Symlinked directory: {symlink_dir} -> {os.readlink(symlink_dir)}")
++
++        print("\nUsing original visit() function:")
++        found_files_orig = []
++        found_dirs_orig = []
++        for entry in original_visit(temp_dir, recurse):
++            if entry.is_file():
++                found_files_orig.append(entry.path)
++                print(f"Found file: {entry.path}")
++            elif entry.is_dir():
++                found_dirs_orig.append(entry.path)
++                print(f"Entering directory: {entry.path}")
++
++                # Check if this is a symlink
++                if os.path.islink(entry.path):
++                    print(f"  NOTE: {entry.path} is a symlink to {os.readlink(entry.path)}")
++
++        print("\nUsing modified visit() function:")
++        found_files_mod = []
++        found_dirs_mod = []
++        for entry in modified_visit(temp_dir, recurse):
++            if entry.is_file():
++                found_files_mod.append(entry.path)
++                print(f"Found file: {entry.path}")
++            elif entry.is_dir():
++                found_dirs_mod.append(entry.path)
++                print(f"Entering directory: {entry.path}")
++
++                # Check if this is a symlink
++                if os.path.islink(entry.path):
++                    print(f"  NOTE: {entry.path} is a symlink to {os.readlink(entry.path)}")
++
++        # Check if we found the file in the symlinked directory
++        symlinked_file_path = str(real_dir / "test_file.py")
++        symlinked_file_in_results_orig = any(f.endswith(symlinked_file_path) for f in found_files_orig)
++        symlinked_file_in_results_mod = any(f.endswith(symlinked_file_path) for f in found_files_mod)
++
++        # Check if we entered the symlinked directory
++        symlink_dir_in_results_orig = symlink_dir in found_dirs_orig
++        symlink_dir_in_results_mod = symlink_dir in found_dirs_mod
++
++        print("\nRESULTS:")
++        print("Original visit function:")
++        print(f"Found {len(found_files_orig)} files")
++        print(f"Found {len(found_dirs_orig)} directories")
++        print(f"Symlinked directory '{symlink_dir}' was {'found' if symlink_dir_in_results_orig else 'NOT found'}")
++        print(f"File in symlinked directory '{symlinked_file_path}' was {'found' if symlinked_file_in_results_orig else 'NOT found'}")
++
++        print("\nModified visit function:")
++        print(f"Found {len(found_files_mod)} files")
++        print(f"Found {len(found_dirs_mod)} directories")
++        print(f"Symlinked directory '{symlink_dir}' was {'found' if symlink_dir_in_results_mod else 'NOT found'}")
++        print(f"File in symlinked directory '{symlinked_file_path}' was {'found' if symlinked_file_in_results_mod else 'NOT found'}")
+\ No newline at end of file

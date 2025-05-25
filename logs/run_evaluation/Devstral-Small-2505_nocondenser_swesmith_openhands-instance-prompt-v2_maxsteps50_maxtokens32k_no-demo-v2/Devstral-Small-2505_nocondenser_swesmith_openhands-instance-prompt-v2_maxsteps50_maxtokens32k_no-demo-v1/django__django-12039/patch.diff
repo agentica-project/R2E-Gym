@@ -1,0 +1,71 @@
+diff --git a/django/db/backends/ddl_references.py b/django/db/backends/ddl_references.py
+index 44e49806f8..38da404781 100644
+--- a/django/db/backends/ddl_references.py
++++ b/django/db/backends/ddl_references.py
+@@ -84,7 +84,7 @@ class Columns(TableColumns):
+     def __str__(self):
+         def col_str(column, idx):
+             try:
+-                return self.quote_name(column) + self.col_suffixes[idx]
++                return '{} {}'.format(self.quote_name(column), self.col_suffixes[idx])
+             except IndexError:
+                 return self.quote_name(column)
+ 
+@@ -116,6 +116,7 @@ class IndexColumns(Columns):
+             try:
+                 col = '{} {}'.format(col, self.col_suffixes[idx])
+             except IndexError:
++                # No suffix, so no extra space needed
+                 pass
+             return col
+ 
+diff --git a/reproduce_index_issue.py b/reproduce_index_issue.py
+new file mode 100644
+index 0000000000..8c7158c368
+--- /dev/null
++++ b/reproduce_index_issue.py
+@@ -0,0 +1,43 @@
++from django.db.backends.ddl_references import Columns, IndexColumns
++from django.db.backends.base.schema import BaseDatabaseSchemaEditor
++
++# Mock schema editor
++class MockSchemaEditor:
++    def __init__(self):
++        self.connection = None
++
++    def quote_name(self, name):
++        return f'"{name}"'
++
++# Test case 1: Descending index
++print("Descending index SQL:")
++schema_editor = MockSchemaEditor()
++columns = Columns(
++    table="schema_author",
++    columns=["name"],
++    quote_name=schema_editor.quote_name,
++    col_suffixes=["DESC"]
++)
++print(f'CREATE INDEX "idx" ON "schema_author" ({str(columns)})')
++
++# Test case 2: Index with opclasses without explicit ordering
++print("\nIndex with opclasses SQL:")
++columns = IndexColumns(
++    table="schema_author",
++    columns=["name"],
++    quote_name=schema_editor.quote_name,
++    col_suffixes=[],
++    opclasses=["text_pattern_ops"]
++)
++print(f'CREATE INDEX "idx" ON "schema_author" ({str(columns)})')
++
++# Test case 3: Index with opclasses and explicit descending order
++print("\nIndex with opclasses and descending order SQL:")
++columns = IndexColumns(
++    table="schema_author",
++    columns=["name"],
++    quote_name=schema_editor.quote_name,
++    col_suffixes=["DESC"],
++    opclasses=["text_pattern_ops"]
++)
++print(f'CREATE INDEX "idx" ON "schema_author" ({str(columns)})')
+\ No newline at end of file

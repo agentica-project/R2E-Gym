@@ -1,0 +1,283 @@
+diff --git a/django/template/library.py b/django/template/library.py
+index 20bc86dac8..03303f8095 100644
+--- a/django/template/library.py
++++ b/django/template/library.py
+@@ -261,16 +261,19 @@ def parse_bits(parser, bits, params, varargs, varkw, defaults,
+         if kwarg:
+             # The kwarg was successfully extracted
+             param, value = kwarg.popitem()
+-            if param not in params and param not in unhandled_kwargs and varkw is None:
+-                # An unexpected keyword argument was supplied
+-                raise TemplateSyntaxError(
+-                    "'%s' received unexpected keyword argument '%s'" %
+-                    (name, param))
+-            elif param in kwargs:
++            # Check if this is a duplicate keyword argument
++            if param in kwargs:
+                 # The keyword argument has already been supplied once
+                 raise TemplateSyntaxError(
+                     "'%s' received multiple values for keyword argument '%s'" %
+                     (name, param))
++
++            # Check if this is a valid keyword argument
++            if param not in params and param not in unhandled_kwargs and param not in kwonly and varkw is None:
++                # An unexpected keyword argument was supplied
++                raise TemplateSyntaxError(
++                    "'%s' received unexpected keyword argument '%s'" %
++                    (name, param))
+             else:
+                 # All good, record the keyword argument
+                 kwargs[str(param)] = value
+@@ -281,6 +284,9 @@ def parse_bits(parser, bits, params, varargs, varkw, defaults,
+                 elif param in unhandled_kwargs:
+                     # Same for keyword-only arguments
+                     unhandled_kwargs.remove(param)
++                elif param in kwonly:
++                    # Same for keyword-only arguments with defaults
++                    kwonly.remove(param)
+         else:
+             if kwargs:
+                 raise TemplateSyntaxError(
+diff --git a/minimal_test.py b/minimal_test.py
+new file mode 100644
+index 0000000000..f34dae2d75
+--- /dev/null
++++ b/minimal_test.py
+@@ -0,0 +1,45 @@
++from django.template.library import parse_bits
++from django.template.base import Parser, TemplateSyntaxError
++
++# Create a simple parser for testing
++parser = Parser(['{% hello greeting="hi" %}'])
++
++# Test data for a function with keyword-only arguments
++params = []
++varargs = None
++varkw = None
++defaults = None
++kwonly = ['greeting']
++kwonly_defaults = {'greeting': 'hello'}
++takes_context = False
++name = 'hello'
++
++# Test case 1: Using a keyword-only argument with a default value
++print("Testing keyword-only argument with default value...")
++bits = ['greeting=hi']
++try:
++    args, kwargs = parse_bits(parser, bits, params, varargs, varkw, defaults, kwonly, kwonly_defaults, takes_context, name)
++    print("  Success! Keyword argument accepted.")
++    print(f"  Result: {kwargs}")
++except TemplateSyntaxError as e:
++    print(f"  Failed! Error: {str(e)}")
++
++# Test case 2: Using the same keyword argument twice
++print("\nTesting duplicate keyword argument...")
++bits2 = ['greeting=hi', 'greeting=hello']
++try:
++    args, kwargs = parse_bits(parser, bits2, params, varargs, varkw, defaults, kwonly, kwonly_defaults, takes_context, name)
++    print("  Success! Duplicate keyword argument detected.")
++    print(f"  Result: {kwargs}")
++except TemplateSyntaxError as e:
++    print(f"  Failed! Error: {str(e)}")
++
++# Test case 3: Using a non-existent keyword argument
++print("\nTesting non-existent keyword argument...")
++bits3 = ['nonexistent=value']
++try:
++    args, kwargs = parse_bits(parser, bits3, params, varargs, varkw, defaults, kwonly, kwonly_defaults, takes_context, name)
++    print("  Success! Non-existent keyword argument accepted.")
++    print(f"  Result: {kwargs}")
++except TemplateSyntaxError as e:
++    print(f"  Failed! Error: {str(e)}")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..95910e0f30
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,44 @@
++import os
++import sys
++import django
++from django.template import Template, Context, TemplateSyntaxError, Library
++from django.template.library import parse_bits
++from django.template.base import Parser
++
++# Create a custom template library
++register = Library()
++
++# Define a simple tag with keyword-only arguments and default values
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return f'{greeting} world'
++
++# Define a simple tag with keyword-only arguments without default values
++@register.simple_tag
++def hi(*, greeting):
++    return f'{greeting} world'
++
++# Register the library
++register.simple_tag(hello, name='hello')
++register.simple_tag(hi, name='hi')
++
++# Create a simple parser for testing
++parser = Parser(['{% hello greeting="hi" %}'])
++
++# Test case 1: Using a keyword-only argument with a default value
++bits = ['greeting=hi']
++from inspect import getfullargspec
++params, varargs, varkw, defaults, kwonly, kwonly_defaults, _ = getfullargspec(hello)
++try:
++    args, kwargs = parse_bits(parser, bits, params, varargs, varkw, defaults, kwonly, kwonly_defaults, False, 'hello')
++    print("Test 1 (hello with greeting='hi'): Success -", kwargs)
++except TemplateSyntaxError as e:
++    print("Test 1 (hello with greeting='hi'): Failed -", str(e))
++
++# Test case 2: Using the same keyword argument twice
++bits2 = ['greeting=hi', 'greeting=hello']
++try:
++    args, kwargs = parse_bits(parser, bits2, params, varargs, varkw, defaults, kwonly, kwonly_defaults, False, 'hi')
++    print("Test 2 (hi with duplicate greeting): Success -", kwargs)
++except TemplateSyntaxError as e:
++    print("Test 2 (hi with duplicate greeting): Failed -", str(e))
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..992a9f964a
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,71 @@
++import os
++import sys
++import django
++from django.template import Template, Context, TemplateSyntaxError, Library
++from django.template.library import parse_bits
++from django.template.base import Parser
++from inspect import getfullargspec
++
++# Set up Django with minimal settings
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++os.environ.setdefault("SECRET_KEY", "dummy")
++
++# Create a minimal settings object
++from django.conf import Settings
++settings = Settings({
++    'SECRET_KEY': 'dummy',
++    'INSTALLED_APPS': [],
++})
++
++django.setup(configure_logging=False)
++
++# Create a custom template library
++register = Library()
++
++# Define a simple tag with keyword-only arguments and default values
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return f'{greeting} world'
++
++# Define a simple tag with keyword-only arguments without default values
++@register.simple_tag
++def hi(*, greeting):
++    return f'{greeting} world'
++
++# Register the library
++register.simple_tag(hello, name='hello')
++register.simple_tag(hi, name='hi')
++
++# Create a simple parser for testing
++parser = Parser(['{% hello greeting="hi" %}'])
++
++# Test case 1: Using a keyword-only argument with a default value
++print("Testing keyword-only argument with default value...")
++bits = ['greeting=hi']
++params, varargs, varkw, defaults, kwonly, kwonly_defaults, _ = getfullargspec(hello)
++try:
++    args, kwargs = parse_bits(parser, bits, params, varargs, varkw, defaults, kwonly, kwonly_defaults, False, 'hello')
++    print("  Success! Keyword argument accepted.")
++    print(f"  Result: {kwargs}")
++except TemplateSyntaxError as e:
++    print(f"  Failed! Error: {str(e)}")
++
++# Test case 2: Using the same keyword argument twice
++print("\nTesting duplicate keyword argument...")
++bits2 = ['greeting=hi', 'greeting=hello']
++try:
++    args, kwargs = parse_bits(parser, bits2, params, varargs, varkw, defaults, kwonly, kwonly_defaults, False, 'hi')
++    print("  Success! Duplicate keyword argument detected.")
++    print(f"  Result: {kwargs}")
++except TemplateSyntaxError as e:
++    print(f"  Failed! Error: {str(e)}")
++
++# Test case 3: Using a non-existent keyword argument
++print("\nTesting non-existent keyword argument...")
++bits3 = ['nonexistent=value']
++try:
++    args, kwargs = parse_bits(parser, bits3, params, varargs, varkw, defaults, kwonly, kwonly_defaults, False, 'hello')
++    print("  Success! Non-existent keyword argument accepted.")
++    print(f"  Result: {kwargs}")
++except TemplateSyntaxError as e:
++    print(f"  Failed! Error: {str(e)}")
+\ No newline at end of file
+diff --git a/test_template.py b/test_template.py
+new file mode 100644
+index 0000000000..9b09cfdf8d
+--- /dev/null
++++ b/test_template.py
+@@ -0,0 +1,55 @@
++import os
++import django
++from django.template import Template, Context, TemplateSyntaxError, Library
++from django.conf import Settings
++
++# Set up Django with minimal settings
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++os.environ.setdefault("SECRET_KEY", "dummy")
++
++# Create a minimal settings object
++settings = Settings({
++    'SECRET_KEY': 'dummy',
++    'INSTALLED_APPS': [],
++    'TEMPLATES': [
++        {
++            'BACKEND': 'django.template.backends.django.DjangoTemplates',
++            'DIRS': [],
++            'APP_DIRS': True,
++            'OPTIONS': {
++                'context_processors': [],
++            },
++        },
++    ],
++})
++
++django.setup()
++
++# Create a custom template library
++register = Library()
++
++# Define a simple tag with keyword-only arguments and default values
++@register.simple_tag
++def hello(*, greeting='hello'):
++    return f'{greeting} world'
++
++# Define a simple tag with keyword-only arguments without default values
++@register.simple_tag
++def hi(*, greeting):
++    return f'{greeting} world'
++
++# Test case 1: Using a keyword-only argument with a default value
++template1 = Template("{% load custom_tags %}{% hello greeting='hi' %}")
++try:
++    result = template1.render(Context({}))
++    print("Test 1 (hello with greeting='hi'): Success -", result)
++except TemplateSyntaxError as e:
++    print("Test 1 (hello with greeting='hi'): Failed -", str(e))
++
++# Test case 2: Using the same keyword argument twice
++template2 = Template("{% load custom_tags %}{% hi greeting='hi' greeting='hello' %}")
++try:
++    result = template2.render(Context({}))
++    print("Test 2 (hi with duplicate greeting): Success -", result)
++except TemplateSyntaxError as e:
++    print("Test 2 (hi with duplicate greeting): Failed -", str(e))
+\ No newline at end of file

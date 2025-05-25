@@ -1,0 +1,66 @@
+diff --git a/src/_pytest/skipping.py b/src/_pytest/skipping.py
+index 335e10996..0a2405612 100644
+--- a/src/_pytest/skipping.py
++++ b/src/_pytest/skipping.py
+@@ -199,7 +199,8 @@ class Xfail:
+ 
+ def evaluate_xfail_marks(item: Item) -> Optional[Xfail]:
+     """Evaluate xfail marks on item, returning Xfail if triggered."""
+-    for mark in item.iter_markers(name="xfail"):
++    # Check all markers, including dynamically added ones
++    for node, mark in item.iter_markers_with_node(name="xfail"):
+         run = mark.kwargs.get("run", True)
+         strict = mark.kwargs.get("strict", item.config.getini("xfail_strict"))
+         raises = mark.kwargs.get("raises", None)
+@@ -246,9 +247,12 @@ def pytest_runtest_setup(item: Item) -> None:
+ 
+ @hookimpl(hookwrapper=True)
+ def pytest_runtest_call(item: Item) -> Generator[None, None, None]:
+-    xfailed = item._store.get(xfailed_key, None)
+-    if xfailed is None:
+-        item._store[xfailed_key] = xfailed = evaluate_xfail_marks(item)
++    # Always re-evaluate xfail marks to catch dynamically added ones
++    xfailed = evaluate_xfail_marks(item)
++    item._store[xfailed_key] = xfailed
++
++    # Debug output
++    print(f"Dynamically added xfail markers: {xfailed}")
+ 
+     if not item.config.option.runxfail:
+         if xfailed and not xfailed.run:
+@@ -262,6 +266,8 @@ def pytest_runtest_makereport(item: Item, call: CallInfo[None]):
+     outcome = yield
+     rep = outcome.get_result()
+     xfailed = item._store.get(xfailed_key, None)
++    # Debug output
++    print(f"In makereport: xfailed={xfailed}, call.excinfo={call.excinfo}")
+     # unittest special case, see setting of unexpectedsuccess_key
+     if unexpectedsuccess_key in item._store and rep.when == "call":
+         reason = item._store[unexpectedsuccess_key]
+diff --git a/test_dynamic_xfail.py b/test_dynamic_xfail.py
+new file mode 100644
+index 000000000..b20e53be6
+--- /dev/null
++++ b/test_dynamic_xfail.py
+@@ -0,0 +1,7 @@
++import pytest
++
++def test_dynamic_xfail(request):
++    """Test that dynamically adding an xfail marker works correctly."""
++    mark = pytest.mark.xfail(reason="xfail")
++    request.node.add_marker(mark)
++    assert 0
+\ No newline at end of file
+diff --git a/test_foo.py b/test_foo.py
+new file mode 100644
+index 000000000..e1d30df0c
+--- /dev/null
++++ b/test_foo.py
+@@ -0,0 +1,6 @@
++import pytest
++
++def test_xfail_test(request):
++    mark = pytest.mark.xfail(reason="xfail")
++    request.node.add_marker(mark)
++    assert 0
+\ No newline at end of file

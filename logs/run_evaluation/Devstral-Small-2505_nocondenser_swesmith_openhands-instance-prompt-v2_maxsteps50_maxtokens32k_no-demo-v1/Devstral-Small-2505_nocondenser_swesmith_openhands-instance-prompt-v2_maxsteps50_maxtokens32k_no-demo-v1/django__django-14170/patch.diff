@@ -1,0 +1,233 @@
+diff --git a/django/db/models/functions/datetime.py b/django/db/models/functions/datetime.py
+index 90e6f41be0..42429d7602 100644
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -164,11 +164,12 @@ ExtractYear.register_lookup(YearGte)
+ ExtractYear.register_lookup(YearLt)
+ ExtractYear.register_lookup(YearLte)
+ 
+-ExtractIsoYear.register_lookup(YearExact)
+-ExtractIsoYear.register_lookup(YearGt)
+-ExtractIsoYear.register_lookup(YearGte)
+-ExtractIsoYear.register_lookup(YearLt)
+-ExtractIsoYear.register_lookup(YearLte)
++# ISO year lookups should not use the BETWEEN optimization
++  # ExtractIsoYear.register_lookup(YearExact)
++  # ExtractIsoYear.register_lookup(YearGt)
++  # ExtractIsoYear.register_lookup(YearGte)
++  # ExtractIsoYear.register_lookup(YearLt)
++  # ExtractIsoYear.register_lookup(YearLte)
+ 
+ 
+ class Now(Func):
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..923dc996d3
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,37 @@
++import datetime
++from django.db.models import F
++from django.db.models.functions import ExtractYear, ExtractIsoYear
++from tests.db_functions.datetime.test_extract_trunc import DTModel
++from django.conf import settings
++
++# Create test data
++dt1 = DTModel.objects.create(
++    start_date=datetime.date(2020, 12, 28),
++    start_datetime=datetime.datetime(2020, 12, 28, 12, 0),
++    end_date=datetime.date(2021, 1, 1),
++    end_datetime=datetime.datetime(2021, 1, 1, 12, 0)
++)
++
++dt2 = DTModel.objects.create(
++    start_date=datetime.date(2021, 1, 3),
++    start_datetime=datetime.datetime(2021, 1, 3, 12, 0),
++    end_date=datetime.date(2021, 12, 31),
++    end_datetime=datetime.datetime(2021, 12, 31, 12, 0)
++)
++
++# ISO year 2021 starts on 2020-12-28 and ends on 2021-12-31
++# So both records should match ISO year 2021
++
++print("Testing with annotation and filter:")
++qs = DTModel.objects.annotate(extracted=ExtractIsoYear('start_date')).filter(extracted=2021)
++print(f"Count with annotation: {qs.count()}")
++print(f"Query: {qs.query}")
++
++print("\nTesting with direct lookup:")
++qs = DTModel.objects.filter(start_date__iso_year=2021)
++print(f"Count with direct lookup: {qs.count()}")
++print(f"Query: {qs.query}")
++
++# Clean up
++dt1.delete()
++dt2.delete()
+\ No newline at end of file
+diff --git a/run_test.py b/run_test.py
+new file mode 100644
+index 0000000000..21eb811823
+--- /dev/null
++++ b/run_test.py
+@@ -0,0 +1,18 @@
++import os
++import sys
++import django
++
++# Set up Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
++django.setup()
++
++from django.test.utils import get_runner
++from django.conf import settings
++
++# Run the test
++TestRunner = get_runner(settings)
++test_runner = TestRunner(verbosity=2, interactive=True, failfast=False)
++failures = test_runner.run_tests(['tests.db_functions.datetime.test_extract_trunc.DateFunctionTests.test_iso_year_lookup_behavior'])
++
++if failures:
++    sys.exit(1)
+\ No newline at end of file
+diff --git a/settings.py b/settings.py
+new file mode 100644
+index 0000000000..a5e1c89737
+--- /dev/null
++++ b/settings.py
+@@ -0,0 +1,22 @@
++import os
++import django
++
++# Set up Django settings
++django.setup()
++
++# Configure settings
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'tests.db_functions',
++]
++
++SECRET_KEY = 'fake-key'
++USE_TZ = False
++TIME_ZONE = 'UTC'
+\ No newline at end of file
+diff --git a/tests/db_functions/datetime/test_extract_trunc.py b/tests/db_functions/datetime/test_extract_trunc.py
+index 258600127f..c4c95a41a7 100644
+--- a/tests/db_functions/datetime/test_extract_trunc.py
++++ b/tests/db_functions/datetime/test_extract_trunc.py
+@@ -177,6 +177,34 @@ class DateFunctionTests(TestCase):
+                 self.assertEqual(qs.count(), 1)
+                 self.assertGreaterEqual(str(qs.query).lower().count('extract'), 2)
+ 
++    def test_iso_year_lookup_behavior(self):
++        """
++        Test that the iso_year lookup doesn't use the BETWEEN optimization.
++        """
++        # Create test data where ISO year 2021 starts on 2020-12-28 and ends on 2021-12-31
++        self.create_model(
++            datetime(2020, 12, 28, 12, 0),
++            datetime(2021, 1, 1, 12, 0)
++        )
++        self.create_model(
++            datetime(2021, 1, 3, 12, 0),
++            datetime(2021, 12, 31, 12, 0)
++        )
++
++        # Test with annotation - should use EXTRACT
++        qs = DTModel.objects.annotate(extracted=ExtractIsoYear('start_datetime')).filter(extracted=2021)
++        self.assertEqual(qs.count(), 2)
++        query_string = str(qs.query).lower()
++        self.assertEqual(query_string.count('extract'), 1)
++        self.assertEqual(query_string.count('between'), 0)
++
++        # Test with direct lookup - should also use EXTRACT, not BETWEEN
++        qs = DTModel.objects.filter(start_datetime__iso_year=2021)
++        self.assertEqual(qs.count(), 2)
++        query_string = str(qs.query).lower()
++        self.assertEqual(query_string.count('extract'), 1)
++        self.assertEqual(query_string.count('between'), 0)
++
+     def test_extract_func(self):
+         start_datetime = datetime(2015, 6, 15, 14, 30, 50, 321)
+         end_datetime = datetime(2016, 6, 15, 14, 10, 50, 123)
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..987ff88d13
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,67 @@
++import os
++import sys
++import datetime
++from django.conf import settings
++from django.db.models import F
++from django.db.models.functions import ExtractIsoYear, ExtractYear
++
++# Configure settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++    ],
++    SECRET_KEY='fake-key',
++    USE_TZ=False,
++)
++
++import django
++django.setup()
++
++from django.db import models, connection
++
++# Create a simple model for testing
++class TestModel(models.Model):
++    date_field = models.DateField()
++
++    class Meta:
++        app_label = 'verify_fix'
++
++# Create the tables
++connection.cursor().execute('CREATE TABLE verify_fix_testmodel (id integer primary key, date_field date)')
++
++# Create test data
++from django.db import transaction
++with transaction.atomic():
++    # Create a model instance with a date in ISO year 2021 (2020-12-28 is ISO year 2021)
++    connection.cursor().execute('INSERT INTO verify_fix_testmodel (date_field) VALUES (%s)', ['2020-12-28'])
++    # Create a model instance with a date in ISO year 2021 (2021-01-03 is ISO year 2021)
++    connection.cursor().execute('INSERT INTO verify_fix_testmodel (date_field) VALUES (%s)', ['2021-01-03'])
++    # Create a model instance with a date in ISO year 2020 (2020-01-01 is ISO year 2020)
++    connection.cursor().execute('INSERT INTO verify_fix_testmodel (date_field) VALUES (%s)', ['2020-01-01'])
++
++# Test with annotation
++from django.db.models import Q
++qs = TestModel.objects.annotate(extracted=ExtractIsoYear('date_field')).filter(extracted=2021)
++query_str = str(qs.query)
++print("Annotation query:", query_str)
++print("Uses EXTRACT:", 'EXTRACT' in query_str.upper())
++print("Uses BETWEEN:", 'BETWEEN' in query_str)
++
++# Test with direct lookup
++qs = TestModel.objects.filter(date_field__iso_year=2021)
++query_str = str(qs.query)
++print("\nDirect lookup query:", query_str)
++print("Uses EXTRACT:", 'EXTRACT' in query_str.upper())
++print("Uses BETWEEN:", 'BETWEEN' in query_str)
++
++# Verify the count is correct (should be 2 records for ISO year 2021)
++print("\nCount with direct lookup:", qs.count())
++
++# Clean up
++connection.cursor().execute('DROP TABLE verify_fix_testmodel')
+\ No newline at end of file

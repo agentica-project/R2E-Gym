@@ -1,0 +1,419 @@
+diff --git a/django/contrib/admin/filters.py b/django/contrib/admin/filters.py
+index d65e01d5e2..d45ba9ebe7 100644
+--- a/django/contrib/admin/filters.py
++++ b/django/contrib/admin/filters.py
+@@ -198,6 +198,9 @@ class RelatedFieldListFilter(FieldListFilter):
+         related_admin = model_admin.admin_site._registry.get(field.remote_field.model)
+         if related_admin is not None:
+             ordering = related_admin.get_ordering(request)
++        # Fall back to the model's default ordering if no ordering was defined in ModelAdmin
++        if not ordering:
++            ordering = field.remote_field.model._meta.ordering
+         return field.get_choices(include_blank=False, ordering=ordering)
+ 
+     def choices(self, changelist):
+@@ -419,4 +422,11 @@ FieldListFilter.register(lambda f: True, AllValuesFieldListFilter)
+ class RelatedOnlyFieldListFilter(RelatedFieldListFilter):
+     def field_choices(self, field, request, model_admin):
+         pk_qs = model_admin.get_queryset(request).distinct().values_list('%s__pk' % self.field_path, flat=True)
+-        return field.get_choices(include_blank=False, limit_choices_to={'pk__in': pk_qs})
++        # Get ordering from the related model's admin or fall back to model's default ordering
++        ordering = ()
++        related_admin = model_admin.admin_site._registry.get(field.remote_field.model)
++        if related_admin is not None:
++            ordering = related_admin.get_ordering(request)
++        if not ordering:
++            ordering = field.remote_field.model._meta.ordering
++        return field.get_choices(include_blank=False, limit_choices_to={'pk__in': pk_qs}, ordering=ordering)
+diff --git a/test_filters.py b/test_filters.py
+new file mode 100644
+index 0000000000..ca1f214308
+--- /dev/null
++++ b/test_filters.py
+@@ -0,0 +1,109 @@
++import os
++import sys
++import django
++from django.db import models
++from django.contrib import admin
++from django.test import RequestFactory, TestCase
++from django.contrib.admin.filters import RelatedFieldListFilter, RelatedOnlyFieldListFilter
++
++# Set up Django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key',
++        INSTALLED_APPS=[
++            'django.contrib.admin',
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'django.contrib.staticfiles',
++            'test_filters',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        ROOT_URLCONF='django.urls',
++        MIDDLEWARE_CLASSES=(),
++    )
++    django.setup()
++
++# Create a simple test case
++class TestOrdering(TestCase):
++    def test_related_field_list_filter_ordering(self):
++        # Create a simple model with ordering
++        class Category(models.Model):
++            name = models.CharField(max_length=100)
++
++            class Meta:
++                ordering = ['name']
++                app_label = 'test_filters'
++
++        # Create a field that would be used in RelatedFieldListFilter
++        field = models.ForeignKey(Category, on_delete=models.CASCADE)
++
++        # Create a mock model admin
++        class MockModelAdmin:
++            def get_ordering(self, request):
++                return ()  # No ordering defined
++
++        # Create a mock request
++        request = RequestFactory().get('/')
++
++        # Create the filter
++        filter_instance = RelatedFieldListFilter(
++            field, request, {}, None, MockModelAdmin(), field_path='category'
++        )
++
++        # Check the ordering
++        self.assertEqual(filter_instance.field_choices(field, request, MockModelAdmin()),
++                         field.get_choices(include_blank=False, ordering=()))
++
++        # Now check if it falls back to model's Meta.ordering
++        # This is the issue we're testing - it should use Category._meta.ordering
++        self.assertNotEqual(filter_instance.field_choices(field, request, MockModelAdmin()),
++                           field.get_choices(include_blank=False, ordering=Category._meta.ordering))
++
++    def test_related_only_field_list_filter_ordering(self):
++        # Create a simple model with ordering
++        class Category(models.Model):
++            name = models.CharField(max_length=100)
++
++            class Meta:
++                ordering = ['name']
++                app_label = 'test_filters'
++
++        # Create a field that would be used in RelatedOnlyFieldListFilter
++        field = models.ForeignKey(Category, on_delete=models.CASCADE)
++
++        # Create a mock model admin
++        class MockModelAdmin:
++            def get_ordering(self, request):
++                return ()  # No ordering defined
++
++            def get_queryset(self, request):
++                return Category.objects.all()
++
++        # Create a mock request
++        request = RequestFactory().get('/')
++
++        # Create the filter
++        filter_instance = RelatedOnlyFieldListFilter(
++            field, request, {}, None, MockModelAdmin(), field_path='category'
++        )
++
++        # Check if ordering is passed to get_choices
++        # This is the issue we're testing - it should pass ordering to get_choices
++        self.assertNotIn('ordering', {
++            'include_blank': False,
++            'limit_choices_to': {'pk__in': MockModelAdmin().get_queryset(request).distinct().values_list('category__pk', flat=True)}
++        })
++
++if __name__ == '__main__':
++    test = TestOrdering()
++    test.test_related_field_list_filter_ordering()
++    test.test_related_only_field_list_filter_ordering()
+\ No newline at end of file
+diff --git a/test_ordering_issue.py b/test_ordering_issue.py
+new file mode 100644
+index 0000000000..acdd6bbd8f
+--- /dev/null
++++ b/test_ordering_issue.py
+@@ -0,0 +1,123 @@
++import os
++import sys
++import django
++from django.db import models
++from django.contrib import admin
++from django.test import RequestFactory
++from django.conf import settings
++
++# Set up Django
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key',
++        INSTALLED_APPS=[
++            'django.contrib.admin',
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'django.contrib.staticfiles',
++            '__main__',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        ROOT_URLCONF='django.urls',
++        MIDDLEWARE_CLASSES=(),
++    )
++    django.setup()
++
++# Create database tables
++from django.core.management import call_command
++call_command('migrate', 'contenttypes', run_syncdb=True)
++
++# Define models for testing
++class Category(models.Model):
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['name']  # Default ordering by name
++
++    def __str__(self):
++        return self.name
++
++class Product(models.Model):
++    name = models.CharField(max_length=100)
++    category = models.ForeignKey(Category, on_delete=models.CASCADE)
++
++    def __str__(self):
++        return self.name
++
++# Define admin classes
++class CategoryAdmin(admin.ModelAdmin):
++    # No explicit ordering defined here
++    pass
++
++class ProductAdmin(admin.ModelAdmin):
++    list_filter = ('category',)  # This will use RelatedFieldListFilter
++
++# Create admin site and register models
++site = admin.AdminSite()
++site.register(Category, CategoryAdmin)
++site.register(Product, ProductAdmin)
++
++# Test function
++def test_related_field_list_filter_ordering():
++    # Create some test data
++    cat1 = Category.objects.create(name='Z Category')  # Name starts with Z
++    cat2 = Category.objects.create(name='A Category')  # Name starts with A
++
++    # Create a request factory
++    factory = RequestFactory()
++
++    # Get the ProductAdmin instance
++    product_admin = site._registry[Product]
++
++    # Get the list filter for 'category'
++    field = Product._meta.get_field('category')
++    list_filter = admin.filters.RelatedFieldListFilter(field, None, {}, Product, product_admin, field_path='category')
++
++    # Get the choices
++    choices = list_filter.lookup_choices
++
++    # Print the choices to see the ordering
++    print("RelatedFieldListFilter choices:")
++    for value, display in choices:
++        print(f"  {value}: {display}")
++
++    # Now test RelatedOnlyFieldListFilter
++    class ProductAdminWithRelatedOnlyFilter(admin.ModelAdmin):
++        def get_list_filter(self, request):
++            return ['category']
++
++        def get_queryset(self, request):
++            return Product.objects.all()
++
++    site.register(Product, ProductAdminWithRelatedOnlyFilter)
++
++    # Get the ProductAdminWithRelatedOnlyFilter instance
++    product_admin_ro = site._registry[Product]
++
++    # Get the list filter for 'category'
++    list_filter_ro = None
++    for filter_class in admin.filters.FieldListFilter.create(field, None, {}, Product, product_admin_ro, field_path='category').__class__.__mro__:
++        if filter_class.__name__ == 'RelatedOnlyFieldListFilter':
++            list_filter_ro = admin.filters.RelatedOnlyFieldListFilter(field, None, {}, Product, product_admin_ro, field_path='category')
++            break
++
++    if list_filter_ro:
++        # Get the choices
++        choices_ro = list_filter_ro.lookup_choices
++
++        # Print the choices to see the ordering
++        print("\nRelatedOnlyFieldListFilter choices:")
++        for value, display in choices_ro:
++            print(f"  {value}: {display}")
++    else:
++        print("\nCould not create RelatedOnlyFieldListFilter instance")
++
++if __name__ == '__main__':
++    test_related_field_list_filter_ordering()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..caccfc1518
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,139 @@
++import os
++import sys
++import django
++from django.db import models
++from django.contrib import admin
++from django.test import RequestFactory, TestCase
++from django.contrib.admin.filters import RelatedFieldListFilter, RelatedOnlyFieldListFilter
++
++# Set up Django
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key',
++        INSTALLED_APPS=[
++            'django.contrib.admin',
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++            'django.contrib.sessions',
++            'django.contrib.messages',
++            'django.contrib.staticfiles',
++            'verify_fix',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        ROOT_URLCONF='django.urls',
++        MIDDLEWARE_CLASSES=(),
++    )
++    django.setup()
++
++# Create a simple test case
++class TestOrderingFix(TestCase):
++    def test_related_field_list_filter_ordering(self):
++        # Create a simple model with ordering
++        class Category(models.Model):
++            name = models.CharField(max_length=100)
++
++            class Meta:
++                ordering = ['name']
++                app_label = 'verify_fix'
++
++        # Create a field that would be used in RelatedFieldListFilter
++        field = models.ForeignKey(Category, on_delete=models.CASCADE)
++
++        # Set up the field's model and remote_field
++        field.model = Category
++        field.remote_field.model = Category
++
++        # Create a mock model admin
++        class MockModelAdmin:
++            admin_site = admin.AdminSite()
++
++            def get_ordering(self, request):
++                return ()  # No ordering defined
++
++        # Create a mock request
++        request = RequestFactory().get('/')
++
++        # Create the filter
++        filter_instance = RelatedFieldListFilter(
++            field, request, {}, Category, MockModelAdmin(), field_path='category'
++        )
++
++        # Check if it falls back to model's Meta.ordering
++        choices = filter_instance.field_choices(field, request, MockModelAdmin())
++        print("RelatedFieldListFilter choices:")
++        for value, display in choices:
++            print(f"  {value}: {display}")
++
++        # Verify that ordering is used
++        self.assertEqual(choices[0][1], "Category object (A)")  # Should be alphabetical
++
++    def test_related_only_field_list_filter_ordering(self):
++        # Create a simple model with ordering
++        class Category(models.Model):
++            name = models.CharField(max_length=100)
++
++            class Meta:
++                ordering = ['name']
++                app_label = 'verify_fix'
++
++        # Create a field that would be used in RelatedOnlyFieldListFilter
++        field = models.ForeignKey(Category, on_delete=models.CASCADE)
++
++        # Set up the field's model and remote_field
++        field.model = Category
++        field.remote_field.model = Category
++
++        # Create a mock model admin
++        class MockModelAdmin:
++            admin_site = admin.AdminSite()
++
++            def get_ordering(self, request):
++                return ()  # No ordering defined
++
++            def get_queryset(self, request):
++                return Category.objects.all()
++
++        # Create a mock request
++        request = RequestFactory().get('/')
++
++        # Create the filter
++        filter_instance = RelatedOnlyFieldListFilter(
++            field, request, {}, Category, MockModelAdmin(), field_path='category'
++        )
++
++        # Check if ordering is passed to get_choices
++        choices = filter_instance.field_choices(field, request, MockModelAdmin())
++        print("\nRelatedOnlyFieldListFilter choices:")
++        for value, display in choices:
++            print(f"  {value}: {display}")
++
++        # Verify that ordering is used
++        self.assertEqual(choices[0][1], "Category object (A)")  # Should be alphabetical
++
++if __name__ == '__main__':
++    # Create test data
++    class Category(models.Model):
++        name = models.CharField(max_length=100)
++
++        class Meta:
++            ordering = ['name']
++            app_label = 'verify_fix'
++
++        def __str__(self):
++            return f"Category object ({self.name[0]})"
++
++    # Create categories in reverse order to test sorting
++    Category.objects.create(name='C')
++    Category.objects.create(name='B')
++    Category.objects.create(name='A')
++
++    test = TestOrderingFix()
++    test.test_related_field_list_filter_ordering()
++    test.test_related_only_field_list_filter_ordering()
+\ No newline at end of file

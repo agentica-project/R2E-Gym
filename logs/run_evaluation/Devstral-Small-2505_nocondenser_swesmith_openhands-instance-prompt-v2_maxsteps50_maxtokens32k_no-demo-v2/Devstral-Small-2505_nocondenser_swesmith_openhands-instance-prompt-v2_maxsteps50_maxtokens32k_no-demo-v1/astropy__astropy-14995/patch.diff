@@ -1,0 +1,157 @@
+diff --git a/astropy/nddata/mixins/ndarithmetic.py b/astropy/nddata/mixins/ndarithmetic.py
+index 4153dfccb2..ef5e8d2c85 100644
+--- a/astropy/nddata/mixins/ndarithmetic.py
++++ b/astropy/nddata/mixins/ndarithmetic.py
+@@ -522,6 +522,12 @@ class NDArithmeticMixin:
+             return deepcopy(operand.mask)
+         elif operand is None:
+             return deepcopy(self.mask)
++        elif self.mask is None:
++            # If self has no mask but operand does, return a copy of operand's mask
++            return deepcopy(operand.mask)
++        elif operand.mask is None:
++            # If operand has no mask but self does, return a copy of self's mask
++            return deepcopy(self.mask)
+         else:
+             # Now lets calculate the resulting mask (operation enforces copy)
+             return handle_mask(self.mask, operand.mask, **kwds)
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..eb9dbddcd4
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,69 @@
++import numpy as np
++from astropy.nddata import NDDataRef
++
++# Create test data
++array = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
++mask = np.array([[0, 1, 64], [8, 0, 1], [2, 1, 0]])
++
++# Create NDDataRef objects
++nref_nomask = NDDataRef(array)
++nref_mask = NDDataRef(array, mask=mask)
++
++# Test different handle_mask functions
++handle_masks = [
++    np.bitwise_or,
++    np.logical_or,
++    lambda x, y: x + y  # Custom function
++]
++
++print("Testing all combinations of mask presence and handle_mask functions:")
++print("-" * 80)
++
++for handle_mask in handle_masks:
++    handle_name = handle_mask.__name__ if hasattr(handle_mask, '__name__') else 'custom function'
++    print(f"\nTesting with handle_mask={handle_name}")
++    print("-" * 60)
++
++    # Test no mask with no mask
++    print("\nNo mask * No mask:")
++    try:
++        result = nref_nomask.multiply(1., handle_mask=handle_mask)
++        print(f"  multiply by constant: {result.mask}")
++    except Exception as e:
++        print(f"  multiply by constant ERROR: {e}")
++
++    try:
++        result = nref_nomask.multiply(nref_nomask, handle_mask=handle_mask)
++        print(f"  multiply by self: {result.mask}")
++    except Exception as e:
++        print(f"  multiply by self ERROR: {e}")
++
++    # Test mask with no mask
++    print("\nMask * No mask:")
++    try:
++        result = nref_mask.multiply(1., handle_mask=handle_mask)
++        print(f"  multiply by constant: {result.mask}")
++    except Exception as e:
++        print(f"  multiply by constant ERROR: {e}")
++
++    try:
++        result = nref_mask.multiply(nref_nomask, handle_mask=handle_mask)
++        print(f"  multiply by no mask: {result.mask}")
++    except Exception as e:
++        print(f"  multiply by no mask ERROR: {e}")
++
++    # Test no mask with mask
++    print("\nNo mask * Mask:")
++    try:
++        result = nref_nomask.multiply(nref_mask, handle_mask=handle_mask)
++        print(f"  multiply by mask: {result.mask}")
++    except Exception as e:
++        print(f"  multiply by mask ERROR: {e}")
++
++    # Test mask with mask
++    print("\nMask * Mask:")
++    try:
++        result = nref_mask.multiply(nref_mask, handle_mask=handle_mask)
++        print(f"  multiply by mask: {result.mask}")
++    except Exception as e:
++        print(f"  multiply by mask ERROR: {e}")
+\ No newline at end of file
+diff --git a/pyproject.toml b/pyproject.toml
+index 15bb49f22b..dc9c3c5f37 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "cython==0.29.34",
+             "oldest-supported-numpy",
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6a141d2212
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,46 @@
++import numpy as np
++from astropy.nddata import NDDataRef
++
++# Create test data
++array = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
++mask = np.array([[0, 1, 64], [8, 0, 1], [2, 1, 0]])
++
++# Create NDDataRef objects
++nref_nomask = NDDataRef(array)
++nref_mask = NDDataRef(array, mask=mask)
++
++# Test cases
++print("Test 1: multiply no mask by constant (no mask * no mask)")
++try:
++    result = nref_nomask.multiply(1., handle_mask=np.bitwise_or)
++    print(f"Result mask: {result.mask}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 2: multiply no mask by itself (no mask * no mask)")
++try:
++    result = nref_nomask.multiply(nref_nomask, handle_mask=np.bitwise_or)
++    print(f"Result mask: {result.mask}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 3: multiply mask by constant (mask * no mask)")
++try:
++    result = nref_mask.multiply(1., handle_mask=np.bitwise_or)
++    print(f"Result mask: {result.mask}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 4: multiply mask by itself (mask * mask)")
++try:
++    result = nref_mask.multiply(nref_mask, handle_mask=np.bitwise_or)
++    print(f"Result mask: {result.mask}")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\nTest 5: multiply mask by no mask (mask * no mask)")
++try:
++    result = nref_mask.multiply(nref_nomask, handle_mask=np.bitwise_or)
++    print(f"Result mask: {result.mask}")
++except Exception as e:
++    print(f"Error: {e}")
+\ No newline at end of file

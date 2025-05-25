@@ -1,0 +1,179 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..6c7b96c47c
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,72 @@
++import os
++import sys
++import django
++from django.db import models
++from django.apps import apps
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Create a simple app config
++class TestAppConfig(django.apps.AppConfig):
++    name = 'test_app'
++
++# Register the app
++apps.app_configs['test_app'] = TestAppConfig
++
++# Define the models as described in the issue
++class Parent(models.Model):
++    name = models.CharField(max_length=256)
++    class Meta:
++        app_label = 'test_app'
++
++class ProxyParent(Parent):
++    class Meta:
++        app_label = 'test_app'
++        proxy = True
++
++class Child(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE)
++    many_to_many_field = models.ManyToManyField(
++        to=Parent,
++        through="ManyToManyModel",
++        through_fields=['child', 'parent'],
++        related_name="something"
++    )
++    class Meta:
++        app_label = 'test_app'
++
++class ManyToManyModel(models.Model):
++    parent = models.ForeignKey(Parent, on_delete=models.CASCADE, related_name='+')
++    child = models.ForeignKey(Child, on_delete=models.CASCADE, related_name='+')
++    second_child = models.ForeignKey(Child, on_delete=models.CASCADE, null=True, default=None)
++    class Meta:
++        app_label = 'test_app'
++
++# Test that the ManyToManyRel object can be hashed
++print("Testing with actual model structure from the issue:")
++try:
++    # Get the ManyToManyRel instance from the field
++    field = Child._meta.get_field('many_to_many_field')
++    rel = field.remote_field
++
++    # Try to hash the rel object which will use the identity property
++    print("Trying to hash the ManyToManyRel object from the model field...")
++    hash(rel)
++    print("Success! The fix works with actual models.")
++
++    # Test that the rel object can be used in a set
++    print("Testing that the rel object can be added to a set...")
++    s = set()
++    s.add(rel)
++    print("Success! The rel object can be added to a set.")
++
++    # Test that the rel object can be compared
++    print("Testing that the rel object can be compared...")
++    assert rel == rel
++    print("Success! The rel object can be compared.")
++
++except Exception as e:
++    print(f"Error: {e}")
++    print("The fix did not work with actual models.")
+\ No newline at end of file
+diff --git a/direct_test.py b/direct_test.py
+new file mode 100644
+index 0000000000..7f3f95a485
+--- /dev/null
++++ b/direct_test.py
+@@ -0,0 +1,36 @@
++import os
++import sys
++import django
++from django.utils.hashable import make_hashable
++from django.db.models.fields.reverse_related import ManyToManyRel
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Create a simple test class
++class TestManyToManyRel:
++    def test_make_hashable_on_through_fields(self):
++        """Test that make_hashable is applied to through_fields in identity."""
++
++        # Create a ManyToManyRel instance with through_fields as a list
++        rel = ManyToManyRel(None, None)
++        rel.through_fields = ['child', 'parent']
++
++        # Get the identity tuple
++        identity = rel.identity
++
++        # Check that through_fields is in the identity tuple and is hashable
++        # The identity tuple should contain the made-hashable through_fields
++        assert ('child', 'parent') in identity, "through_fields should be made hashable and present in identity"
++
++        # Try to hash the identity tuple
++        hash_value = hash(identity)
++
++        print("Test passed! through_fields is properly made hashable in identity.")
++        return True
++
++# Run the test
++if __name__ == "__main__":
++    test = TestManyToManyRel()
++    test.test_make_hashable_on_through_fields()
+\ No newline at end of file
+diff --git a/django/db/models/fields/reverse_related.py b/django/db/models/fields/reverse_related.py
+index ccc2223a5f..65950590e2 100644
+--- a/django/db/models/fields/reverse_related.py
++++ b/django/db/models/fields/reverse_related.py
+@@ -310,7 +310,7 @@ class ManyToManyRel(ForeignObjectRel):
+     def identity(self):
+         return super().identity + (
+             self.through,
+-            self.through_fields,
++            make_hashable(self.through_fields),
+             self.db_constraint,
+         )
+ 
+diff --git a/repro_issue.py b/repro_issue.py
+new file mode 100644
+index 0000000000..4a284737dc
+--- /dev/null
++++ b/repro_issue.py
+@@ -0,0 +1,37 @@
++import os
++import sys
++import django
++from django.utils.hashable import make_hashable
++from django.db.models.fields.reverse_related import ManyToManyRel
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Create a mock ManyToManyRel class to test the fix
++class MockManyToManyRel(ManyToManyRel):
++    def __init__(self):
++        # Initialize with through_fields as a list (the problematic case)
++        self.through_fields = ['child', 'parent']
++        # These are needed for the identity property
++        self.field = None
++        self.model = None
++        self.related_name = None
++        self.related_query_name = None
++        self.limit_choices_to = {}
++        self.parent_link = False
++        self.on_delete = None
++        self.symmetrical = True
++        self.multiple = True
++        self.through = None
++        self.db_constraint = True
++
++print("Testing the fix for ManyToManyRel.identity:")
++try:
++    rel = MockManyToManyRel()
++    print("Trying to hash the ManyToManyRel object...")
++    hash(rel)
++    print("Success! The fix works. ManyToManyRel objects can now be hashed.")
++except TypeError as e:
++    print(f"Error: {e}")
++    print("The fix did not work. ManyToManyRel objects are still unhashable.")
+\ No newline at end of file

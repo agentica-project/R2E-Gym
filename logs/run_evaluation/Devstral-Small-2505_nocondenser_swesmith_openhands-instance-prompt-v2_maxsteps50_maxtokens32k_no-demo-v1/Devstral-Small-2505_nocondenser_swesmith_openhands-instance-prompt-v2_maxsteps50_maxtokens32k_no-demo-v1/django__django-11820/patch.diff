@@ -1,0 +1,263 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 3ce711f3f1..772f495d21 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -1706,13 +1706,20 @@ class Model(metaclass=ModelBase):
+         for field in related_fields:
+             _cls = cls
+             fld = None
+-            for part in field.split(LOOKUP_SEP):
++            parts = field.split(LOOKUP_SEP)
++            for i, part in enumerate(parts):
+                 try:
++                    # Special case: 'pk' is always a valid field
++                    if part == 'pk' and i < len(parts) - 1:
++                        # 'pk' is valid for related fields, but we need to continue checking
++                        # the rest of the path
++                        continue
++
+                     fld = _cls._meta.get_field(part)
+                     if fld.is_relation:
+                         _cls = fld.get_path_info()[-1].to_opts.model
+                 except (FieldDoesNotExist, AttributeError):
+-                    if fld is None or fld.get_transform(part) is None:
++                    if fld is None or (part != 'pk' and fld.get_transform(part) is None):
+                         errors.append(
+                             checks.Error(
+                                 "'ordering' refers to the nonexistent field, "
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..493fd5592a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import os
++import django
++from django.conf import settings
++from django.apps import AppConfig
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.db import models
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
++
++class Option(models.Model):
++    name = models.CharField(max_length=100)
++    app_label = 'test_app'
++
++class SomeModel(models.Model):
++    option = models.ForeignKey(Option, on_delete=models.CASCADE)
++    value = models.CharField(max_length=100)
++    app_label = 'test_app'
++
++    class Meta:
++        ordering = ['option__pk']
++
++# Try to validate the model
++print("Checking model validation...")
++errors = SomeModel.check()
++if errors:
++    print("Validation errors found:")
++    for error in errors:
++        print(f"- {error}")
++else:
++    print("No validation errors.")
+\ No newline at end of file
+diff --git a/test_app/__init__.py b/test_app/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..b7d1085399
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,11 @@
++from django.db import models
++
++class Option(models.Model):
++    name = models.CharField(max_length=100)
++
++class SomeModel(models.Model):
++    option = models.ForeignKey(Option, on_delete=models.CASCADE)
++    value = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['option__pk']
+\ No newline at end of file
+diff --git a/test_app/models_complex.py b/test_app/models_complex.py
+new file mode 100644
+index 0000000000..e229e8b189
+--- /dev/null
++++ b/test_app/models_complex.py
+@@ -0,0 +1,15 @@
++from django.db import models
++
++class ComplexCategory(models.Model):
++    name = models.CharField(max_length=100)
++
++class ComplexOption(models.Model):
++    name = models.CharField(max_length=100)
++    category = models.ForeignKey(ComplexCategory, on_delete=models.CASCADE)
++
++class ComplexModel(models.Model):
++    option = models.ForeignKey(ComplexOption, on_delete=models.CASCADE)
++    value = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['option__category__pk']
+\ No newline at end of file
+diff --git a/test_app/models_invalid.py b/test_app/models_invalid.py
+new file mode 100644
+index 0000000000..1608f8ff44
+--- /dev/null
++++ b/test_app/models_invalid.py
+@@ -0,0 +1,11 @@
++from django.db import models
++
++class InvalidOption(models.Model):
++    name = models.CharField(max_length=100)
++
++class InvalidModel(models.Model):
++    option = models.ForeignKey(InvalidOption, on_delete=models.CASCADE)
++    value = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['nonexistent_field']
+\ No newline at end of file
+diff --git a/test_ordering_complex.py b/test_ordering_complex.py
+new file mode 100644
+index 0000000000..3947472f44
+--- /dev/null
++++ b/test_ordering_complex.py
+@@ -0,0 +1,33 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Import the models after Django is setup
++from test_app.models_complex import ComplexModel
++
++# Try to validate the model
++print("Checking model validation...")
++errors = ComplexModel.check()
++if errors:
++    print("Validation errors found:")
++    for error in errors:
++        print(f"- {error}")
++else:
++    print("No validation errors.")
+\ No newline at end of file
+diff --git a/test_ordering_invalid.py b/test_ordering_invalid.py
+new file mode 100644
+index 0000000000..319abb3aff
+--- /dev/null
++++ b/test_ordering_invalid.py
+@@ -0,0 +1,33 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Import the models after Django is setup
++from test_app.models_invalid import InvalidModel
++
++# Try to validate the model
++print("Checking model validation...")
++errors = InvalidModel.check()
++if errors:
++    print("Validation errors found:")
++    for error in errors:
++        print(f"- {error}")
++else:
++    print("No validation errors.")
+\ No newline at end of file
+diff --git a/test_ordering_pk.py b/test_ordering_pk.py
+new file mode 100644
+index 0000000000..716a6ab277
+--- /dev/null
++++ b/test_ordering_pk.py
+@@ -0,0 +1,33 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Import the models after Django is setup
++from test_app.models import SomeModel
++
++# Try to validate the model
++print("Checking model validation...")
++errors = SomeModel.check()
++if errors:
++    print("Validation errors found:")
++    for error in errors:
++        print(f"- {error}")
++else:
++    print("No validation errors.")
+\ No newline at end of file

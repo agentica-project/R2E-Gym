@@ -1,0 +1,110 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..09c739a27e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,103 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.db import models, connection
++from django.db.models import F
++
++class OneModel(models.Model):
++    class Meta:
++        ordering = ("-id",)
++    id = models.BigAutoField(primary_key=True)
++    root = models.ForeignKey("OneModel", on_delete=models.CASCADE, null=True)
++    oneval = models.BigIntegerField(null=True)
++
++    def __str__(self):
++        return f"OneModel(id={self.id}, root_id={self.root_id if self.root else None}, oneval={self.oneval})"
++
++class TwoModel(models.Model):
++    id = models.BigAutoField(primary_key=True)
++    record = models.ForeignKey(OneModel, on_delete=models.CASCADE)
++    twoval = models.BigIntegerField(null=True)
++
++    def __str__(self):
++        return f"TwoModel(id={self.id}, record_id={self.record_id}, twoval={self.twoval})"
++
++# Create the tables
++from django.db import connection
++cursor = connection.cursor()
++cursor.execute('''
++    CREATE TABLE orion_onemodel (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        root_id INTEGER NULL,
++        oneval INTEGER NULL,
++        FOREIGN KEY (root_id) REFERENCES orion_onemodel (id) DEFERRABLE INITIALLY DEFERRED
++    )
++''')
++cursor.execute('''
++    CREATE TABLE orion_twomodel (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        record_id INTEGER,
++        twoval INTEGER NULL,
++        FOREIGN KEY (record_id) REFERENCES orion_onemodel (id) DEFERRABLE INITIALLY DEFERRED
++    )
++''')
++
++# Create test data
++from django.db import transaction
++with transaction.atomic():
++    # Create OneModel instances
++    one1 = OneModel.objects.create(id=1, oneval=1)
++    one2 = OneModel.objects.create(id=2, root=one1, oneval=2)  # Points to one1
++    one3 = OneModel.objects.create(id=3, root=one2, oneval=3)  # Points to one2
++
++    # Create TwoModel instances pointing to OneModel instances
++    TwoModel.objects.create(record=one1, twoval=10)
++    TwoModel.objects.create(record=one2, twoval=20)
++    TwoModel.objects.create(record=one3, twoval=30)
++
++def print_query(qs, label):
++    print(f"\n{label}:")
++    print(qs.query)
++    print("SQL:", qs.query.sql_with_params())
++
++# Test cases
++print("\n=== TEST CASES ===")
++
++# Case 1: Problem case - order_by("record__root_id")
++qs1 = TwoModel.objects.filter(record__oneval__in=[1, 2, 3])
++qs1 = qs1.order_by("record__root_id")
++print_query(qs1, "Case 1: order_by('record__root_id')")
++
++# Case 2: Working case - order_by("record__root__id")
++qs2 = TwoModel.objects.filter(record__oneval__in=[1, 2, 3])
++qs2 = qs2.order_by("record__root__id")
++print_query(qs2, "Case 2: order_by('record__root__id')")
++
++# Case 3: Workaround with annotation
++qs3 = TwoModel.objects.filter(record__oneval__in=[1, 2, 3])
++qs3 = qs3.annotate(root_id=F("record__root_id"))
++qs3 = qs3.order_by("root_id")
++print_query(qs3, "Case 3: With annotation")
++
++# Case 4: Inverted order
++qs4 = TwoModel.objects.filter(record__oneval__in=[1, 2, 3])
++qs4 = qs4.order_by("-record__root_id")
++print_query(qs4, "Case 4: order_by('-record__root_id')")
+\ No newline at end of file

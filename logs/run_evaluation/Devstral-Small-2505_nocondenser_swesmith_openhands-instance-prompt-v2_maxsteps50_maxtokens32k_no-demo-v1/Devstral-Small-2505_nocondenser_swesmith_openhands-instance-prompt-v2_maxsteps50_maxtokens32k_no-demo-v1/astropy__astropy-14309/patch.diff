@@ -1,0 +1,81 @@
+diff --git a/astropy/io/fits/connect.py b/astropy/io/fits/connect.py
+index 4b6150f4ac..e91dd6d6fc 100644
+--- a/astropy/io/fits/connect.py
++++ b/astropy/io/fits/connect.py
+@@ -69,7 +69,9 @@ def is_fits(origin, filepath, fileobj, *args, **kwargs):
+             (".fits", ".fits.gz", ".fit", ".fit.gz", ".fts", ".fts.gz")
+         ):
+             return True
+-    return isinstance(args[0], (HDUList, TableHDU, BinTableHDU, GroupsHDU))
++    if args:
++        return isinstance(args[0], (HDUList, TableHDU, BinTableHDU, GroupsHDU))
++    return False
+ 
+ 
+ def _decode_mixins(tbl):
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..7f25960b6c
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,32 @@
++from astropy.io.registry import identify_format
++from astropy.table import Table
++import io
++
++def test_empty_args():
++    """Test with empty args tuple."""
++    result = identify_format("write", Table, "bububu.ecsv", None, [], {})
++    print(f"Test with empty args: {result}")
++
++def test_with_fileobj():
++    """Test with a fileobj that's not None."""
++    fileobj = io.BytesIO(b"NOT_A_FITS_FILE")
++    result = identify_format("write", Table, None, fileobj, [], {})
++    print(f"Test with fileobj: {result}")
++
++def test_with_fits_extension():
++    """Test with a filename that has a FITS extension."""
++    result = identify_format("write", Table, "file.fits", None, [], {})
++    print(f"Test with FITS extension: {result}")
++
++def test_with_non_fits_extension():
++    """Test with a filename that doesn't have a FITS extension."""
++    result = identify_format("write", Table, "file.txt", None, [], {})
++    print(f"Test with non-FITS extension: {result}")
++
++if __name__ == "__main__":
++    print("Running comprehensive tests for identify_format...")
++    test_empty_args()
++    test_with_fileobj()
++    test_with_fits_extension()
++    test_with_non_fits_extension()
++    print("All tests completed successfully!")
+\ No newline at end of file
+diff --git a/pyproject.toml b/pyproject.toml
+index 41865a87d1..922d14bf49 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..7154e4bf51
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,9 @@
++from astropy.io.registry import identify_format
++from astropy.table import Table
++
++# This should reproduce the issue
++try:
++    result = identify_format("write", Table, "bububu.ecsv", None, [], {})
++    print("Result:", result)
++except IndexError as e:
++    print(f"IndexError caught: {e}")
+\ No newline at end of file

@@ -1,0 +1,347 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index d913658291..10d6679ef4 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -298,18 +298,42 @@ class BaseExpression:
+         If all sources are None, then an error is raised higher up the stack in
+         the output_field property.
+         """
+-        sources_iter = (source for source in self.get_source_fields() if source is not None)
+-        for output_field in sources_iter:
+-            for source in sources_iter:
+-                if not isinstance(output_field, source.__class__):
+-                    raise FieldError(
+-                        'Expression contains mixed types: %s, %s. You must '
+-                        'set output_field.' % (
+-                            output_field.__class__.__name__,
+-                            source.__class__.__name__,
+-                        )
++        sources = [source for source in self.get_source_fields() if source is not None]
++        if not sources:
++            return None
++
++        # Special case for temporal operations
++        datetime_fields = {'DateField', 'DateTimeField', 'TimeField'}
++
++        # Check if this is a temporal subtraction followed by a duration addition
++        has_datetime = False
++        has_duration = False
++        for source in sources:
++            try:
++                source_type = source.get_internal_type()
++                if source_type in datetime_fields:
++                    has_datetime = True
++                elif source_type == 'DurationField':
++                    has_duration = True
++            except (FieldError, AttributeError):
++                pass
++
++        # If we have both datetime and duration fields, the result is a duration
++        if has_datetime and has_duration:
++            return fields.DurationField()
++
++        # Normal case - check if all fields are of the same type
++        output_field = sources[0]
++        for source in sources[1:]:
++            if not isinstance(output_field, source.__class__):
++                raise FieldError(
++                    'Expression contains mixed types: %s, %s. You must '
++                    'set output_field.' % (
++                        output_field.__class__.__name__,
++                        source.__class__.__name__,
+                     )
+-            return output_field
++                )
++        return output_field
+ 
+     @staticmethod
+     def _convert_value_noop(value, expression, connection):
+@@ -453,8 +477,7 @@ class CombinedExpression(SQLiteNumericMixin, Expression):
+             rhs_type = None
+         if (
+             not connection.features.has_native_duration_field and
+-            'DurationField' in {lhs_type, rhs_type} and
+-            lhs_type != rhs_type
++            'DurationField' in {lhs_type, rhs_type}
+         ):
+             return DurationExpression(self.lhs, self.connector, self.rhs).as_sql(compiler, connection)
+         datetime_fields = {'DateField', 'DateTimeField', 'TimeField'}
+@@ -572,7 +595,7 @@ class ResolvedOuterRef(F):
+         col = super().resolve_expression(*args, **kwargs)
+         # FIXME: Rename possibly_multivalued to multivalued and fix detection
+         # for non-multivalued JOINs (e.g. foreign key fields). This should take
+-        # into account only many-to-many and one-to-many relationships.
++        # into accountÂ only many-to-many and one-to-many relationships.
+         col.possibly_multivalued = LOOKUP_SEP in self.name
+         return col
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..3cd9c3cb26
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,40 @@
++import datetime
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'reproduce_issue',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models import F, Value
++from django.db.models.fields import DateTimeField, DurationField
++
++class Experiment(models.Model):
++    class Meta:
++        app_label = 'reproduce_issue'
++
++    start = models.DateTimeField()
++    end = models.DateTimeField()
++
++# This should work but currently raises an error
++try:
++    query = Experiment.objects.annotate(
++        delta=F('end') - F('start') + Value(datetime.timedelta(days=1), output_field=DurationField())
++    )
++    print("Query created successfully:", query)
++except Exception as e:
++    print(f"Error: {e}")
+\ No newline at end of file
+diff --git a/test_combined_expression.py b/test_combined_expression.py
+new file mode 100644
+index 0000000000..2d614756a7
+--- /dev/null
++++ b/test_combined_expression.py
+@@ -0,0 +1,31 @@
++import datetime
++from django.db.models import F, Value
++from django.db.models.fields import DateTimeField, DurationField
++from django.db.models.expressions import CombinedExpression, TemporalSubtraction
++
++# Create a simple test to reproduce the issue
++lhs = F('end')
++rhs = F('start')
++timedelta_value = Value(datetime.timedelta(days=1), output_field=DurationField())
++
++# First create a temporal subtraction
++temporal_subtraction = TemporalSubtraction(lhs, rhs)
++
++# Now try to add a DurationField value to it
++try:
++    # This is what happens internally when you do: F('end') - F('start') + Value(...)
++    combined_expr = CombinedExpression(temporal_subtraction, '+', timedelta_value)
++
++    # Check the source fields
++    source_fields = combined_expr.get_source_fields()
++    print("Source fields:", source_fields)
++
++    # Check if the issue is in the _resolve_output_field method
++    try:
++        output_field = combined_expr._resolve_output_field()
++        print("Resolved output field:", output_field)
++    except Exception as e:
++        print(f"Error resolving output field: {e}")
++
++except Exception as e:
++    print(f"Error: {e}")
+\ No newline at end of file
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..79f5b7e257
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,49 @@
++import datetime
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'test_issue',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        LOGGING_CONFIG = None,
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models import F, Value
++from django.db.models.fields import DateTimeField, DurationField
++
++# Create a simple model
++class Experiment(models.Model):
++    start = models.DateTimeField()
++    end = models.DateTimeField()
++
++    class Meta:
++        app_label = 'test_issue'
++        managed = False
++
++# Try the code from the issue description
++try:
++    query = Experiment.objects.annotate(
++        delta=F('end') - F('start') + Value(datetime.timedelta(days=1), output_field=DurationField())
++    )
++    print("Query created successfully:", query)
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/test_temporal_subtraction.py b/test_temporal_subtraction.py
+new file mode 100644
+index 0000000000..e38b285433
+--- /dev/null
++++ b/test_temporal_subtraction.py
+@@ -0,0 +1,60 @@
++import datetime
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models import F, Value
++from django.db.models.fields import DateTimeField, DurationField
++from django.db.models.expressions import CombinedExpression, TemporalSubtraction
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a simple model
++class Experiment(models.Model):
++    start = models.DateTimeField()
++    end = models.DateTimeField()
++
++    class Meta:
++        app_label = 'test_temporal_subtraction'
++        # Don't create a real table
++        managed = False
++
++# Create a simple test to reproduce the issue
++lhs = F('end')
++rhs = F('start')
++timedelta_value = Value(datetime.timedelta(days=1), output_field=DurationField())
++
++# First create a temporal subtraction
++temporal_subtraction = TemporalSubtraction(lhs, rhs)
++
++# Now try to add a DurationField value to it
++try:
++    # This is what happens internally when you do: F('end') - F('start') + Value(...)
++    combined_expr = CombinedExpression(temporal_subtraction, '+', timedelta_value)
++    print("Expression created successfully:", combined_expr)
++
++    # Try to use it in a query
++    query = Experiment.objects.annotate(
++        delta=combined_expr
++    )
++
++    # Get the SQL for the query
++    from django.db import connection
++    sql, params = query.query.get_compiler(connection).as_sql()
++    print("SQL:", sql)
++    print("Params:", params)
++
++except Exception as e:
++    print(f"Error: {e}")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..cb5b8a7b7d
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,55 @@
++import datetime
++import os
++import sys
++import django
++from django.conf import settings
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        LOGGING_CONFIG = None,
++    )
++    django.setup()
++
++from django.db import models
++from django.db.models import F, Value
++from django.db.models.fields import DateTimeField, DurationField
++
++# Create a simple model
++class Experiment(models.Model):
++    start = models.DateTimeField()
++    end = models.DateTimeField()
++
++    class Meta:
++        app_label = 'verify_fix'
++        managed = False
++
++# Try the code from the issue description
++try:
++    query = Experiment.objects.annotate(
++        delta=F('end') - F('start') + Value(datetime.timedelta(days=1), output_field=DurationField())
++    )
++    print("Query created successfully:", query)
++
++    # Get the SQL for the query
++    from django.db import connection
++    sql, params = query.query.get_compiler(connection).as_sql()
++    print("SQL:", sql)
++    print("Params:", params)
++
++except Exception as e:
++    print(f"Error: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file

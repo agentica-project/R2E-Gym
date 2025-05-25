@@ -1,0 +1,100 @@
+diff --git a/problematic_data.txt b/problematic_data.txt
+new file mode 100644
+index 000000000..96e0917d5
+--- /dev/null
++++ b/problematic_data.txt
+@@ -0,0 +1,5 @@
++from urllib.request import urlopen
++with open("data.txt", "rb") as in_fh:
++    data = in_fh.read()
++url = "https://bpaste.net"
++urlopen(url, data=data)
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100755
+index 000000000..abfdfdc19
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python
++# Script to reproduce the pastebin issue
++
++import sys
++import re
++from urllib.request import urlopen
++from urllib.parse import urlencode
++
++def create_paste_with_python3_lexer(contents):
++    """Reproduce the issue with lexer=python3"""
++    params = {
++        "code": contents,
++        "lexer": "python3",
++        "expiry": "1week",
++    }
++    url = "https://bpaste.net"
++    try:
++        response = urlopen(url, data=urlencode(params).encode("ascii")).read()
++        print("Success with python3 lexer")
++        return True
++    except Exception as e:
++        print(f"Error with python3 lexer: {e}")
++        return False
++
++def create_paste_with_text_lexer(contents):
++    """Test with the proposed fix (lexer=text)"""
++    params = {
++        "code": contents,
++        "lexer": "text",
++        "expiry": "1week",
++    }
++    url = "https://bpaste.net"
++    try:
++        response = urlopen(url, data=urlencode(params).encode("ascii")).read()
++        print("Success with text lexer")
++        return True
++    except Exception as e:
++        print(f"Error with text lexer: {e}")
++        return False
++
++# Create a sample content that might cause issues
++with open("/testbed/problematic_data.txt", "rb") as f:
++    problematic_content = f.read()
++
++print("Testing with python3 lexer:")
++python3_result = create_paste_with_python3_lexer(problematic_content)
++
++print("\nTesting with text lexer:")
++text_result = create_paste_with_text_lexer(problematic_content)
++
++print("\nResults:")
++print(f"python3 lexer: {'Success' if python3_result else 'Failed'}")
++print(f"text lexer: {'Success' if text_result else 'Failed'}")
+\ No newline at end of file
+diff --git a/src/_pytest/pastebin.py b/src/_pytest/pastebin.py
+index 41576a615..d2d4b4f19 100644
+--- a/src/_pytest/pastebin.py
++++ b/src/_pytest/pastebin.py
+@@ -79,7 +79,7 @@ def create_new_paste(contents):
+ 
+     params = {
+         "code": contents,
+-        "lexer": "python3" if sys.version_info[0] >= 3 else "python",
++        "lexer": "text",  # Changed from "python3" to "text" as the content is arbitrary text, not Python code
+         "expiry": "1week",
+     }
+     url = "https://bpaste.net"
+diff --git a/testing/test_pastebin.py b/testing/test_pastebin.py
+index bac8f9802..280aed5f5 100644
+--- a/testing/test_pastebin.py
++++ b/testing/test_pastebin.py
+@@ -126,8 +126,8 @@ class TestPaste(object):
+         assert len(mocked_urlopen) == 1
+         url, data = mocked_urlopen[0]
+         assert type(data) is bytes
+-        lexer = "python3" if sys.version_info[0] >= 3 else "python"
++        # Changed from "python3" to "text" as the content is arbitrary text, not Python code
+         assert url == "https://bpaste.net"
+-        assert "lexer=%s" % lexer in data.decode()
++        assert "lexer=text" in data.decode()
+         assert "code=full-paste-contents" in data.decode()
+         assert "expiry=1week" in data.decode()

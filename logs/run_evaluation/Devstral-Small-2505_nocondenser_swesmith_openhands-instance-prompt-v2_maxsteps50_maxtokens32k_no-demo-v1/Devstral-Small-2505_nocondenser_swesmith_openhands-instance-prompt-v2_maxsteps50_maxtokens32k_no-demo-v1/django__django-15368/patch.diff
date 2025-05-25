@@ -1,0 +1,148 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index f8d848e926..3c234d8241 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -670,7 +670,7 @@ class QuerySet:
+                 when_statements = []
+                 for obj in batch_objs:
+                     attr = getattr(obj, field.attname)
+-                    if not isinstance(attr, Expression):
++                    if not isinstance(attr, (Expression, F)):
+                         attr = Value(attr, output_field=field)
+                     when_statements.append(When(pk=obj.pk, then=attr))
+                 case_statement = Case(*when_statements, output_field=field)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..88333c9549
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,62 @@
++import os
++import sys
++import django
++from django.db import connection, models
++
++# Create a simple model for testing
++class SelfRef(models.Model):
++    name = models.CharField(max_length=100)
++    c8 = models.CharField(max_length=100)
++
++    def __str__(self):
++        return self.name
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.i18n.sampleproject.sampleproject.settings")
++django.setup()
++
++from django.db.models import F
++from django.core.management import call_command
++
++# Create the database tables
++def setup_database():
++    # Create tables
++    with connection.cursor() as cursor:
++        cursor.execute('''
++        CREATE TABLE IF NOT EXISTS simple_model_selfref (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            name VARCHAR(100),
++            c8 VARCHAR(100)
++        )
++        ''')
++
++    # Create an instance if it doesn't exist
++    if not SelfRef.objects.all().exists():
++        SelfRef.objects.create(name="test", c8="original")
++
++def reproduce_issue():
++    # Get the first SelfRef object
++    o = SelfRef.objects.all().first()
++
++    # Assign F('name') to c8 field
++    print(f"Before: o.c8 = {o.c8}")
++    o.c8 = F('name')
++    print(f"After assignment: o.c8 = {o.c8}")
++
++    # Perform bulk_update
++    print("Performing bulk_update...")
++    result = SelfRef.objects.bulk_update([o], ['c8'])
++    print(f"bulk_update result: {result}")
++
++    # Refresh from DB and check the value
++    o.refresh_from_db()
++    print(f"After refresh: o.c8 = {o.c8}")
++
++    # Print the last SQL query
++    if connection.queries:
++        print("\nLast SQL query:")
++        print(connection.queries[-1]['sql'])
++
++if __name__ == "__main__":
++    setup_database()
++    reproduce_issue()
+\ No newline at end of file
+diff --git a/simple_model.py b/simple_model.py
+new file mode 100644
+index 0000000000..5b20a217d0
+--- /dev/null
++++ b/simple_model.py
+@@ -0,0 +1,8 @@
++from django.db import models
++
++class SelfRef(models.Model):
++    name = models.CharField(max_length=100)
++    c8 = models.CharField(max_length=100)
++
++    def __str__(self):
++        return self.name
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..19845d0a81
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,44 @@
++import os
++import sys
++import django
++from django.db import connection, models
++from django.db.models import F, Value
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.i18n.sampleproject.sampleproject.settings")
++django.setup()
++
++# Import the necessary classes
++from django.db.models.expressions import Expression
++
++def test_isinstance_check():
++    """Test the isinstance check with different types."""
++    # Create an instance of Expression
++    expr = Expression()
++
++    # Create an instance of F
++    f_expr = F('field_name')
++
++    # Test the original check
++    print("Testing original check: isinstance(attr, Expression)")
++    print(f"Expression instance: {isinstance(expr, Expression)}")
++    print(f"F instance: {isinstance(f_expr, Expression)}")
++
++    # Test the new check
++    print("\nTesting new check: isinstance(attr, (Expression, F))")
++    print(f"Expression instance: {isinstance(expr, (Expression, F))}")
++    print(f"F instance: {isinstance(f_expr, (Expression, F))}")
++
++    # Test the duck typing approach
++    print("\nTesting duck typing approach: hasattr(attr, 'resolve_expression')")
++    print(f"Expression instance: {hasattr(expr, 'resolve_expression')}")
++    print(f"F instance: {hasattr(f_expr, 'resolve_expression')}")
++
++    # Test with a regular value
++    print("\nTesting with a regular value")
++    value = "some value"
++    print(f"isinstance(value, (Expression, F)): {isinstance(value, (Expression, F))}")
++    print(f"hasattr(value, 'resolve_expression'): {hasattr(value, 'resolve_expression')}")
++
++if __name__ == "__main__":
++    test_isinstance_check()
+\ No newline at end of file

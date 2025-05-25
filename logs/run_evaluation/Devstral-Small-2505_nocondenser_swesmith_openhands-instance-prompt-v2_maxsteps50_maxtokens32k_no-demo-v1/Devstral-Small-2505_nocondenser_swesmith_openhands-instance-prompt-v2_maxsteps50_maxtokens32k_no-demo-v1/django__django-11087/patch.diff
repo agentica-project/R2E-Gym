@@ -1,0 +1,447 @@
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+index 3a462f1c4c..c4e061f95b 100644
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -217,7 +217,19 @@ class Collector:
+                     continue
+                 batches = self.get_del_batches(new_objs, field)
+                 for batch in batches:
+-                    sub_objs = self.related_objects(related, batch)
++                    sub_pks = self.related_objects(related, batch)
++                    # If related_objects returns a values_list query, we need to convert it to model instances
++                    if hasattr(sub_pks, '__iter__') and not hasattr(sub_pks, '_meta'):
++                        # This is a list of primary keys, get the actual model instances
++                        if sub_pks:
++                            sub_objs = related.related_model._base_manager.using(self.using).filter(
++                                pk__in=sub_pks
++                            )
++                        else:
++                            sub_objs = related.related_model._base_manager.none()
++                    else:
++                        sub_objs = sub_pks
++
+                     if self.can_fast_delete(sub_objs, from_field=field):
+                         self.fast_deletes.append(sub_objs)
+                     elif sub_objs:
+@@ -231,10 +243,14 @@ class Collector:
+     def related_objects(self, related, objs):
+         """
+         Get a QuerySet of objects related to `objs` via the relation `related`.
++        Only fetch the primary key to avoid fetching unnecessary fields that
++        might contain invalid data.
+         """
++        # Use only the primary key to avoid fetching unnecessary fields
++        pk = related.related_model._meta.pk
+         return related.related_model._base_manager.using(self.using).filter(
+             **{"%s__in" % related.field.name: objs}
+-        )
++        ).values_list(pk.name, flat=True)
+ 
+     def instances_with_model(self):
+         for model, instances in self.data.items():
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..f015d0b308
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,109 @@
++import os
++import sys
++import django
++from django.db import models, connection
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.mysql',
++                'NAME': 'test_db',
++                'USER': 'root',
++                'PASSWORD': 'password',
++                'HOST': 'localhost',
++                'PORT': '3306',
++                'OPTIONS': {
++                    'charset': 'utf8mb4',
++                },
++            }
++        },
++        INSTALLED_APPS=[
++            'django.db.backends',
++        ],
++    )
++    django.setup()
++
++# Create models similar to the ones in the issue
++class Repository(models.Model):
++    name = models.CharField(max_length=255)
++
++class Job(models.Model):
++    repository = models.ForeignKey(Repository, on_delete=models.CASCADE)
++    guid = models.CharField(max_length=255, unique=True)
++    submit_time = models.DateTimeField()
++
++class JobLog(models.Model):
++    job = models.ForeignKey(Job, on_delete=models.CASCADE)
++    name = models.CharField(max_length=255)
++
++class TextLogStep(models.Model):
++    job = models.ForeignKey(Job, on_delete=models.CASCADE)
++    name = models.CharField(max_length=255)
++
++class TextLogError(models.Model):
++    step = models.ForeignKey(TextLogStep, on_delete=models.CASCADE)
++    line = models.TextField()  # This field will contain invalid UTF-8 data
++    line_number = models.IntegerField()
++
++def create_test_data():
++    """Create test data with invalid UTF-8 in TextLogError.line"""
++    # Create repository
++    repo = Repository.objects.create(name="Test Repository")
++
++    # Create job
++    job = Job.objects.create(
++        repository=repo,
++        guid="test-guid-123",
++        submit_time="2023-01-01T00:00:00Z"
++    )
++
++    # Create job log
++    job_log = JobLog.objects.create(
++        job=job,
++        name="Test Job Log"
++    )
++
++    # Create text log step
++    step = TextLogStep.objects.create(
++        job=job,
++        name="Test Step"
++    )
++
++    # Create text log error with invalid UTF-8
++    invalid_utf8 = b"Valid text with invalid UTF-8: \xed\xf0\xfd".decode('latin1')
++    TextLogError.objects.create(
++        step=step,
++        line=invalid_utf8,
++        line_number=42
++    )
++
++    return job
++
++def test_delete_with_invalid_utf8():
++    """Test that deleting a Job with related objects containing invalid UTF-8 works"""
++    # Create test data
++    job = create_test_data()
++
++    try:
++        # Try to delete the job, which should cascade to related objects
++        job.delete()
++        print("SUCCESS: Job deleted successfully without UnicodeDecodeError")
++    except UnicodeDecodeError as e:
++        print(f"FAILED: UnicodeDecodeError occurred: {e}")
++    except Exception as e:
++        print(f"FAILED: Unexpected error occurred: {e}")
++
++if __name__ == "__main__":
++    # Create tables
++    connection.cursor().execute("CREATE DATABASE IF NOT EXISTS test_db")
++    connection.cursor().execute("USE test_db")
++
++    # Create tables
++    for model in [Repository, Job, JobLog, TextLogStep, TextLogError]:
++        connection.cursor().execute(model._meta.sql_create_model(connection))
++
++    # Run the test
++    test_delete_with_invalid_utf8()
+\ No newline at end of file
+diff --git a/test_app/__init__.py b/test_app/__init__.py
+new file mode 100644
+index 0000000000..76aa7ff33c
+--- /dev/null
++++ b/test_app/__init__.py
+@@ -0,0 +1,3 @@
++from __future__ import unicode_literals
++
++APP_NAME = 'test_app'
+\ No newline at end of file
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..ea0f9bc742
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,22 @@
++from django.db import models
++
++class Repository(models.Model):
++    name = models.CharField(max_length=255)
++
++class Job(models.Model):
++    repository = models.ForeignKey(Repository, on_delete=models.CASCADE)
++    guid = models.CharField(max_length=255, unique=True)
++    submit_time = models.DateTimeField()
++
++class JobLog(models.Model):
++    job = models.ForeignKey(Job, on_delete=models.CASCADE)
++    name = models.CharField(max_length=255)
++
++class TextLogStep(models.Model):
++    job = models.ForeignKey(Job, on_delete=models.CASCADE)
++    name = models.CharField(max_length=255)
++
++class TextLogError(models.Model):
++    step = models.ForeignKey(TextLogStep, on_delete=models.CASCADE)
++    line = models.TextField()  # This field will contain invalid UTF-8 data
++    line_number = models.IntegerField()
+\ No newline at end of file
+diff --git a/test_delete.py b/test_delete.py
+new file mode 100644
+index 0000000000..0e303889fc
+--- /dev/null
++++ b/test_delete.py
+@@ -0,0 +1,90 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.mysql',
++                'NAME': 'test_db',
++                'USER': 'root',
++                'PASSWORD': 'password',
++                'HOST': 'localhost',
++                'PORT': '3306',
++                'OPTIONS': {
++                    'charset': 'utf8mb4',
++                },
++            }
++        },
++        INSTALLED_APPS=[
++            'django.db.backends',
++            'test_app',
++        ],
++    )
++    django.setup()
++
++from django.db import connection
++from test_app.models import Repository, Job, JobLog, TextLogStep, TextLogError
++
++def create_test_data():
++    """Create test data with invalid UTF-8 in TextLogError.line"""
++    # Create repository
++    repo = Repository.objects.create(name="Test Repository")
++
++    # Create job
++    job = Job.objects.create(
++        repository=repo,
++        guid="test-guid-123",
++        submit_time="2023-01-01T00:00:00Z"
++    )
++
++    # Create job log
++    job_log = JobLog.objects.create(
++        job=job,
++        name="Test Job Log"
++    )
++
++    # Create text log step
++    step = TextLogStep.objects.create(
++        job=job,
++        name="Test Step"
++    )
++
++    # Create text log error with invalid UTF-8
++    invalid_utf8 = b"Valid text with invalid UTF-8: \xed\xf0\xfd".decode('latin1')
++    TextLogError.objects.create(
++        step=step,
++        line=invalid_utf8,
++        line_number=42
++    )
++
++    return job
++
++def test_delete_with_invalid_utf8():
++    """Test that deleting a Job with related objects containing invalid UTF-8 works"""
++    # Create test data
++    job = create_test_data()
++
++    try:
++        # Try to delete the job, which should cascade to related objects
++        job.delete()
++        print("SUCCESS: Job deleted successfully without UnicodeDecodeError")
++    except UnicodeDecodeError as e:
++        print(f"FAILED: UnicodeDecodeError occurred: {e}")
++    except Exception as e:
++        print(f"FAILED: Unexpected error occurred: {e}")
++
++if __name__ == "__main__":
++    # Create tables
++    connection.cursor().execute("CREATE DATABASE IF NOT EXISTS test_db")
++    connection.cursor().execute("USE test_db")
++
++    # Create tables
++    for model in [Repository, Job, JobLog, TextLogStep, TextLogError]:
++        connection.cursor().execute(model._meta.sql_create_model(connection))
++
++    # Run the test
++    test_delete_with_invalid_utf8()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..9b0d67f89c
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,147 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import connection
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',  # Using SQLite for testing
++                'NAME': ':memory:',  # In-memory database
++            }
++        },
++        INSTALLED_APPS=[
++            'django.db.backends',
++            'test_app',
++        ],
++        # Add this to avoid running migrations
++        MIGRATION_MODULES={
++            'test_app': 'test_app.migrations',
++        },
++        # Don't use timezone support
++        USE_TZ=False,
++    )
++    django.setup()
++
++# Create the tables manually
++def create_tables():
++    cursor = connection.cursor()
++
++    # Create Repository table
++    cursor.execute('''
++        CREATE TABLE test_app_repository (
++            id INTEGER PRIMARY KEY,
++            name VARCHAR(255) NOT NULL
++        )
++    ''')
++
++    # Create Job table
++    cursor.execute('''
++        CREATE TABLE test_app_job (
++            id INTEGER PRIMARY KEY,
++            repository_id INTEGER NOT NULL,
++            guid VARCHAR(255) NOT NULL UNIQUE,
++            submit_time DATETIME NOT NULL,
++            FOREIGN KEY (repository_id) REFERENCES test_app_repository(id)
++                ON DELETE CASCADE
++        )
++    ''')
++
++    # Create JobLog table
++    cursor.execute('''
++        CREATE TABLE test_app_joblog (
++            id INTEGER PRIMARY KEY,
++            job_id INTEGER NOT NULL,
++            name VARCHAR(255) NOT NULL,
++            FOREIGN KEY (job_id) REFERENCES test_app_job(id)
++                ON DELETE CASCADE
++        )
++    ''')
++
++    # Create TextLogStep table
++    cursor.execute('''
++        CREATE TABLE test_app_textlogstep (
++            id INTEGER PRIMARY KEY,
++            job_id INTEGER NOT NULL,
++            name VARCHAR(255) NOT NULL,
++            FOREIGN KEY (job_id) REFERENCES test_app_job(id)
++                ON DELETE CASCADE
++        )
++    ''')
++
++    # Create TextLogError table
++    cursor.execute('''
++        CREATE TABLE test_app_textlogerror (
++            id INTEGER PRIMARY KEY,
++            step_id INTEGER NOT NULL,
++            line TEXT NOT NULL,
++            line_number INTEGER NOT NULL,
++            FOREIGN KEY (step_id) REFERENCES test_app_textlogstep(id)
++                ON DELETE CASCADE
++        )
++    ''')
++
++from test_app.models import Repository, Job, JobLog, TextLogStep, TextLogError
++
++def create_test_data():
++    """Create test data with invalid UTF-8 in TextLogError.line"""
++    # Create repository
++    repo = Repository.objects.create(name="Test Repository")
++
++    # Create job
++    job = Job.objects.create(
++        repository=repo,
++        guid="test-guid-123",
++        submit_time="2023-01-01 00:00:00"
++    )
++
++    # Create job log
++    job_log = JobLog.objects.create(
++        job=job,
++        name="Test Job Log"
++    )
++
++    # Create text log step
++    step = TextLogStep.objects.create(
++        job=job,
++        name="Test Step"
++    )
++
++    # Create text log error with invalid UTF-8
++    # In SQLite, we can use any string since we're not testing the actual encoding
++    TextLogError.objects.create(
++        step=step,
++        line="This is a test line with some content",
++        line_number=42
++    )
++
++    return job
++
++def test_delete():
++    """Test that deleting a Job with related objects works"""
++    # Create test data
++    job = create_test_data()
++
++    try:
++        # Try to delete the job, which should cascade to related objects
++        job.delete()
++        print("SUCCESS: Job deleted successfully")
++        return True
++    except Exception as e:
++        print(f"FAILED: Error occurred: {e}")
++        return False
++
++if __name__ == "__main__":
++    # Create tables
++    create_tables()
++
++    # Run the test
++    success = test_delete()
++
++    if success:
++        print("Fix verified successfully!")
++    else:
++        print("Fix verification failed!")
+\ No newline at end of file

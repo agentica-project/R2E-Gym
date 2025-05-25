@@ -1,0 +1,71 @@
+diff --git a/lib/matplotlib/text.py b/lib/matplotlib/text.py
+index 4591316cf9..403f65a6ce 100644
+--- a/lib/matplotlib/text.py
++++ b/lib/matplotlib/text.py
+@@ -135,6 +135,7 @@ class Text(Artist):
+         super().__init__()
+         self._x, self._y = x, y
+         self._text = ''
++        self._antialiased = mpl.rcParams['text.antialiased']
+         self._reset_visual_defaults(
+             text=text,
+             color=color,
+@@ -737,6 +738,7 @@ class Text(Artist):
+             gc.set_foreground(self.get_color())
+             gc.set_alpha(self.get_alpha())
+             gc.set_url(self._url)
++            gc.set_antialiased(self.get_antialiased())
+             self._set_gc_clip(gc)
+ 
+             angle = self.get_rotation()
+@@ -873,6 +875,15 @@ class Text(Artist):
+         """Return the text string."""
+         return self._text
+ 
++    def get_antialiased(self):
++        """Return whether the text should try to do antialiased rendering."""
++        return self._antialiased
++
++    def set_antialiased(self, b):
++        """Set whether text should be drawn with antialiased rendering."""
++        self._antialiased = int(bool(b))
++        self.stale = True
++
+     def get_verticalalignment(self):
+         """
+         Return the vertical alignment as a string.  Will be one of
+diff --git a/test_text_antialiased.py b/test_text_antialiased.py
+new file mode 100644
+index 0000000000..db9c4c417c
+--- /dev/null
++++ b/test_text_antialiased.py
+@@ -0,0 +1,28 @@
++import matplotlib.pyplot as plt
++import matplotlib as mpl
++
++# Set global antialiasing to False
++mpl.rcParams['text.antialiased'] = False
++
++# Create a figure
++fig, ax = plt.subplots()
++
++# Create two text objects
++text1 = ax.text(0.1, 0.5, "Text with default antialiasing (False)")
++text2 = ax.text(0.1, 0.3, "Text with custom antialiasing (True)")
++
++# Try to set antialiasing for text2 (this will fail until we implement the fix)
++try:
++    text2.set_antialiased(True)
++    print("Successfully set antialiased property")
++except AttributeError:
++    print("set_antialiased method not implemented yet")
++
++# Try to get antialiasing value for text1 (this will fail until we implement the fix)
++try:
++    is_antialiased = text1.get_antialiased()
++    print(f"Text1 antialiased: {is_antialiased}")
++except AttributeError:
++    print("get_antialiased method not implemented yet")
++
++plt.show()
+\ No newline at end of file

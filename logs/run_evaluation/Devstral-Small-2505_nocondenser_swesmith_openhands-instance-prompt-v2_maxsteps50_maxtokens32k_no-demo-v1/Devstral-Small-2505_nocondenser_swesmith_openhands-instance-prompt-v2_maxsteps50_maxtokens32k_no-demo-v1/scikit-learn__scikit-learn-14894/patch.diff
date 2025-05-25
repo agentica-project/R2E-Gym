@@ -1,0 +1,106 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..8bb29ddc1
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,33 @@
++import numpy as np
++import scipy.sparse as sp
++from sklearn.svm import SVR
++
++def test_sparse_svm_empty_support_vectors():
++    # Create a dataset that will likely result in empty support vectors
++    x_train = np.array([[0, 1, 0, 0],
++                        [0, 0, 0, 1],
++                        [0, 0, 1, 0],
++                        [0, 0, 0, 1]])
++    y_train = np.array([0.04, 0.04, 0.10, 0.16])
++
++    # Create and fit model with dense data (works fine)
++    model = SVR(C=316.227766017, cache_size=200, coef0=0.0, degree=3, epsilon=0.1,
++               gamma=1.0, kernel='linear', max_iter=15000,
++               shrinking=True, tol=0.001, verbose=False)
++    print("Fitting with dense data...")
++    model.fit(x_train, y_train)
++    print("Dense fit successful")
++
++    # Convert to sparse and fit (should fail with ZeroDivisionError)
++    print("\nConverting to sparse and fitting...")
++    xtrain = sp.csr_matrix(x_train)
++    try:
++        model.fit(xtrain, y_train)
++        print("Sparse fit successful")
++        print(f"dual_coef_ shape: {model.dual_coef_.shape}")
++    except ZeroDivisionError as e:
++        print(f"Error: {e}")
++        print("Test failed as expected - ZeroDivisionError occurred")
++
++if __name__ == "__main__":
++    test_sparse_svm_empty_support_vectors()
+\ No newline at end of file
+diff --git a/sklearn/svm/base.py b/sklearn/svm/base.py
+index 64cebe837..6fdbc7333 100644
+--- a/sklearn/svm/base.py
++++ b/sklearn/svm/base.py
+@@ -286,12 +286,16 @@ class BaseLibSVM(BaseEstimator, metaclass=ABCMeta):
+             n_class = 1
+         n_SV = self.support_vectors_.shape[0]
+ 
+-        dual_coef_indices = np.tile(np.arange(n_SV), n_class)
+-        dual_coef_indptr = np.arange(0, dual_coef_indices.size + 1,
+-                                     dual_coef_indices.size / n_class)
+-        self.dual_coef_ = sp.csr_matrix(
+-            (dual_coef_data, dual_coef_indices, dual_coef_indptr),
+-            (n_class, n_SV))
++        # Handle empty support vectors case
++        if n_SV == 0:
++            self.dual_coef_ = sp.csr_matrix((n_class, 0))
++        else:
++            dual_coef_indices = np.tile(np.arange(n_SV), n_class)
++            dual_coef_indptr = np.arange(0, dual_coef_indices.size + 1,
++                                         dual_coef_indices.size / n_class)
++            self.dual_coef_ = sp.csr_matrix(
++                (dual_coef_data, dual_coef_indices, dual_coef_indptr),
++                (n_class, n_SV))
+ 
+     def predict(self, X):
+         """Perform regression on samples in X.
+diff --git a/test_empty_support_vectors.py b/test_empty_support_vectors.py
+new file mode 100644
+index 000000000..ac4fdabce
+--- /dev/null
++++ b/test_empty_support_vectors.py
+@@ -0,0 +1,32 @@
++import numpy as np
++import scipy.sparse as sp
++from sklearn.svm import SVR, SVC, NuSVR, NuSVC, OneClassSVM
++import pytest
++
++def test_sparse_svm_empty_support_vectors():
++    """Test that SVM with sparse data handles empty support vectors correctly."""
++    # Create a dataset that will likely result in empty support vectors
++    x_train = np.array([[0, 1, 0, 0],
++                        [0, 0, 0, 1],
++                        [0, 0, 1, 0],
++                        [0, 0, 0, 1]])
++    y_train = np.array([0.04, 0.04, 0.10, 0.16])
++
++    # Test with SVR - this is the specific case mentioned in the issue
++    model = SVR(C=316.227766017, kernel='linear', gamma=1.0)
++    xtrain = sp.csr_matrix(x_train)
++
++    # This should not raise a ZeroDivisionError
++    model.fit(xtrain, y_train)
++
++    # Verify that dual_coef_ is a sparse matrix
++    assert sp.issparse(model.dual_coef_)
++
++    # The exact shape may vary depending on the data and model parameters
++    # but it should not raise an error
++    print("SVR test passed - no ZeroDivisionError occurred")
++
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_sparse_svm_empty_support_vectors()
+\ No newline at end of file

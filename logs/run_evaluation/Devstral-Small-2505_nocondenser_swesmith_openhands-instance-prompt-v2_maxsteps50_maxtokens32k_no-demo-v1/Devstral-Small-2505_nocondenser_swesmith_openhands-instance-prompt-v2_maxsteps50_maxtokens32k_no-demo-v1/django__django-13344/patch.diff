@@ -1,0 +1,420 @@
+diff --git a/django/core/handlers/exception.py b/django/core/handlers/exception.py
+index 98fb46083a..6c77fa12ef 100644
+--- a/django/core/handlers/exception.py
++++ b/django/core/handlers/exception.py
+@@ -45,9 +45,13 @@ def convert_exception_to_response(get_response):
+         def inner(request):
+             try:
+                 response = get_response(request)
++                # If the response is a coroutine, await it to ensure we return a proper response object
++                if asyncio.iscoroutine(response):
++                    response = asyncio.create_task(response).result()
++                return response
+             except Exception as exc:
+                 response = response_for_exception(request, exc)
+-            return response
++                return response
+         return inner
+ 
+ 
+diff --git a/test_convert_exception.py b/test_convert_exception.py
+new file mode 100644
+index 0000000000..5961ef24c8
+--- /dev/null
++++ b/test_convert_exception.py
+@@ -0,0 +1,49 @@
++import asyncio
++from django.conf import settings
++from django.http import HttpResponse
++from django.core.handlers.exception import convert_exception_to_response
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    ROOT_URLCONF='',
++    DEFAULT_CHARSET='utf-8',
++)
++
++# Create a simple async view
++async def simple_view(request):
++    await asyncio.sleep(0.1)  # Simulate async work
++    return HttpResponse("Hello, world!")
++
++# Create a request object for testing
++class MockRequest:
++    def __init__(self):
++        self.META = {}
++        self.method = 'GET'
++        self.path = '/'
++
++# Test the convert_exception_to_response function
++async def test_convert_exception():
++    # Create a mock request
++    request = MockRequest()
++
++    # Wrap the view with convert_exception_to_response
++    wrapped_view = convert_exception_to_response(simple_view)
++
++    # Call the wrapped view
++    response = await wrapped_view(request)
++
++    print(f"Response type after convert_exception_to_response: {type(response)}")
++
++    # Now simulate the middleware chain by wrapping the wrapped_view again
++    wrapped_view_again = convert_exception_to_response(wrapped_view)
++
++    # Call the wrapped view again
++    response_again = await wrapped_view_again(request)
++
++    print(f"Response type after second wrapping: {type(response_again)}")
++
++# Run the test
++loop = asyncio.get_event_loop()
++loop.run_until_complete(test_convert_exception())
+\ No newline at end of file
+diff --git a/test_middleware_chain.py b/test_middleware_chain.py
+new file mode 100644
+index 0000000000..ea1a459154
+--- /dev/null
++++ b/test_middleware_chain.py
+@@ -0,0 +1,81 @@
++import asyncio
++from django.conf import settings
++from django.http import HttpResponse
++from django.middleware.common import MiddlewareMixin
++from django.core.handlers.base import BaseHandler
++from django.core.handlers.asgi import ASGIHandler
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    ROOT_URLCONF='',
++    DEFAULT_CHARSET='utf-8',
++    MIDDLEWARE=[
++        'test_middleware_chain.DummyMiddleware',
++        'test_middleware_chain.SecondMiddleware',
++    ],
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++)
++
++# Create a dummy middleware that prints the types of its arguments
++class DummyMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"DummyMiddleware.__call__: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"DummyMiddleware.process_response: response type = {type(response)}")
++        return response
++
++class SecondMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"SecondMiddleware.__call__: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response type = {type(response)}")
++        return response
++
++# Create a simple async view
++async def simple_view(request):
++    await asyncio.sleep(0.1)  # Simulate async work
++    return HttpResponse("Hello, world!")
++
++# Create a request object for testing
++class MockRequest:
++    def __init__(self):
++        self.META = {}
++        self.method = 'GET'
++        self.path = '/'
++
++# Test the middleware chain
++async def test_middleware_chain():
++    # Create an ASGI handler
++    handler = ASGIHandler()
++
++    # Create a mock request
++    request = MockRequest()
++
++    # Set the handler's get_response method to our view
++    handler._get_response_async = simple_view
++
++    # Call the middleware chain
++    response = await handler._middleware_chain(request)
++
++    print(f"Final response type: {type(response)}")
++
++# Run the test
++loop = asyncio.get_event_loop()
++loop.run_until_complete(test_middleware_chain())
+\ No newline at end of file
+diff --git a/test_middleware_coroutine.py b/test_middleware_coroutine.py
+new file mode 100644
+index 0000000000..58102925df
+--- /dev/null
++++ b/test_middleware_coroutine.py
+@@ -0,0 +1,75 @@
++import asyncio
++import sys
++import os
++from django.conf import settings
++from django.core.asgi import get_asgi_application
++from django.http import HttpResponse
++from django.middleware.common import MiddlewareMixin
++import uvicorn
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    ROOT_URLCONF='',
++    MIDDLEWARE=[
++        'test_middleware_coroutine.DummyMiddleware',
++        'test_middleware_coroutine.SecondMiddleware',
++    ],
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++)
++
++# Create a dummy middleware that prints the types of its arguments
++class DummyMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"DummyMiddleware: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"DummyMiddleware.process_response: response type = {type(response)}")
++        return response
++
++class SecondMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"SecondMiddleware: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response type = {type(response)}")
++        return response
++
++# Create a simple async view
++async def simple_view(request):
++    await asyncio.sleep(0.1)  # Simulate async work
++    return HttpResponse("Hello, world!")
++
++# Create a simple ASGI application
++async def application(scope, receive, send):
++    if scope['type'] != 'http':
++        return
++
++    # Create a request object
++    from django.core.handlers.asgi import ASGIRequest
++    body_file = None  # Not needed for this simple test
++    request = ASGIRequest(scope, body_file)
++
++    # Call the view
++    response = await simple_view(request)
++
++    # Send the response
++    await get_asgi_application().send_response(response, send)
++
++if __name__ == "__main__":
++    # Run the server
++    uvicorn.run(application, host="127.0.0.1", port=8000, log_level="info")
+\ No newline at end of file
+diff --git a/test_middleware_issue.py b/test_middleware_issue.py
+new file mode 100644
+index 0000000000..57122f7bd7
+--- /dev/null
++++ b/test_middleware_issue.py
+@@ -0,0 +1,80 @@
++import asyncio
++from django.conf import settings
++from django.http import HttpResponse
++from django.middleware.common import MiddlewareMixin
++from django.core.handlers.exception import convert_exception_to_response
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    ROOT_URLCONF='',
++    MIDDLEWARE=[
++        'test_middleware_issue.DummyMiddleware',
++        'test_middleware_issue.SecondMiddleware',
++    ],
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++)
++
++# Create a dummy middleware that prints the types of its arguments
++class DummyMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"DummyMiddleware: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"DummyMiddleware.process_response: response type = {type(response)}")
++        return response
++
++class SecondMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"SecondMiddleware: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response type = {type(response)}")
++        return response
++
++# Create a simple async view
++async def simple_view(request):
++    await asyncio.sleep(0.1)  # Simulate async work
++    return HttpResponse("Hello, world!")
++
++# Create a request object for testing
++class MockRequest:
++    def __init__(self):
++        self.META = {}
++        self.method = 'GET'
++        self.path = '/'
++
++# Test the middleware chain
++async def test_middleware():
++    # Create the middleware chain manually
++    view = simple_view
++
++    # Wrap the view with the middlewares
++    second_middleware = SecondMiddleware(view)
++    dummy_middleware = DummyMiddleware(second_middleware)
++
++    # Create a mock request
++    request = MockRequest()
++
++    # Call the middleware chain
++    response = await dummy_middleware(request)
++
++    print(f"Final response type: {type(response)}")
++
++# Run the test
++loop = asyncio.get_event_loop()
++loop.run_until_complete(test_middleware())
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..5cc83d2ec2
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,81 @@
++import asyncio
++import sys
++import os
++from django.conf import settings
++from django.http import HttpResponse
++from django.middleware.common import MiddlewareMixin
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    ROOT_URLCONF='',
++    MIDDLEWARE=[
++        'verify_fix.DummyMiddleware',
++        'verify_fix.SecondMiddleware',
++    ],
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++)
++
++# Create a dummy middleware that prints the types of its arguments
++class DummyMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"DummyMiddleware: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"DummyMiddleware.process_response: response type = {type(response)}")
++        return response
++
++class SecondMiddleware(MiddlewareMixin):
++    def __init__(self, get_response=None):
++        self.get_response = get_response
++
++    async def __call__(self, request):
++        response = await self.get_response(request)
++        print(f"SecondMiddleware: response type = {type(response)}")
++        return response
++
++    def process_response(self, request, response):
++        print(f"SecondMiddleware.process_response: response type = {type(response)}")
++        return response
++
++# Create a simple async view
++async def simple_view(request):
++    await asyncio.sleep(0.1)  # Simulate async work
++    return HttpResponse("Hello, world!")
++
++if __name__ == "__main__":
++    # Create a simple test that doesn't require uvicorn
++    async def test_middleware():
++        # Create the middleware chain manually
++        view = simple_view
++
++        # Wrap the view with the middlewares
++        second_middleware = SecondMiddleware(view)
++        dummy_middleware = DummyMiddleware(second_middleware)
++
++        # Create a mock request
++        class MockRequest:
++            def __init__(self):
++                self.META = {}
++                self.method = 'GET'
++                self.path = '/'
++
++        request = MockRequest()
++
++        # Call the middleware chain
++        response = await dummy_middleware(request)
++
++        print(f"Final response type: {type(response)}")
++
++    # Run the test
++    loop = asyncio.get_event_loop()
++    loop.run_until_complete(test_middleware())
+\ No newline at end of file

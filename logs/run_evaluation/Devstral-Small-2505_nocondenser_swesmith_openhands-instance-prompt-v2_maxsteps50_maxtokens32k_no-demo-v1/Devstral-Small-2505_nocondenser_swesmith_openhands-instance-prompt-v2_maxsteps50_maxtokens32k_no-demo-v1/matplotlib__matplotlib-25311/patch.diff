@@ -1,0 +1,152 @@
+diff --git a/lib/matplotlib/legend.py b/lib/matplotlib/legend.py
+index ff6abdb958..72015cb0d1 100644
+--- a/lib/matplotlib/legend.py
++++ b/lib/matplotlib/legend.py
+@@ -73,6 +73,25 @@ class DraggableLegend(DraggableOffsetBox):
+ 
+         super().__init__(legend, legend._legend_box, use_blit=use_blit)
+ 
++    def __getstate__(self):
++        """Return state for pickling.
++
++        The canvas cannot be pickled, so we need to remove it from the state.
++        """
++        state = self.__dict__.copy()
++        # Remove legend reference as it cannot be pickled directly
++        state.pop('legend', None)
++        return state
++
++    def __setstate__(self, state):
++        """Set state after unpickling.
++
++        We need to restore the legend reference after unpickling.
++        """
++        self.__dict__.update(state)
++        # Restore legend reference
++        self.legend = self.ref_artist
++
+     def finalize_offset(self):
+         if self._update == "loc":
+             self._update_loc(self.get_loc_in_canvas())
+diff --git a/lib/matplotlib/offsetbox.py b/lib/matplotlib/offsetbox.py
+index 1dee8a23d9..3122849e0d 100644
+--- a/lib/matplotlib/offsetbox.py
++++ b/lib/matplotlib/offsetbox.py
+@@ -1514,6 +1514,36 @@ class DraggableBase:
+                 'button_release_event', self.on_release),
+         ]
+ 
++    def __getstate__(self):
++        """Return state for pickling.
++
++        The canvas cannot be pickled, so we need to remove it from the state.
++        """
++        state = self.__dict__.copy()
++        # Remove canvas from state as it cannot be pickled
++        state.pop('canvas', None)
++        # Also remove callbacks as they cannot be pickled
++        state.pop('cids', None)
++        return state
++
++    def __setstate__(self, state):
++        """Set state after unpickling.
++
++        We need to restore the canvas and callbacks after unpickling.
++        """
++        self.__dict__.update(state)
++        # Restore canvas reference
++        self.canvas = self.ref_artist.figure.canvas
++        # Restore blit support flag
++        self._use_blit = self._use_blit and self.canvas.supports_blit
++        # Reconnect callbacks
++        self.cids = [
++            self.canvas.callbacks._connect_picklable(
++                'pick_event', self.on_pick),
++            self.canvas.callbacks._connect_picklable(
++                'button_release_event', self.on_release),
++        ]
++
+     def on_motion(self, evt):
+         if self._check_still_parented() and self.got_artist:
+             dx = evt.x - self.mouse_x
+@@ -1619,3 +1649,22 @@ class DraggableAnnotation(DraggableBase):
+         ann = self.annotation
+         ann.xyann = ann.get_transform().inverted().transform(
+             (self.ox + dx, self.oy + dy))
++
++    def __getstate__(self):
++        """Return state for pickling.
++
++        The canvas cannot be pickled, so we need to remove it from the state.
++        """
++        state = self.__dict__.copy()
++        # Remove annotation reference as it cannot be pickled directly
++        state.pop('annotation', None)
++        return state
++
++    def __setstate__(self, state):
++        """Set state after unpickling.
++
++        We need to restore the annotation reference after unpickling.
++        """
++        self.__dict__.update(state)
++        # Restore annotation reference
++        self.annotation = self.ref_artist
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6c56529075
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,51 @@
++import matplotlib.pyplot as plt
++import pickle
++import sys
++
++def test_pickle_with_draggable_legend():
++    print(f"Python version: {sys.version}")
++    print(f"Matplotlib version: {plt.matplotlib.__version__}")
++    print(f"Backend: {plt.get_backend()}")
++
++    # Try to force the Qt backend
++    try:
++        plt.switch_backend('QtAgg')
++        print("Switched to QtAgg backend")
++    except Exception as e:
++        print(f"Could not switch backend: {e}")
++
++    fig = plt.figure()
++    ax = fig.add_subplot(111)
++
++    time = [0, 1, 2, 3, 4]
++    speed = [40, 43, 45, 47, 48]
++
++    ax.plot(time, speed, label="speed")
++
++    leg = ax.legend()
++    leg.set_draggable(True)  # This line causes the pickling to fail
++
++    try:
++        # Try to pickle the figure
++        pickled_data = pickle.dumps(fig)
++        print("SUCCESS: Figure with draggable legend was pickled successfully")
++
++        # Try to unpickle the figure
++        unpickled_fig = pickle.loads(pickled_data)
++        print("SUCCESS: Figure with draggable legend was unpickled successfully")
++
++        # Verify that the unpickled figure has a draggable legend
++        unpickled_leg = unpickled_fig.axes[0].get_legend()
++        if unpickled_leg and unpickled_leg.get_draggable():
++            print("SUCCESS: Unpickled figure has a draggable legend")
++            return True
++        else:
++            print("FAILED: Unpickled figure does not have a draggable legend")
++            return False
++
++    except Exception as e:
++        print(f"FAILED: {e}")
++        return False
++
++if __name__ == "__main__":
++    test_pickle_with_draggable_legend()
+\ No newline at end of file

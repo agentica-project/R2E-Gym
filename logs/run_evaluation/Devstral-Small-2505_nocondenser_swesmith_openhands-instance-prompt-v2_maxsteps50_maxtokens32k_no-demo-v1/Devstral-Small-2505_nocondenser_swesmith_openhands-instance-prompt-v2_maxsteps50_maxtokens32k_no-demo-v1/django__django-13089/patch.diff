@@ -1,0 +1,385 @@
+diff --git a/direct_test.py b/direct_test.py
+new file mode 100644
+index 0000000000..c0e4fd419a
+--- /dev/null
++++ b/direct_test.py
+@@ -0,0 +1,25 @@
++"""
++Direct test to reproduce the issue with cursor.fetchone()[0] when fetchone() returns None.
++"""
++
++# Create a simple function that reproduces the issue
++def problematic_function():
++    cursor = type('Cursor', (), {})()  # Create an empty object
++    cursor.fetchone = lambda: None      # Make fetchone return None
++
++    try:
++        # This will raise TypeError: 'NoneType' object is not subscriptable
++        value = cursor.fetchone()[0]
++        print(f"Value: {value}")
++    except Exception as e:
++        print(f"Error occurred: {type(e).__name__}: {e}")
++        return True
++    return False
++
++# Run the test
++if __name__ == "__main__":
++    print("Testing direct access to fetchone()[0] when fetchone() returns None...")
++    if problematic_function():
++        print("Successfully reproduced the issue!")
++    else:
++        print("Failed to reproduce the issue.")
+\ No newline at end of file
+diff --git a/django/core/cache/backends/db.py b/django/core/cache/backends/db.py
+index 33c79c5a14..45383f9ba4 100644
+--- a/django/core/cache/backends/db.py
++++ b/django/core/cache/backends/db.py
+@@ -267,9 +267,11 @@ class DatabaseCache(BaseDatabaseCache):
+                 cursor.execute(
+                     connection.ops.cache_key_culling_sql() % table,
+                     [cull_num])
+-                cursor.execute("DELETE FROM %s "
+-                               "WHERE cache_key < %%s" % table,
+-                               [cursor.fetchone()[0]])
++                row = cursor.fetchone()
++                if row is not None:
++                    cursor.execute("DELETE FROM %s "
++                                   "WHERE cache_key < %%s" % table,
++                                   [row[0]])
+ 
+     def clear(self):
+         db = router.db_for_write(self.cache_model_class)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..1aa8dd0720
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,137 @@
++import os
++import django
++from django.conf import settings
++from django.core.cache import caches
++from django.core.management import call_command
++from django.db import connection
++import sys
++from unittest.mock import patch
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'tests.cache',
++        ],
++        CACHES={
++            'default': {
++                'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
++                'LOCATION': 'cache_table',
++                'OPTIONS': {
++                    'MAX_ENTRIES': 10,
++                    'CULL_FREQUENCY': 2,
++                }
++            }
++        },
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create the cache table
++call_command('createcachetable')
++
++# Get the cache
++cache = caches['default']
++
++# Let's directly examine the _cull method to understand the issue
++print("Examining the _cull method...")
++from django.core.cache.backends.db import DatabaseCache
++import inspect
++
++# Print the source code of the _cull method
++print(inspect.getsource(DatabaseCache._cull))
++
++# Now let's try to create a situation where the cache table exists but has no rows
++# First, let's add some items to the cache
++print("\nAdding items to cache...")
++for i in range(5):
++    cache.set(f'key{i}', f'value{i}')
++
++# Now let's try to call _cull
++print("\nTesting _cull with populated cache...")
++try:
++    with connection.cursor() as cursor:
++        cache._cull('default', cursor, django.utils.timezone.now())
++    print("No error occurred with populated cache")
++except Exception as e:
++    print(f"Error occurred with populated cache: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Now let's try to modify the database directly to create a problematic state
++# We'll delete all rows but keep the table structure
++print("\nDeleting all rows from cache table...")
++with connection.cursor() as cursor:
++    cursor.execute("DELETE FROM cache_table")
++
++# Now let's try to call _cull again with an empty table
++print("\nTesting _cull with empty table but existing table structure...")
++try:
++    with connection.cursor() as cursor:
++        cache._cull('default', cursor, django.utils.timezone.now())
++    print("No error occurred with empty table - the issue might be fixed or not reproducible")
++except Exception as e:
++    print(f"Error occurred with empty table: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
++
++# Let's try to directly simulate the issue by creating a test case
++print("\nDirectly simulating the issue by creating a test case...")
++
++# Create a custom cursor class that will return None for the second fetchone call
++class ProblematicCursor:
++    def __init__(self):
++        self.call_count = 0
++
++    def execute(self, sql, params=None):
++        print(f"Executing SQL: {sql} with params: {params}")
++        self.call_count += 1
++        # For the second execute (COUNT(*)), return a row
++        if self.call_count == 2:
++            return self
++        # For the fourth execute (the one that fails), we'll make fetchone return None
++        elif self.call_count == 4:
++            return None_returning_cursor
++
++    def fetchone(self):
++        # For the second call (COUNT(*)) return a value
++        if self.call_count == 2:
++            return [10]  # Simulate 10 rows in the table
++        # For the fourth call (MIN(cache_key)), return None to simulate the issue
++        elif self.call_count == 4:
++            return None
++        return None
++
++# A cursor that always returns None for fetchone
++class NoneReturningCursor:
++    def execute(self, sql, params=None):
++        print(f"Executing SQL: {sql} with params: {params}")
++        return self
++
++    def fetchone(self):
++        return None
++
++none_returning_cursor = NoneReturningCursor()
++
++# Now let's try to call _cull with our problematic cursor
++print("\nTesting _cull with problematic cursor that returns None for the critical fetchone call...")
++try:
++    # We need to patch the connections dictionary to return our problematic cursor
++    with patch('django.db.connections.__getitem__', return_value='default'):
++        with patch('django.db.connection.cursor', return_value=ProblematicCursor()):
++            cache._cull('default', ProblematicCursor(), django.utils.timezone.now())
++    print("No error occurred with problematic cursor")
++except Exception as e:
++    print(f"Error occurred with problematic cursor: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..77ba67d0c4
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,86 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.core.cache.backends.db import DatabaseCache
++
++# Create a minimal mock class to simulate the issue
++class MockConnection:
++    def __init__(self):
++        self.ops = MockOps()
++
++class MockOps:
++    def quote_name(self, name):
++        return f'"{name}"'
++
++    def adapt_datetimefield_value(self, value):
++        return "2023-01-01 00:00:00"
++
++    def cache_key_culling_sql(self):
++        return "SELECT MIN(cache_key) FROM %s"
++
++class MockCursor:
++    def __init__(self):
++        self.call_count = 0
++
++    def execute(self, sql, params=None):
++        self.call_count += 1
++        print(f"Call {self.call_count}: {sql} {params}")
++        return self
++
++    def fetchone(self):
++        # For the second call (COUNT(*)) return a value
++        if self.call_count == 2:
++            return [10]  # Simulate 10 rows in the table
++        # For the fourth call (MIN(cache_key)), return None to simulate the issue
++        elif self.call_count == 4:
++            return None
++        return [1]  # Default return value
++
++# Create a mock connections dictionary
++class MockConnections(dict):
++    def __getitem__(self, key):
++        return "default"
++
++# Create a minimal DatabaseCache instance
++cache = DatabaseCache("cache_table", {"MAX_ENTRIES": 10, "CULL_FREQUENCY": 2})
++
++# Import the connections object from django.db
++from django.db import connections as db_connections
++
++# Save the original connections
++original_connections = db_connections
++
++try:
++    # Replace with our mocks
++    import django.db
++    django.db.connections = MockConnections()
++    django.db.connections["default"] = MockConnection()
++
++    # Import timezone now
++    from django.utils import timezone
++    now = timezone.now()
++
++    # Call _cull directly
++    print("Calling _cull with mock objects...")
++    cache._cull("default", MockCursor(), now)
++
++    print("No error occurred - the issue might be fixed or not reproducible")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..7b1f1d32c9
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,90 @@
++"""
++Test to verify the fix for the 'NoneType' object is not subscriptable error in cache.backends.db._cull
++"""
++
++import sys
++sys.path.insert(0, '/testbed')
++
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.core.cache.backends.db import DatabaseCache
++from django.utils import timezone
++
++# Create a minimal mock class to simulate the issue
++class MockConnection:
++    def __init__(self):
++        self.ops = MockOps()
++
++class MockOps:
++    def quote_name(self, name):
++        return f'"{name}"'
++
++    def adapt_datetimefield_value(self, value):
++        return "2023-01-01 00:00:00"
++
++    def cache_key_culling_sql(self):
++        return "SELECT MIN(cache_key) FROM %s"
++
++class MockCursor:
++    def __init__(self):
++        self.call_count = 0
++
++    def execute(self, sql, params=None):
++        self.call_count += 1
++        print(f"Call {self.call_count}: {sql} {params}")
++        return self
++
++    def fetchone(self):
++        # For the second call (COUNT(*)) return a value
++        if self.call_count == 2:
++            return [10]  # Simulate 10 rows in the table
++        # For the fourth call (MIN(cache_key)), return None to simulate the issue
++        elif self.call_count == 4:
++            return None
++        return [1]  # Default return value
++
++# Create a mock connections dictionary
++class MockConnections(dict):
++    def __getitem__(self, key):
++        return "default"
++
++# Create a minimal DatabaseCache instance
++cache = DatabaseCache("cache_table", {"MAX_ENTRIES": 10, "CULL_FREQUENCY": 2})
++
++# Import the connections object from django.db
++from django.db import connections as db_connections
++
++# Save the original connections
++original_connections = db_connections
++
++try:
++    # Replace with our mocks
++    import django.db
++    django.db.connections = MockConnections()
++    django.db.connections["default"] = MockConnection()
++
++    # Get the current time
++    now = timezone.now()
++
++    # Call _cull directly
++    print("Calling _cull with mock objects...")
++    cache._cull("default", MockCursor(), now)
++
++    print("Fix verified: No error occurred when cursor.fetchone() returns None")
++except Exception as e:
++    print(f"Error occurred: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file

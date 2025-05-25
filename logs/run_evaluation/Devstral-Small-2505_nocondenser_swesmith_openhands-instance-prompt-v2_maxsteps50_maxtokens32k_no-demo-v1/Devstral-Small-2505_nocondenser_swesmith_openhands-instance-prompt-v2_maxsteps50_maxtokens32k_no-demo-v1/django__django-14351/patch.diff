@@ -1,0 +1,149 @@
+diff --git a/test_q_or_issue.py b/test_q_or_issue.py
+new file mode 100644
+index 0000000000..7ba5a9aeb9
+--- /dev/null
++++ b/test_q_or_issue.py
+@@ -0,0 +1,142 @@
++import os
++import django
++from django.db.models import Q, Count
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++from django.db import models
++
++# Define simple models for testing
++class ManagementAgent(models.Model):
++    name = models.CharField(max_length=100)
++
++class PropertyGroup(models.Model):
++    name = models.CharField(max_length=100)
++    management_agents = models.ManyToManyField(ManagementAgent, related_name='property_groups')
++
++class TicketRatingCumulativeMovingAverage(models.Model):
++    agent = models.ForeignKey(ManagementAgent, on_delete=models.CASCADE)
++    # Other fields...
++
++# Create test data
++def create_test_data():
++    # Clear existing data
++    TicketRatingCumulativeMovingAverage.objects.all().delete()
++    PropertyGroup.objects.all().delete()
++    ManagementAgent.objects.all().delete()
++
++    # Create agents
++    agent1 = ManagementAgent.objects.create(name='Agent 1')
++    agent2 = ManagementAgent.objects.create(name='Agent 2')
++
++    # Create property groups
++    pg1 = PropertyGroup.objects.create(name='PG 1')
++    pg2 = PropertyGroup.objects.create(name='PG 2')
++    pg3 = PropertyGroup.objects.create(name='PG 3')
++
++    # Assign property groups to agents
++    pg1.management_agents.add(agent1)
++    pg2.management_agents.add(agent1)
++    pg3.management_agents.add(agent2)
++
++    # Create ticket ratings
++    tr1 = TicketRatingCumulativeMovingAverage.objects.create(agent=agent1)
++    tr2 = TicketRatingCumulativeMovingAverage.objects.create(agent=agent2)
++
++    return agent1, agent2, [pg1, pg2, pg3]
++
++def test_q_or_with_in():
++    """Test the Q object with OR and __in lookup."""
++    agent1, agent2, property_groups = create_test_data()
++
++    # This is the problematic query
++    queryset = TicketRatingCumulativeMovingAverage.objects.annotate(
++        property_groups_count=Count("agent__property_groups")
++    )
++
++    try:
++        # This should work but causes the error
++        results = queryset.filter(
++            Q(agent__property_groups__in=property_groups) |
++            Q(agent__property_groups_count=0)
++        ).distinct()
++
++        print("Query with __in succeeded!")
++        print(f"Found {results.count()} results")
++        for result in results:
++            print(f" - {result.id}")
++
++        return True
++    except Exception as e:
++        print(f"Query with __in failed with error: {e}")
++        return False
++
++def test_q_or_with_id_in():
++    """Test the Q object with OR and __id__in lookup (workaround)."""
++    agent1, agent2, property_groups = create_test_data()
++
++    # This is the workaround that works
++    queryset = TicketRatingCumulativeMovingAverage.objects.annotate(
++        property_groups_count=Count("agent__property_groups")
++    )
++
++    try:
++        # This works fine
++        results = queryset.filter(
++            Q(agent__property_groups__id__in=property_groups.values_list("id", flat=True)) |
++            Q(agent__property_groups_count=0)
++        ).distinct()
++
++        print("\nQuery with __id__in succeeded!")
++        print(f"Found {results.count()} results")
++        for result in results:
++            print(f" - {result.id}")
++
++        return True
++    except Exception as e:
++        print(f"Query with __id__in failed with error: {e}")
++        return False
++
++if __name__ == "__main__":
++    # Create database tables
++    from django.db import connection
++    connection.cursor().execute("""
++    CREATE TABLE IF NOT EXISTS manager_managementagent (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        name VARCHAR(100)
++    )
++    """)
++
++    connection.cursor().execute("""
++    CREATE TABLE IF NOT EXISTS property_propertygroup (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        name VARCHAR(100)
++    )
++    """)
++
++    connection.cursor().execute("""
++    CREATE TABLE IF NOT EXISTS manager_managementagentpropertygroup (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        management_agent_id INTEGER,
++        property_group_id INTEGER,
++        FOREIGN KEY (management_agent_id) REFERENCES manager_managementagent(id),
++        FOREIGN KEY (property_group_id) REFERENCES property_propertygroup(id)
++    )
++    """)
++
++    connection.cursor().execute("""
++    CREATE TABLE IF NOT EXISTS thing_managerticketratingcumulativemovingaverage (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        agent_id INTEGER,
++        FOREIGN KEY (agent_id) REFERENCES manager_managementagent(id)
++    )
++    """)
++
++    # Run tests
++    print("Testing Q object with OR and __in lookup...")
++    test_q_or_with_in()
++
++    print("\nTesting Q object with OR and __id__in lookup (workaround)...")
++    test_q_or_with_id_in()
+\ No newline at end of file

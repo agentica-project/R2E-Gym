@@ -1,0 +1,212 @@
+diff --git a/django/core/management/commands/loaddata.py b/django/core/management/commands/loaddata.py
+index ac97f13161..52cebe0fde 100644
+--- a/django/core/management/commands/loaddata.py
++++ b/django/core/management/commands/loaddata.py
+@@ -362,7 +362,8 @@ class Command(BaseCommand):
+         """
+         dirs = []
+         fixture_dirs = settings.FIXTURE_DIRS
+-        if len(fixture_dirs) != len(set(fixture_dirs)):
++        # Convert all paths to strings for duplicate detection
++        if len(fixture_dirs) != len(set(str(d) for d in fixture_dirs)):
+             raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
+         for app_config in apps.get_app_configs():
+             app_label = app_config.label
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..ebf43d03b5
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,65 @@
++import os
++from pathlib import Path
++import django
++from django.conf import settings
++from django.core.exceptions import ImproperlyConfigured
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Get the current directory
++cur_dir = os.path.dirname(os.path.abspath(__file__))
++
++# Create a Path object and a string representing the same directory
++path_obj = Path(cur_dir) / "tests" / "fixtures_regress" / "fixtures_1"
++path_str = str(path_obj)
++
++# Test with duplicate string paths - should raise ImproperlyConfigured
++print("Testing with duplicate string paths:")
++try:
++    settings.FIXTURE_DIRS = [path_str, path_str]
++    # Check for duplicates directly
++    if len(settings.FIXTURE_DIRS) != len(set(settings.FIXTURE_DIRS)):
++        raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
++    print("No exception raised - this is unexpected!")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
++
++# Test with duplicate Path objects - should raise ImproperlyConfigured but doesn't
++print("\nTesting with duplicate Path objects:")
++try:
++    settings.FIXTURE_DIRS = [path_obj, path_obj]
++    # Check for duplicates directly
++    if len(settings.FIXTURE_DIRS) != len(set(settings.FIXTURE_DIRS)):
++        raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
++    print("No exception raised - this is unexpected!")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
++
++# Test with a mix of Path objects and string paths representing the same directory
++print("\nTesting with mix of Path and string:")
++try:
++    settings.FIXTURE_DIRS = [path_obj, path_str]
++    # Print the actual fixture_dirs value to see what's happening
++    print(f"FIXTURE_DIRS: {settings.FIXTURE_DIRS}")
++    print(f"len(FIXTURE_DIRS): {len(settings.FIXTURE_DIRS)}")
++    print(f"len(set(FIXTURE_DIRS)): {len(set(settings.FIXTURE_DIRS))}")
++    # Check for duplicates directly
++    if len(settings.FIXTURE_DIRS) != len(set(settings.FIXTURE_DIRS)):
++        raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
++    print("No exception raised - this is the bug!")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
+\ No newline at end of file
+diff --git a/reproduce_issue_fixed.py b/reproduce_issue_fixed.py
+new file mode 100644
+index 0000000000..d8dd480ec5
+--- /dev/null
++++ b/reproduce_issue_fixed.py
+@@ -0,0 +1,65 @@
++import os
++from pathlib import Path
++import django
++from django.conf import settings
++from django.core.exceptions import ImproperlyConfigured
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Get the current directory
++cur_dir = os.path.dirname(os.path.abspath(__file__))
++
++# Create a Path object and a string representing the same directory
++path_obj = Path(cur_dir) / "tests" / "fixtures_regress" / "fixtures_1"
++path_str = str(path_obj)
++
++# Test with duplicate string paths - should raise ImproperlyConfigured
++print("Testing with duplicate string paths:")
++try:
++    settings.FIXTURE_DIRS = [path_str, path_str]
++    # Check for duplicates using the fixed logic
++    if len(settings.FIXTURE_DIRS) != len(set(str(d) for d in settings.FIXTURE_DIRS)):
++        raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
++    print("No exception raised - this is unexpected!")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
++
++# Test with duplicate Path objects - should raise ImproperlyConfigured
++print("\nTesting with duplicate Path objects:")
++try:
++    settings.FIXTURE_DIRS = [path_obj, path_obj]
++    # Check for duplicates using the fixed logic
++    if len(settings.FIXTURE_DIRS) != len(set(str(d) for d in settings.FIXTURE_DIRS)):
++        raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
++    print("No exception raised - this is unexpected!")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
++
++# Test with a mix of Path objects and string paths representing the same directory
++print("\nTesting with mix of Path and string:")
++try:
++    settings.FIXTURE_DIRS = [path_obj, path_str]
++    # Print the actual fixture_dirs value to see what's happening
++    print(f"FIXTURE_DIRS: {settings.FIXTURE_DIRS}")
++    print(f"len(FIXTURE_DIRS): {len(settings.FIXTURE_DIRS)}")
++    print(f"len(set(str(d) for d in settings.FIXTURE_DIRS)): {len(set(str(d) for d in settings.FIXTURE_DIRS))}")
++    # Check for duplicates using the fixed logic
++    if len(settings.FIXTURE_DIRS) != len(set(str(d) for d in settings.FIXTURE_DIRS)):
++        raise ImproperlyConfigured("settings.FIXTURE_DIRS contains duplicates.")
++    print("No exception raised - this is the bug!")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..1dd090581b
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,47 @@
++import os
++from pathlib import Path
++import django
++from django.conf import settings
++from django.core.exceptions import ImproperlyConfigured
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Import the Command class with our fix
++from django.core.management.commands.loaddata import Command
++
++# Get the current directory
++cur_dir = os.path.dirname(os.path.abspath(__file__))
++
++# Create a Path object and a string representing the same directory
++path_obj = Path(cur_dir) / "tests" / "fixtures_regress" / "fixtures_1"
++path_str = str(path_obj)
++
++# Test with a mix of Path objects and string paths representing the same directory
++print("Testing with mix of Path and string using the actual Command class:")
++try:
++    settings.FIXTURE_DIRS = [path_obj, path_str]
++    # Create a mock Command instance with app_label set to avoid other errors
++    cmd = Command()
++    cmd.app_label = None
++
++    # This will call the fixture_dirs property with our fix
++    dirs = cmd.fixture_dirs
++    print("Successfully got fixture_dirs without duplicate detection error")
++except ImproperlyConfigured as e:
++    print(f"Correctly raised: {e}")
++except Exception as e:
++    print(f"Unexpected error: {e}")
+\ No newline at end of file

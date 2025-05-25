@@ -1,0 +1,85 @@
+diff --git a/django/db/models/fields/json.py b/django/db/models/fields/json.py
+index a249f4cdbf..66c039c6e4 100644
+--- a/django/db/models/fields/json.py
++++ b/django/db/models/fields/json.py
+@@ -81,7 +81,7 @@ class JSONField(CheckFieldDefaultMixin, Field):
+     def get_prep_value(self, value):
+         if value is None:
+             return value
+-        return json.dumps(value, cls=self.encoder)
++        return json.dumps(value, cls=self.encoder, ensure_ascii=False)
+ 
+     def get_transform(self, name):
+         transform = super().get_transform(name)
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 9de2c60b35..8ba0013871 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -1258,7 +1258,7 @@ class JSONField(CharField):
+     def prepare_value(self, value):
+         if isinstance(value, InvalidJSONInput):
+             return value
+-        return json.dumps(value, cls=self.encoder)
++        return json.dumps(value, cls=self.encoder, ensure_ascii=False)
+ 
+     def has_changed(self, initial, data):
+         if super().has_changed(initial, data):
+@@ -1266,6 +1266,6 @@ class JSONField(CharField):
+         # For purposes of seeing whether something has changed, True isn't the
+         # same as 1 and the order of keys doesn't matter.
+         return (
+-            json.dumps(initial, sort_keys=True, cls=self.encoder) !=
+-            json.dumps(self.to_python(data), sort_keys=True, cls=self.encoder)
++            json.dumps(initial, sort_keys=True, cls=self.encoder, ensure_ascii=False) !=
++            json.dumps(self.to_python(data), sort_keys=True, cls=self.encoder, ensure_ascii=False)
+         )
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/reproduce_issue2.py b/reproduce_issue2.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_json.py b/test_json.py
+new file mode 100644
+index 0000000000..6ba0a56fec
+--- /dev/null
++++ b/test_json.py
+@@ -0,0 +1,15 @@
++#!/usr/bin/env python
++# -*- coding: utf-8 -*-
++
++import json
++
++# Original behavior - ASCII encoding (default)
++print("Original behavior (ASCII encoding):")
++chinese_text = "\u4e2d\u56fd"  # This is "中国" in Unicode escape sequence
++print(f"Original text: {chinese_text}")
++print(f"json.dumps result: {json.dumps(chinese_text)}")
++
++# With ensure_ascii=False
++print("\nFixed behavior (UTF-8 encoding):")
++print(f"Original text: {chinese_text}")
++print(f"json.dumps result: {json.dumps(chinese_text, ensure_ascii=False)}")
+diff --git a/test_json2.py b/test_json2.py
+new file mode 100644
+index 0000000000..bca52bfea2
+--- /dev/null
++++ b/test_json2.py
+@@ -0,0 +1,14 @@
++#!/usr/bin/env python
++import json
++
++# Original behavior - ASCII encoding (default)
++print("Original behavior (ASCII encoding):")
++chinese_text = "\u4e2d\u56fd"  # This is "中国" in Unicode escape sequence
++print("Original text:", chinese_text)
++print("json.dumps result:", json.dumps(chinese_text))
++
++# With ensure_ascii=False
++print("
++Fixed behavior (UTF-8 encoding):")
++print("Original text:", chinese_text)
++print("json.dumps result:", json.dumps(chinese_text, ensure_ascii=False))
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2

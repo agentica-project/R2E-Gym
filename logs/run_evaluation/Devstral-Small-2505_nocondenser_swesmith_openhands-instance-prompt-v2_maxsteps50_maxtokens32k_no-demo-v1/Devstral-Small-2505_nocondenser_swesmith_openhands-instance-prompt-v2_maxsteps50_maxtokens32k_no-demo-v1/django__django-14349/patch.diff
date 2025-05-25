@@ -1,0 +1,95 @@
+diff --git a/django/core/validators.py b/django/core/validators.py
+index a385819510..0031b1cd78 100644
+--- a/django/core/validators.py
++++ b/django/core/validators.py
+@@ -106,6 +106,11 @@ class URLValidator(RegexValidator):
+         if scheme not in self.schemes:
+             raise ValidationError(self.message, code=self.code, params={'value': value})
+ 
++        # Reject URLs containing whitespace characters (newlines, tabs, etc.)
++        # that might be stripped by urlsplit in Python versions with bpo-43882 fix
++        if '\n' in value or '\r' in value or '\t' in value:
++            raise ValidationError(self.message, code=self.code, params={'value': value})
++
+         # Then check full URL
+         try:
+             super().__call__(value)
+diff --git a/reproduce_url_validator_issue.py b/reproduce_url_validator_issue.py
+new file mode 100644
+index 0000000000..251e6de628
+--- /dev/null
++++ b/reproduce_url_validator_issue.py
+@@ -0,0 +1,23 @@
++import sys
++from django.core.validators import URLValidator
++from django.core.exceptions import ValidationError
++
++def test_url_with_newline():
++    validator = URLValidator()
++    test_urls = [
++        'http://www.djangoproject.com/\n',
++        'http://[::ffff:192.9.5.5]\n'
++    ]
++
++    print(f"Python version: {sys.version}")
++    print("Testing URLs with newline characters:")
++
++    for url in test_urls:
++        try:
++            validator(url)
++            print(f"✓ URL passed validation: {repr(url)}")
++        except ValidationError:
++            print(f"✗ URL failed validation (expected): {repr(url)}")
++
++if __name__ == "__main__":
++    test_url_with_newline()
+\ No newline at end of file
+diff --git a/test_url_validator_fix.py b/test_url_validator_fix.py
+new file mode 100644
+index 0000000000..fc7353a0d2
+--- /dev/null
++++ b/test_url_validator_fix.py
+@@ -0,0 +1,42 @@
++import unittest
++from django.core.validators import URLValidator
++from django.core.exceptions import ValidationError
++
++class TestURLValidatorFix(unittest.TestCase):
++    def test_url_with_newline(self):
++        """Test that URLs with newline characters are rejected."""
++        validator = URLValidator()
++
++        # These URLs should fail validation
++        invalid_urls = [
++            'http://www.djangoproject.com/\n',
++            'http://[::ffff:192.9.5.5]\n',
++            'http://example.com\r',
++            'http://example.com\t',
++        ]
++
++        for url in invalid_urls:
++            with self.subTest(url=url):
++                with self.assertRaises(ValidationError):
++                    validator(url)
++
++    def test_valid_urls(self):
++        """Test that valid URLs still pass validation."""
++        validator = URLValidator()
++
++        # These URLs should pass validation
++        valid_urls = [
++            'http://www.djangoproject.com',
++            'http://[::ffff:192.9.5.5]',
++            'http://example.com/path?query=value',
++        ]
++
++        for url in valid_urls:
++            with self.subTest(url=url):
++                try:
++                    validator(url)
++                except ValidationError:
++                    self.fail(f"URL validation failed for valid URL: {url}")
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file

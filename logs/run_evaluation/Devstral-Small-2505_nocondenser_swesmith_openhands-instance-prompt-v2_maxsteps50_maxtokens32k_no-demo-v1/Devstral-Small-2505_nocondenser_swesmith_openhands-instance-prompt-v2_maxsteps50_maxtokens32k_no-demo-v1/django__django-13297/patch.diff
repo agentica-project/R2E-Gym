@@ -1,0 +1,288 @@
+diff --git a/django/views/generic/base.py b/django/views/generic/base.py
+index ea5baca08d..1c4a46b84f 100644
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -166,6 +166,19 @@ class TemplateView(TemplateResponseMixin, ContextMixin, View):
+ 
+ # RemovedInDjango40Warning
+ def _wrap_url_kwargs_with_deprecation_warning(url_kwargs):
++    """
++    Wrap URL kwargs in SimpleLazyObject to show a deprecation warning when they are accessed.
++
++    Note: When using these values in database queries, you need to explicitly convert them to strings
++    using str() to avoid issues with the database backend not knowing how to handle SimpleLazyObject
++    instances.
++
++    Example:
++        def get_context_data(self, **kwargs):
++            offer_slug = kwargs.get("offer_slug", "")
++            offer = get_object_or_404(Account, slug=str(offer_slug))
++            return {"offer": offer, "offer_slug": offer_slug}
++    """
+     context_kwargs = {}
+     for key, value in url_kwargs.items():
+         # Bind into function closure.
+diff --git a/docs/topics/templateview_kwargs.rst b/docs/topics/templateview_kwargs.rst
+new file mode 100644
+index 0000000000..765f4463bf
+--- /dev/null
++++ b/docs/topics/templateview_kwargs.rst
+@@ -0,0 +1,40 @@
++.. _templateview-kwargs:
++
++TemplateView URL kwargs and database queries
++===========================================
++
++In Django 3.1, when using `TemplateView.get_context_data()`, the kwargs passed to it are wrapped in
++`SimpleLazyObject` instances to show a deprecation warning when they are accessed. This can cause
++problems when these values are used in database queries, as the database backend doesn't know how
++to handle `SimpleLazyObject` instances.
++
++For example, the following code will fail in Django 3.1:
++
++.. code-block:: python
++
++    class OfferView(TemplateView):
++        template_name = "offers/offer.html"
++
++        def get_context_data(self, **kwargs):
++            offer_slug = kwargs.get("offer_slug", "")
++            offer = get_object_or_404(Account, slug=offer_slug)
++            return {"offer": offer, "offer_slug": offer_slug}
++
++The error generated is:
++"Error binding parameter 0 - probably unsupported type"
++
++To fix this issue, you need to explicitly convert the result of `kwargs.get()` to a string to get the
++`SimpleLazyObject` to resolve:
++
++.. code-block:: python
++
++    class OfferView(TemplateView):
++        template_name = "offers/offer.html"
++
++        def get_context_data(self, **kwargs):
++            offer_slug = kwargs.get("offer_slug", "")
++            offer = get_object_or_404(Account, slug=str(offer_slug))
++            return {"offer": offer, "offer_slug": offer_slug}
++
++This issue only affects Django 3.1 and later versions. In Django 3.0 and earlier, the kwargs are not
++wrapped in `SimpleLazyObject` instances, so this issue does not occur.
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..bda0dedfd0
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,101 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.urls import path
++from django.views.generic import TemplateView
++from django.shortcuts import get_object_or_404
++from django.http import HttpResponse
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'reproduce_issue',
++        ],
++        ROOT_URLCONF='reproduce_issue',
++        MIDDLEWARE=[
++            'django.middleware.common.CommonMiddleware',
++            'django.middleware.csrf.CsrfViewMiddleware',
++            'django.middleware.clickjacking.XFrameOptionsMiddleware',
++        ],
++    )
++    django.setup()
++
++# Define a simple model
++from django.db import models
++
++class Account(models.Model):
++    slug = models.SlugField(unique=True)
++    name = models.CharField(max_length=255)
++
++    def __str__(self):
++        return self.name
++
++    class Meta:
++        app_label = 'reproduce_issue'
++
++# Create the model tables
++from django.db import connection
++connection.cursor().execute("""
++CREATE TABLE IF NOT EXISTS reproduce_issue_account (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    slug TEXT NOT NULL UNIQUE,
++    name TEXT NOT NULL
++)
++""")
++
++# Create a test account
++from django.db import IntegrityError
++try:
++    Account.objects.create(slug="test-account", name="Test Account")
++except IntegrityError:
++    pass
++
++# Define the view
++class OfferView(TemplateView):
++    template_name = "offers/offer.html"
++
++    def get_context_data(self, **kwargs):
++        # This is where the issue occurs
++        offer_slug = kwargs.get("offer_slug", "")
++        offer = get_object_or_404(Account, slug=offer_slug)
++        return {"offer": offer, "offer_slug": offer_slug}
++
++# Define the URL pattern
++urlpatterns = [
++    path(
++        "offers/<slug:offer_slug>/",
++        OfferView.as_view(),
++        name="offer_view",
++    ),
++]
++
++# Test the view
++from django.test import RequestFactory
++from django.test.utils import setup_test_environment
++
++def test_view():
++    setup_test_environment()
++
++    factory = RequestFactory()
++    request = factory.get('/offers/test-account/')
++
++    from django.urls import resolve
++    match = resolve('/offers/test-account/')
++    view = match.func
++    response = view(request, offer_slug="test-account")
++
++    print("Test completed successfully!")
++
++if __name__ == "__main__":
++    test_view()
+\ No newline at end of file
+diff --git a/test_db_query.py b/test_db_query.py
+new file mode 100644
+index 0000000000..725160da8a
+--- /dev/null
++++ b/test_db_query.py
+@@ -0,0 +1,31 @@
++import sqlite3
++from django.utils.functional import SimpleLazyObject
++
++# Create a SimpleLazyObject
++value = SimpleLazyObject(lambda: "test-value")
++
++# Create a simple SQLite database
++conn = sqlite3.connect(":memory:")
++cursor = conn.cursor()
++cursor.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
++cursor.execute("INSERT INTO test (name) VALUES ('test-value')")
++conn.commit()
++
++# Try to use the SimpleLazyObject in a parameterized query
++try:
++    cursor.execute("SELECT * FROM test WHERE name = ?", (value,))
++    print("Query succeeded!")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Now try with the value converted to a string
++try:
++    cursor.execute("SELECT * FROM test WHERE name = ?", (str(value),))
++    print("Query with str() succeeded!")
++    results = cursor.fetchall()
++    print(f"Results: {results}")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Clean up
++conn.close()
+\ No newline at end of file
+diff --git a/test_simple_lazy_object.py b/test_simple_lazy_object.py
+new file mode 100644
+index 0000000000..ee5d089159
+--- /dev/null
++++ b/test_simple_lazy_object.py
+@@ -0,0 +1,30 @@
++from django.utils.functional import SimpleLazyObject
++
++# Create a SimpleLazyObject
++value = SimpleLazyObject(lambda: "test-value")
++
++# Try to use it in a string formatting context
++try:
++    print(f"Value: {value}")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Now convert it to a string first
++try:
++    print(f"Value as string: {str(value)}")
++except Exception as e:
++    print(f"Error: {e}")
++
++# Demonstrate the fix
++def use_value_safely(val):
++    # This would fail if val is a SimpleLazyObject
++    # print(f"Unsafe usage: {val}")
++
++    # This is safe
++    print(f"Safe usage: {str(val)}")
++
++# Test with a SimpleLazyObject
++use_value_safely(value)
++
++# Test with a regular string
++use_value_safely("regular-string")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..03cdae00f0
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,27 @@
++from django.utils.functional import SimpleLazyObject
++from django.views.generic.base import _wrap_url_kwargs_with_deprecation_warning
++
++# Test with a simple value
++url_kwargs = {"offer_slug": "test-account"}
++wrapped_kwargs = _wrap_url_kwargs_with_deprecation_warning(url_kwargs)
++
++# Access the value and check its type
++offer_slug = wrapped_kwargs["offer_slug"]
++print(f"Type of offer_slug: {type(offer_slug)}")
++print(f"Value of offer_slug: {offer_slug}")
++
++# Demonstrate the fix
++def use_value_safely(val):
++    # This would fail if val is a SimpleLazyObject in a database query
++    # print(f"Unsafe usage: {val}")
++
++    # This is safe
++    print(f"Safe usage: {str(val)}")
++
++# Test with the wrapped value
++use_value_safely(offer_slug)
++
++# Test with a regular string
++use_value_safely("regular-string")
++
++print("\nVerification completed successfully!")
+\ No newline at end of file

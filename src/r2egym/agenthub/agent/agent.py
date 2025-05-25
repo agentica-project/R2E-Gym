@@ -38,6 +38,7 @@ class AgentArgs:
     llm_name: str
     llm_base_url: Optional[str] = "http://localhost:8000/v1"  # None
     demo_file: Optional[Path] = None
+    use_demo: Optional[bool] = False
     other_args: Optional[Dict[str, Any]] = None  # To handle extra configurations
 
     @classmethod
@@ -139,7 +140,7 @@ class Agent:
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = 65536 # 32768
+        MAX_TOKENS =32768 #65536 # 32768
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -419,6 +420,7 @@ class Agent:
             problem_statement=problem_statement,
             gt_patch=gt_patch,
             working_dir='/testbed',
+            base_commit=env.runtime.ds['base_commit'],
             test_patch_hint=metadata.get("test_patch_hint", ""),
             candidate_patch=metadata.get("candidate_patch", ""),
             candidate_patch_correctness=(
@@ -428,6 +430,12 @@ class Agent:
             ),
         )
         self.logger.info(f"User Prompt: {user_prompt}")
+
+        if self.args.use_demo:
+            with open(self.args.demo_file, "r") as file:
+                demo = file.read()
+            user_prompt = f"{demo}\n\n{user_prompt}"
+        self.logger.info(f"User Prompt with demo: {user_prompt}")
 
         # initialize the history
         self.history = [

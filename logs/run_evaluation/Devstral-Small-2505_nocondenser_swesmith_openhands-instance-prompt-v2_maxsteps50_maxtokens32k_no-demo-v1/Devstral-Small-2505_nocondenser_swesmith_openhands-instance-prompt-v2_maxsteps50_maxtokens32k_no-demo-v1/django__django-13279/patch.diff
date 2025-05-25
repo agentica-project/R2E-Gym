@@ -1,0 +1,155 @@
+diff --git a/django/contrib/sessions/backends/base.py b/django/contrib/sessions/backends/base.py
+index b5453160a5..fb13f5900d 100644
+--- a/django/contrib/sessions/backends/base.py
++++ b/django/contrib/sessions/backends/base.py
+@@ -106,14 +106,32 @@ class SessionBase:
+         key_salt = "django.contrib.sessions" + self.__class__.__name__
+         return salted_hmac(key_salt, value).hexdigest()
+ 
++    def _legacy_encode(self, session_dict):
++        """Return the given session dictionary serialized and encoded using the legacy format."""
++        serialized = self.serializer().dumps(session_dict)
++        hash = self._hash(serialized)
++        return base64.b64encode(f"{hash}:{serialized}".encode()).decode()
++
+     def encode(self, session_dict):
+         "Return the given session dictionary serialized and encoded as a string."
++        from django.conf import settings
++
++        # Use legacy encoding/decoding when DEFAULT_HASHING_ALGORITHM is 'sha1'
++        if getattr(settings, 'DEFAULT_HASHING_ALGORITHM', None) == 'sha1':
++            return self._legacy_encode(session_dict)
++
+         return signing.dumps(
+             session_dict, salt=self.key_salt, serializer=self.serializer,
+             compress=True,
+         )
+ 
+     def decode(self, session_data):
++        from django.conf import settings
++
++        # Use legacy encoding/decoding when DEFAULT_HASHING_ALGORITHM is 'sha1'
++        if getattr(settings, 'DEFAULT_HASHING_ALGORITHM', None) == 'sha1':
++            return self._legacy_decode(session_data)
++
+         try:
+             return signing.loads(session_data, salt=self.key_salt, serializer=self.serializer)
+         # RemovedInDjango40Warning: when the deprecation ends, handle here
+diff --git a/reproduce_session_issue.py b/reproduce_session_issue.py
+new file mode 100644
+index 0000000000..42c6ad7e11
+--- /dev/null
++++ b/reproduce_session_issue.py
+@@ -0,0 +1,111 @@
++import os
++import django
++from django.conf import settings
++import sys
++import base64
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.sessions',
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    SECRET_KEY='test-secret-key',
++    DEFAULT_HASHING_ALGORITHM='sha1',  # Start with sha1
++    SESSION_ENGINE='django.contrib.sessions.backends.db',
++)
++
++django.setup()
++
++# Create tables
++from django.core.management import call_command
++call_command('migrate', 'sessions', verbosity=0)
++
++from django.contrib.sessions.backends.db import SessionStore
++from django.contrib.sessions.serializers import JSONSerializer
++from django.utils.crypto import salted_hmac
++
++# Create a session with some data
++session = SessionStore()
++session['test_key'] = 'test_value'
++session.save()
++
++# Get the session data from the database
++from django.contrib.sessions.models import Session
++db_session = Session.objects.get(session_key=session.session_key)
++session_data = db_session.session_data
++
++print(f"Session data with sha1 algorithm:")
++print(session_data)
++
++# Create a new session with the same session key
++new_session = SessionStore(session.session_key)
++decoded_data = new_session._get_session()
++
++print(f"Decoded session data with sha1:")
++print(decoded_data)
++
++# Now change to sha256 and try to decode the same session data
++print("\nChanging algorithm to sha256...")
++settings.DEFAULT_HASHING_ALGORITHM = 'sha256'
++
++# Try to decode the session data encoded with sha1 using sha256
++new_session_sha256 = SessionStore(session.session_key)
++decoded_data_sha256 = new_session_sha256._get_session()
++
++print(f"Decoded session data (encoded with sha1, decoded with sha256):")
++print(decoded_data_sha256)
++
++# Create a new session with sha256
++session_sha256 = SessionStore()
++session_sha256['test_key'] = 'test_value_sha256'
++session_sha256.save()
++
++# Get the session data from the database
++db_session_sha256 = Session.objects.get(session_key=session_sha256.session_key)
++session_data_sha256 = db_session_sha256.session_data
++
++print(f"\nSession data with sha256 algorithm:")
++print(session_data_sha256)
++
++# Create a new session with the same session key
++new_session_sha256_2 = SessionStore(session_sha256.session_key)
++decoded_data_sha256_2 = new_session_sha256_2._get_session()
++
++print(f"Decoded session data with sha256:")
++print(decoded_data_sha256_2)
++
++# Test with a legacy-encoded session
++legacy_data = {'legacy_test': 'legacy_value'}
++serializer = JSONSerializer()
++serialized_data = serializer.dumps(legacy_data)
++hash_value = salted_hmac('django.contrib.sessions.SessionStore', serialized_data, settings.SECRET_KEY, algorithm='sha1').hexdigest()
++legacy_encoded = base64.b64encode(f"{hash_value}:{serialized_data}".encode()).decode()
++
++print(f"\nLegacy encoded session data:")
++print(legacy_encoded)
++
++from django.contrib.sessions.backends.base import SessionBase
++session_base = SessionBase(None)
++
++# Test decoding with sha1
++settings.DEFAULT_HASHING_ALGORITHM = 'sha1'
++decoded_legacy_sha1 = session_base.decode(legacy_encoded)
++
++print(f"\nDecoded legacy session with sha1 algorithm:")
++print(decoded_legacy_sha1)
++
++# Test decoding with sha256
++settings.DEFAULT_HASHING_ALGORITHM = 'sha256'
++decoded_legacy_sha256 = session_base.decode(legacy_encoded)
++
++print(f"\nDecoded legacy session with sha256 algorithm:")
++print(decoded_legacy_sha256)
+\ No newline at end of file

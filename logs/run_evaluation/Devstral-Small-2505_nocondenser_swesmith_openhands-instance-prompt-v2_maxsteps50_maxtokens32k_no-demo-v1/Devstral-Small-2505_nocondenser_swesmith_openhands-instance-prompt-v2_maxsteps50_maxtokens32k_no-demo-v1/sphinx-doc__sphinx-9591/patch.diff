@@ -1,0 +1,233 @@
+diff --git a/setup.py b/setup.py
+index 4a1d5aeed..3faa58e79 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 6):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp>=2.0.0',
+-    'sphinxcontrib-serializinghtml>=1.1.5',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp>=2.0.0,<=2.0.4',
++    'sphinxcontrib-serializinghtml>=1.1.5,<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.14,<0.18',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..5b234bb1e
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,127 @@
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for our test
++temp_dir = tempfile.mkdtemp()
++try:
++    # Create a test project structure
++    project_dir = Path(temp_dir) / "test_project"
++    project_dir.mkdir()
++
++    # Create the test module
++    module_path = project_dir / "test_module.py"
++    with open(module_path, "w") as f:
++        f.write('''from typing import Optional
++
++class Point:
++    """
++    A class representing a point.
++
++    Attributes:
++        x: Position X.
++        y: Position Y.
++    """
++    x: int
++    y: int
++
++class Square:
++    """A class representing a square figure."""
++    #: Square's start position (top-left corner).
++    start: Point
++    #: Square width.
++    width: int
++    #: Square height.
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Square's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++
++class Rectangle:
++    """
++    A class representing a square figure.
++
++    Attributes:
++        start: Rectangle's start position (top-left corner).
++        width: Rectangle width.
++        height: Rectangle width.
++    """
++    start: Point
++    width: int
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Rectangle's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++''')
++
++    # Create a Sphinx project structure
++    docs_dir = project_dir / "docs"
++    docs_dir.mkdir()
++
++    # Create conf.py
++    conf_path = docs_dir / "conf.py"
++    with open(conf_path, "w") as f:
++        f.write("""
++import os
++import sys
++sys.path.insert(0, os.path.abspath('..'))
++
++extensions = ['sphinx.ext.autodoc']
++templates_path = ['_templates']
++source_suffix = '.rst'
++master_doc = 'index'
++project = 'TestProject'
++copyright = '2023'
++author = 'TestAuthor'
++version = '0.1'
++release = '0.1'
++autodoc_typehints = 'description'
++""")
++
++    # Create index.rst
++    index_path = docs_dir / "index.rst"
++    with open(index_path, "w") as f:
++        f.write("""
++.. toctree::
++   :maxdepth: 2
++   :caption: Contents:
++
++Welcome to TestProject's documentation!
++======================================
++
++.. automodule:: test_module
++   :members:
++   :undoc-members:
++   :show-inheritance:
++""")
++
++    # Run Sphinx to build the documentation
++    os.chdir(docs_dir)
++    os.system("sphinx-build -b html . _build/html")
++
++    # Check if the build was successful
++    if os.path.exists(docs_dir / "_build" / "html" / "index.html"):
++        print("Sphinx build successful!")
++
++        # Check if the property type annotations are cross-referenced
++        with open(docs_dir / "_build" / "html" / "index.html", "r") as f:
++            html_content = f.read()
++
++        # Look for links to the Point class in the property type annotations
++        if 'href="test_module.Point.html"' in html_content:
++            print("SUCCESS: Property type annotations are properly cross-referenced!")
++        else:
++            print("FAILURE: Property type annotations are not properly cross-referenced.")
++            print("Looking for 'href=\"test_module.Point.html\"' in the HTML output.")
++    else:
++        print("Sphinx build failed!")
++
++finally:
++    # Clean up
++    shutil.rmtree(temp_dir)
+\ No newline at end of file
+diff --git a/test_property_type.py b/test_property_type.py
+new file mode 100644
+index 000000000..1c65c4d53
+--- /dev/null
++++ b/test_property_type.py
+@@ -0,0 +1,44 @@
++from typing import Optional
++
++class Point:
++    """
++    A class representing a point.
++
++    Attributes:
++        x: Position X.
++        y: Position Y.
++    """
++    x: int
++    y: int
++
++class Square:
++    """A class representing a square figure."""
++    #: Square's start position (top-left corner).
++    start: Point
++    #: Square width.
++    width: int
++    #: Square height.
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Square's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
++
++class Rectangle:
++    """
++    A class representing a square figure.
++
++    Attributes:
++        start: Rectangle's start position (top-left corner).
++        width: Rectangle width.
++        height: Rectangle width.
++    """
++    start: Point
++    width: int
++    height: int
++
++    @property
++    def end(self) -> Point:
++        """Rectangle's end position (bottom-right corner)."""
++        return Point(self.start.x + self.width, self.start.y + self.height)
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index a363e187f..3b8bc12d0 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -27,7 +27,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils,ignore::DeprecationWarning:pip._vendor.packaging.version
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

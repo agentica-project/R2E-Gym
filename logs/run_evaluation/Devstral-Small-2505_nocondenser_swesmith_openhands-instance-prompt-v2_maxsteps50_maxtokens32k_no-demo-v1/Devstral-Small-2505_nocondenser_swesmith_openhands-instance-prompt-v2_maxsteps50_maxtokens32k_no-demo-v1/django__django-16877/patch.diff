@@ -1,0 +1,73 @@
+diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py
+index 5289ef34a0..d5c88457cd 100644
+--- a/django/template/defaultfilters.py
++++ b/django/template/defaultfilters.py
+@@ -497,6 +497,15 @@ def safeseq(value):
+     """
+     return [mark_safe(obj) for obj in value]
+ 
++@register.filter(is_safe=True)
++def escapeseq(value):
++    """
++    An "escape" filter for sequences. Escape each element in the sequence,
++    individually, after converting them to strings. Return a list with the results.
++    """
++    from django.utils.html import escape
++    return [escape(obj) for obj in value]
++
+ 
+ @register.filter(is_safe=True)
+ @stringfilter
+diff --git a/test_escapeseq.py b/test_escapeseq.py
+new file mode 100644
+index 0000000000..07a8faf2d4
+--- /dev/null
++++ b/test_escapeseq.py
+@@ -0,0 +1,46 @@
++import os
++import django
++from django.conf import settings
++from django.template import Template, Context, Engine
++from django.utils.html import escape
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        TEMPLATES=[
++            {
++                'BACKEND': 'django.template.backends.django.DjangoTemplates',
++                'DIRS': [],
++                'APP_DIRS': True,
++                'OPTIONS': {
++                    'context_processors': [],
++                },
++            },
++        ]
++    )
++    django.setup()
++
++# Test data
++test_data = [
++    "<script>alert('xss')</script>",
++    "<b>bold</b>",
++    '"quoted"',
++    "&amp;"
++]
++
++# Create a template that uses the escapeseq filter
++template_str = """
++{% load defaultfilters %}
++Original: {{ items|join:", " }}
++<br>
++Escaped: {{ items|escapeseq|join:", " }}
++<br>
++Expected: {{ items|join:", " |escape }}
++"""
++
++template = Template(template_str)
++context = Context({'items': test_data})
++
++# Render the template
++rendered = template.render(context)
++print(rendered)
+\ No newline at end of file

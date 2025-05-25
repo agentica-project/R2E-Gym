@@ -1,0 +1,91 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..03e08b192a
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,42 @@
++from sympy import *
++from sympy.simplify.fu import TR5, TR6, _TR56
++
++x = Symbol('x')
++
++# Test the original issue
++print("1. Testing simplify(cos(x)**I):")
++try:
++    result = simplify(cos(x)**I)
++    print(f"   Result: {result}")
++except Exception as e:
++    print(f"   Error: {type(e).__name__}: {e}")
++
++# Test TR5 with real exponents
++print("\n2. Testing TR5 with real exponents:")
++try:
++    result1 = TR5(sin(x)**2)
++    print(f"   TR5(sin(x)**2) = {result1}")
++    result2 = TR5(sin(x)**4)
++    print(f"   TR5(sin(x)**4) = {result2}")
++except Exception as e:
++    print(f"   Error: {type(e).__name__}: {e}")
++
++# Test TR6 with real exponents
++print("\n3. Testing TR6 with real exponents:")
++try:
++    result1 = TR6(cos(x)**2)
++    print(f"   TR6(cos(x)**2) = {result1}")
++    result2 = TR6(cos(x)**4)
++    print(f"   TR6(cos(x)**4) = {result2}")
++except Exception as e:
++    print(f"   Error: {type(e).__name__}: {e}")
++
++# Test _TR56 directly with complex exponents
++print("\n4. Testing _TR56 with complex exponents:")
++try:
++    result = _TR56(sin(x)**I, sin, cos, lambda x: 1 - x, 4, False)
++    print(f"   _TR56(sin(x)**I, ...) = {result}")
++except Exception as e:
++    print(f"   Error: {type(e).__name__}: {e}")
++
++print("\nAll tests completed.")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..f33e897e94
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,8 @@
++from sympy import *
++x = Symbol('x')
++print("Testing simplify(cos(x)**I):")
++try:
++    result = simplify(cos(x)**I)
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..a56c0620a2
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,5 @@
++from sympy import *
++x = Symbol('x')
++print("Testing simplify(cos(x)**I):")
++result = simplify(cos(x)**I)
++print(f"Result: {result}")
+\ No newline at end of file
+diff --git a/sympy/simplify/fu.py b/sympy/simplify/fu.py
+index ad1130ef96..b22184e92f 100644
+--- a/sympy/simplify/fu.py
++++ b/sympy/simplify/fu.py
+@@ -501,6 +501,10 @@ def _f(rv):
+         if not (rv.is_Pow and rv.base.func == f):
+             return rv
+ 
++        # Handle complex exponents
++        if rv.exp.is_complex:
++            return rv
++
+         if (rv.exp < 0) == True:
+             return rv
+         if (rv.exp > max) == True:

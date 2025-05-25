@@ -1,0 +1,185 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..a48a8f29c2
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,57 @@
++from sympy import geometry as ge
++import sympy
++
++def test_point_multiplication_comprehensive():
++    # Test with different types of points
++    point2d_1 = ge.Point(0, 0)
++    point2d_2 = ge.Point(1, 1)
++    point3d_1 = ge.Point(0, 0, 0)
++    point3d_2 = ge.Point(1, 1, 1)
++
++    # Test with different types of numbers
++    numbers = [
++        (2.0, "float"),
++        (sympy.sympify(2.0), "sympified float"),
++        (2, "integer"),
++        (sympy.Rational(1, 2), "rational"),
++        (sympy.Symbol('a'), "symbol")
++    ]
++
++    print("Testing different combinations of points and numbers:")
++    print("-" * 60)
++
++    for number, number_type in numbers:
++        print(f"\nTesting with {number_type}: {number}")
++
++        # Test 2D points
++        print("\n2D Points:")
++        # Left multiplication
++        result1 = point2d_1 + point2d_2 * number
++        print(f"point2d_1 + point2d_2 * {number_type}: {result1}")
++
++        # Right multiplication - use __rmul__ directly to avoid Mul expression
++        try:
++            scaled_point = point2d_2.__rmul__(number)
++            result2 = point2d_1 + scaled_point
++            print(f"point2d_1 + {number_type} * point2d_2: {result2}")
++            print(f"Results equal: {result1 == result2}")
++        except Exception as e:
++            print(f"Error with {number_type} * point2d_2: {type(e).__name__} - {str(e)}")
++
++        # Test 3D points
++        print("\n3D Points:")
++        # Left multiplication
++        result3 = point3d_1 + point3d_2 * number
++        print(f"point3d_1 + point3d_2 * {number_type}: {result3}")
++
++        # Right multiplication - use __rmul__ directly to avoid Mul expression
++        try:
++            scaled_point = point3d_2.__rmul__(number)
++            result4 = point3d_1 + scaled_point
++            print(f"point3d_1 + {number_type} * point3d_2: {result4}")
++            print(f"Results equal: {result3 == result4}")
++        except Exception as e:
++            print(f"Error with {number_type} * point3d_2: {type(e).__name__} - {str(e)}")
++
++if __name__ == "__main__":
++    test_point_multiplication_comprehensive()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..2927485c53
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,54 @@
++from sympy import geometry as ge
++import sympy
++
++def test_point_multiplication():
++    point1 = ge.Point(0, 0)
++    point2 = ge.Point(1, 1)
++
++    # Test direct multiplication
++    print("Direct multiplication tests:")
++    print("point2 * 2.0 =", point2 * 2.0)
++    print("2.0 * point2 =", 2.0 * point2)
++    print("Type of point2 * 2.0:", type(point2 * 2.0))
++    print("Type of 2.0 * point2:", type(2.0 * point2))
++
++    # Test the multiplication result directly
++    two = sympy.sympify(2.0)
++    print("\nType of sympified 2.0:", type(two))
++
++    mul_result1 = point2 * two
++    mul_result2 = two * point2
++    print("\nMultiplication results:")
++    print("mul_result1 (point2 * two):", mul_result1)
++    print("mul_result2 (two * point2):", mul_result2)
++    print("Type of mul_result1:", type(mul_result1))
++    print("Type of mul_result2:", type(mul_result2))
++
++    # Test addition with multiplication
++    print("\nAddition with multiplication tests:")
++    result1 = point1 + mul_result1
++    print("Result 1 (point1 + mul_result1):", result1)
++
++    try:
++        result2 = point1 + mul_result2
++        print("Result 2 (point1 + mul_result2):", result2)
++    except Exception as e:
++        print("Exception occurred:", type(e).__name__, "-", str(e))
++        print("Exception object:", e)
++
++    # Test the original expressions from the issue
++    print("\nOriginal expressions from the issue:")
++    try:
++        result3 = point1 + point2 * two
++        print("Result 3 (point1 + point2 * two):", result3)
++    except Exception as e:
++        print("Exception occurred:", type(e).__name__, "-", str(e))
++
++    try:
++        result4 = point1 + two * point2
++        print("Result 4 (point1 + two * point2):", result4)
++    except Exception as e:
++        print("Exception occurred:", type(e).__name__, "-", str(e))
++
++if __name__ == "__main__":
++    test_point_multiplication()
+\ No newline at end of file
+diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
+index 7c978c47be..d4b4fa4508 100644
+--- a/sympy/geometry/point.py
++++ b/sympy/geometry/point.py
+@@ -213,8 +213,31 @@ def __add__(self, other):
+         sympy.geometry.point.Point.translate
+ 
+         """
++        from sympy.core.mul import Mul
++        from sympy.core.add import Add
++
++        # Handle Mul expressions that involve a Point and a number
++        if isinstance(other, Mul):
++            # Check if other is a multiplication of a number and a Point
++            try:
++                # Extract the point and number from the Mul expression
++                point_args = [a for a in other.args if isinstance(a, Point)]
++                number_args = [a for a in other.args if not isinstance(a, Point)]
++
++                if point_args and number_args:
++                    # Multiply the point by the product of the number args
++                    point = point_args[0]
++                    number = simplify(Mul(*number_args))
++                    other = point * number
++            except (TypeError, AttributeError):
++                pass
++
++        # Handle the case where 'other' is a Point or can be converted to one
+         try:
+-            s, o = Point._normalize_dimension(self, Point(other, evaluate=False))
++            if isinstance(other, Point):
++                s, o = Point._normalize_dimension(self, other)
++            else:
++                s, o = Point._normalize_dimension(self, Point(other, evaluate=False))
+         except TypeError:
+             raise GeometryError("Don't know how to add {} and a Point object".format(other))
+ 
+@@ -278,6 +301,22 @@ def __mul__(self, factor):
+         coords = [simplify(x*factor) for x in self.args]
+         return Point(coords, evaluate=False)
+ 
++    def __rmul__(self, factor):
++        """Multiply point's coordinates by a factor (right-side multiplication).
++
++        This method allows for expressions like `2*Point(1, 2)` to work the same
++        as `Point(1, 2)*2`.
++
++        See Also
++        ========
++
++        sympy.geometry.point.Point.__mul__
++        sympy.geometry.point.Point.scale
++        """
++        factor = sympify(factor)
++        coords = [simplify(x*factor) for x in self.args]
++        return Point(coords, evaluate=False)
++
+     def __neg__(self):
+         """Negate the point."""
+         coords = [-x for x in self.args]

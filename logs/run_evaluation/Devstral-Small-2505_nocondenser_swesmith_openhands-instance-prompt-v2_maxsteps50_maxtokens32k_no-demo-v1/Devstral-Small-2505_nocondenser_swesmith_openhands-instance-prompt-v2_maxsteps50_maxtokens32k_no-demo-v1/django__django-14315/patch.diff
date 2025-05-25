@@ -1,0 +1,145 @@
+diff --git a/django/db/backends/postgresql/client.py b/django/db/backends/postgresql/client.py
+index 3effab65a8..14bc306cf2 100644
+--- a/django/db/backends/postgresql/client.py
++++ b/django/db/backends/postgresql/client.py
+@@ -36,21 +36,24 @@ class DatabaseClient(BaseDatabaseClient):
+             args += [dbname]
+         args.extend(parameters)
+ 
+-        env = {}
++        env = None
++        env_vars = {}
+         if passwd:
+-            env['PGPASSWORD'] = str(passwd)
++            env_vars['PGPASSWORD'] = str(passwd)
+         if service:
+-            env['PGSERVICE'] = str(service)
++            env_vars['PGSERVICE'] = str(service)
+         if sslmode:
+-            env['PGSSLMODE'] = str(sslmode)
++            env_vars['PGSSLMODE'] = str(sslmode)
+         if sslrootcert:
+-            env['PGSSLROOTCERT'] = str(sslrootcert)
++            env_vars['PGSSLROOTCERT'] = str(sslrootcert)
+         if sslcert:
+-            env['PGSSLCERT'] = str(sslcert)
++            env_vars['PGSSLCERT'] = str(sslcert)
+         if sslkey:
+-            env['PGSSLKEY'] = str(sslkey)
++            env_vars['PGSSLKEY'] = str(sslkey)
+         if passfile:
+-            env['PGPASSFILE'] = str(passfile)
++            env_vars['PGPASSFILE'] = str(passfile)
++        if env_vars:
++            env = env_vars
+         return args, env
+ 
+     def runshell(self, parameters):
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..8e960b328d
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,31 @@
++import os
++import sys
++from django.db.backends.postgresql.client import DatabaseClient
++
++# Set a test environment variable
++os.environ['TEST_ENV_VAR'] = 'test_value'
++
++# Create a mock connection object with minimal settings
++class MockConnection:
++    def __init__(self):
++        self.settings_dict = {}
++
++connection = MockConnection()
++
++# Create the client
++client = DatabaseClient(connection)
++
++# Get the args and env from settings_to_cmd_args_env
++args, env = client.settings_to_cmd_args_env(connection.settings_dict, [])
++
++print("Environment from settings_to_cmd_args_env:", env)
++print("Type of env:", type(env))
++
++# Now simulate what happens in runshell
++if env is not None:
++    merged_env = {**os.environ, **env}
++    print("\nMerged environment:", merged_env)
++    print("Does merged_env contain TEST_ENV_VAR?", 'TEST_ENV_VAR' in merged_env)
++else:
++    print("\nEnvironment is None, os.environ will be used directly")
++    print("os.environ contains TEST_ENV_VAR?", 'TEST_ENV_VAR' in os.environ)
+\ No newline at end of file
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..2335d219aa
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,29 @@
++import os
++import sys
++import unittest
++from unittest.mock import patch
++from django.conf import settings
++
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.postgresql',
++                'NAME': 'test_db',
++                'USER': 'test_user',
++                'PASSWORD': 'test_password',
++                'HOST': 'localhost',
++                'PORT': '5432',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++    )
++
++from tests.dbshell.test_postgresql import PostgreSqlDbshellCommandTestCase
++
++# Mock the connection.vendor to avoid requiring a real PostgreSQL connection
++with patch('django.db.connection.vendor', 'postgresql'):
++    if __name__ == '__main__':
++        unittest.main()
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..18b0595430
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,27 @@
++import os
++import unittest
++from django.db.backends.postgresql.client import DatabaseClient
++
++class TestPostgreSQLClient(unittest.TestCase):
++    def test_settings_to_cmd_args_env_returns_none_when_no_env_vars(self):
++        """Test that settings_to_cmd_args_env returns None when no env vars are set."""
++        client = DatabaseClient(None)  # connection is not used in this test
++
++        # Call the method directly
++        args, env = client.settings_to_cmd_args_env({}, [])
++
++        self.assertIsNone(env, "Expected env to be None when no env vars are set")
++
++    def test_settings_to_cmd_args_env_returns_env_vars_when_set(self):
++        """Test that settings_to_cmd_args_env returns env vars when they are set."""
++        client = DatabaseClient(None)  # connection is not used in this test
++
++        # Test with password
++        args, env = client.settings_to_cmd_args_env({'PASSWORD': 'test_password'}, [])
++
++        self.assertIsNotNone(env, "Expected env to be not None when env vars are set")
++        self.assertIn('PGPASSWORD', env, "Expected PGPASSWORD to be in env")
++        self.assertEqual(env['PGPASSWORD'], 'test_password', "Expected PGPASSWORD to be 'test_password'")
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file

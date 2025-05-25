@@ -1,0 +1,263 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..ad4f5d0e74
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,97 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import connections, router
++from django.db.migrations.recorder import MigrationRecorder
++
++# Configure settings for Django
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        },
++        'other': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        },
++    },
++)
++
++# Create a custom router that only allows migrations on the 'default' database
++class TestRouter:
++    def allow_migrate(self, db, model=None, **hints):
++        print(f"Router allow_migrate called for db={db}, model={model}")
++        if db == 'default':
++            return True
++        return False
++
++# Add the router to the connections
++router.routers = [TestRouter()]
++
++# Setup Django
++django.setup()
++
++# Test the issue
++def test_all_methods():
++    print("Testing all MigrationRecorder methods...")
++
++    # Create MigrationRecorder instances for each database
++    recorders = {}
++    for db in connections.databases:
++        connection = connections[db]
++        recorders[db] = MigrationRecorder(connection)
++
++    # Test ensure_schema
++    print("\nTesting ensure_schema:")
++    for db in connections.databases:
++        recorder = recorders[db]
++        table_exists = recorder.has_table()
++        print(f"Table exists in {db} before ensure_schema: {table_exists}")
++        recorder.ensure_schema()
++        table_exists = recorder.has_table()
++        print(f"Table exists in {db} after ensure_schema: {table_exists}")
++
++    # Test record_applied
++    print("\nTesting record_applied:")
++    for db in connections.databases:
++        recorder = recorders[db]
++        # Try to record a migration
++        try:
++            recorder.record_applied('auth', '0001_initial')
++            print(f"Successfully recorded migration in {db}")
++        except Exception as e:
++            print(f"Error recording migration in {db}: {e}")
++
++    # Check if the migration was recorded
++    print("\nChecking applied migrations:")
++    for db in connections.databases:
++        recorder = recorders[db]
++        migrations = recorder.applied_migrations()
++        print(f"Applied migrations in {db}: {migrations}")
++
++    # Test record_unapplied
++    print("\nTesting record_unapplied:")
++    for db in connections.databases:
++        recorder = recorders[db]
++        # Try to record an unapplied migration
++        try:
++            recorder.record_unapplied('auth', '0001_initial')
++            print(f"Successfully recorded unapplied migration in {db}")
++        except Exception as e:
++            print(f"Error recording unapplied migration in {db}: {e}")
++
++    # Check if the migration was unrecorded
++    print("\nChecking applied migrations after unapplied:")
++    for db in connections.databases:
++        recorder = recorders[db]
++        migrations = recorder.applied_migrations()
++        print(f"Applied migrations in {db}: {migrations}")
++
++if __name__ == "__main__":
++    test_all_methods()
+\ No newline at end of file
+diff --git a/django/db/migrations/recorder.py b/django/db/migrations/recorder.py
+index 1a37c6b7d0..8ab61ea9ff 100644
+--- a/django/db/migrations/recorder.py
++++ b/django/db/migrations/recorder.py
+@@ -62,6 +62,13 @@ class MigrationRecorder:
+         # in the codebase.
+         if self.has_table():
+             return
++
++        # Check if migrations are allowed for this database
++        from django.db import router
++        # Use 'migrations' as the app_label since that's what the Migration model belongs to
++        if not router.allow_migrate(self.connection.alias, app_label='migrations'):
++            return
++
+         # Make the table
+         try:
+             with self.connection.schema_editor() as editor:
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..9706d23f93
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,62 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import connections, router
++from django.db.migrations.recorder import MigrationRecorder
++
++# Configure settings for Django
++class ReproduceIssueRouter:
++    def allow_migrate(self, db, model=None, **hints):
++        print(f"Router allow_migrate called for db={db}, model={model}")
++        if db == 'default':
++            return True
++        return False
++
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        },
++        'other': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        },
++    },
++    DATABASE_ROUTERS=['reproduce_issue.ReproduceIssueRouter'],
++)
++
++# Setup Django
++django.setup()
++
++# Test the issue
++def test_migration_recorder():
++    print("Testing MigrationRecorder behavior...")
++
++    # Check if the router is working correctly
++    for db in connections.databases:
++        print(f"Router allows migration for {db}: {router.allow_migrate(db, 'auth')}")
++
++    # Create MigrationRecorder instances for each database
++    for db in connections.databases:
++        connection = connections[db]
++        recorder = MigrationRecorder(connection)
++
++        # Check if the table exists (it shouldn't at this point)
++        table_exists = recorder.has_table()
++        print(f"Table exists in {db} before ensure_schema: {table_exists}")
++
++        # Call ensure_schema (this should only create the table on 'default')
++        recorder.ensure_schema()
++
++        # Check if the table exists after ensure_schema
++        table_exists = recorder.has_table()
++        print(f"Table exists in {db} after ensure_schema: {table_exists}")
++
++if __name__ == "__main__":
++    test_migration_recorder()
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..0cc5be9726
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,65 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import connections, router
++from django.db.migrations.recorder import MigrationRecorder
++
++# Configure settings for Django
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        },
++        'other': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        },
++    },
++)
++
++# Create a custom router that only allows migrations on the 'default' database
++class TestRouter:
++    def allow_migrate(self, db, model=None, **hints):
++        print(f"Router allow_migrate called for db={db}, model={model}")
++        if db == 'default':
++            return True
++        return False
++
++# Add the router to the connections
++router.routers = [TestRouter()]
++
++# Setup Django
++django.setup()
++
++# Test the issue
++def test_migration_recorder():
++    print("Testing MigrationRecorder behavior...")
++
++    # Check if the router is working correctly
++    for db in connections.databases:
++        print(f"Router allows migration for {db}: {router.allow_migrate(db, 'auth')}")
++
++    # Create MigrationRecorder instances for each database
++    for db in connections.databases:
++        connection = connections[db]
++        recorder = MigrationRecorder(connection)
++
++        # Check if the table exists (it shouldn't at this point)
++        table_exists = recorder.has_table()
++        print(f"Table exists in {db} before ensure_schema: {table_exists}")
++
++        # Call ensure_schema (this should only create the table on 'default')
++        recorder.ensure_schema()
++
++        # Check if the table exists after ensure_schema
++        table_exists = recorder.has_table()
++        print(f"Table exists in {db} after ensure_schema: {table_exists}")
++
++if __name__ == "__main__":
++    test_migration_recorder()
+\ No newline at end of file

@@ -1,0 +1,330 @@
+diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py
+index e19c881cda..072a2efc14 100644
+--- a/django/db/migrations/serializer.py
++++ b/django/db/migrations/serializer.py
+@@ -273,7 +273,7 @@ class TupleSerializer(BaseSequenceSerializer):
+ class TypeSerializer(BaseSerializer):
+     def serialize(self):
+         special_cases = [
+-            (models.Model, "models.Model", []),
++            (models.Model, "models.Model", ["from django.db import models"]),
+             (type(None), 'type(None)', []),
+         ]
+         for case, string, imports in special_cases:
+diff --git a/test_migration_bases.py b/test_migration_bases.py
+new file mode 100644
+index 0000000000..201f7a22fb
+--- /dev/null
++++ b/test_migration_bases.py
+@@ -0,0 +1,68 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++from django.db import models
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations.operations.models import CreateModel
++from django.db.migrations.migration import Migration
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    USE_TZ=True,
++)
++
++# Create a module for our app
++app_module = type(sys)('app')
++sys.modules['app'] = app_module
++
++# Define our custom classes in the app module
++class CustomMixin:
++    pass
++
++app_module.CustomMixin = CustomMixin
++
++# Create a migration operation
++operation = CreateModel(
++    name='MyModel',
++    fields=[
++        ('name', models.TextField(primary_key=True)),
++    ],
++    bases=(CustomMixin, models.Model),
++    options={'abstract': False},
++)
++
++# Create a migration
++migration = Migration('test_app', '0001')
++migration.operations = [operation]
++
++# Create a migration writer
++writer = MigrationWriter(migration)
++
++# Generate the migration file content
++migration_content = writer.as_string()
++
++print("Generated migration content:")
++print(migration_content)
++
++# Check if 'models' is in the import statements
++lines = migration_content.split('\n')
++import_lines = [line for line in lines if line.startswith('from django.db') or line.startswith('import __main__')]
++print("\nImport lines:")
++for line in import_lines:
++    print(line)
++
++if any('models' in line for line in import_lines):
++    print("\nNo issue found: 'models' is included in imports.")
++else:
++    print("\nISSUE FOUND: 'models' is missing from imports!")
+\ No newline at end of file
+diff --git a/test_migration_bug.py b/test_migration_bug.py
+new file mode 100644
+index 0000000000..d1c515d9f0
+--- /dev/null
++++ b/test_migration_bug.py
+@@ -0,0 +1,99 @@
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++from django.apps import apps
++from django.db import models
++from django.core.management import call_command
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations.operations.models import CreateModel
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'test_app',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++# Create a temporary directory for the test app
++temp_dir = tempfile.mkdtemp()
++app_dir = os.path.join(temp_dir, 'test_app')
++migrations_dir = os.path.join(app_dir, 'migrations')
++os.makedirs(migrations_dir)
++os.makedirs(os.path.join(app_dir, 'migrations'))
++
++# Create the test app structure
++with open(os.path.join(app_dir, '__init__.py'), 'w') as f:
++    f.write('')
++
++with open(os.path.join(app_dir, 'models.py'), 'w') as f:
++    f.write('''
++from django.db import models
++
++class MyField(models.TextField):
++    pass
++
++class MyBaseModel(models.Model):
++    class Meta:
++        abstract = True
++
++class MyMixin:
++    pass
++
++class MyModel(MyMixin, MyBaseModel):
++    name = MyField(primary_key=True)
++''')
++
++with open(os.path.join(app_dir, 'migrations', '__init__.py'), 'w') as f:
++    f.write('')
++
++# Add the app directory to Python path
++sys.path.insert(0, temp_dir)
++
++# Create the app config
++class TestAppConfig:
++    name = 'test_app'
++    verbose_name = 'Test App'
++
++    def label(self):
++        return 'test_app'
++
++apps.register_models('test_app', {
++    'MyModel': models.Model,
++})
++
++apps.get_app_config('test_app').models_module = sys.modules['test_app.models']
++
++# Create a migration operation
++operation = CreateModel(
++    name='MyModel',
++    fields=[
++        ('name', models.TextField(primary_key=True)),
++    ],
++    bases=(models.Model,),
++    options={'abstract': False},
++)
++
++# Create a migration writer
++writer = MigrationWriter(operation)
++
++# Print the serialized operation
++print("Serialized operation:")
++print(writer.serialize())
++
++# Clean up
++shutil.rmtree(temp_dir)
+\ No newline at end of file
+diff --git a/test_migration_bug_simple.py b/test_migration_bug_simple.py
+new file mode 100644
+index 0000000000..a34e8f5558
+--- /dev/null
++++ b/test_migration_bug_simple.py
+@@ -0,0 +1,31 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db import models
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations.operations.models import CreateModel
++
++# Create a migration operation with a model that inherits from both a custom class and models.Model
++operation = CreateModel(
++    name='MyModel',
++    fields=[
++        ('name', models.TextField(primary_key=True)),
++    ],
++    bases=(object, models.Model),  # Using object instead of a custom mixin for simplicity
++    options={'abstract': False},
++)
++
++# Create a migration writer
++writer = MigrationWriter(operation)
++
++# Get the serialized migration content
++migration_content = writer.as_string()
++
++print("Generated migration content:")
++print(migration_content)
++
++# Check if 'from django.db import models' is in the migration content
++if 'from django.db import models' not in migration_content:
++    print("\nISSUE FOUND: 'from django.db import models' is missing from imports!")
++else:
++    print("\nNo issue found: 'from django.db import models' is included in imports.")
+\ No newline at end of file
+diff --git a/test_migration_generation.py b/test_migration_generation.py
+new file mode 100644
+index 0000000000..99823d5f5f
+--- /dev/null
++++ b/test_migration_generation.py
+@@ -0,0 +1,65 @@
++import sys
++import os
++import tempfile
++import shutil
++sys.path.insert(0, '/testbed')
++
++from django.conf import settings
++from django.apps import apps
++from django.db import models
++from django.db.migrations.writer import MigrationWriter
++from django.db.migrations.operations.models import CreateModel
++from django.db.migrations.migration import Migration
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++# Create a module for our app
++app_module = type(sys)('app')
++sys.modules['app'] = app_module
++
++# Define our custom classes in the app module
++class CustomMixin:
++    pass
++
++app_module.CustomMixin = CustomMixin
++
++# Create a migration operation
++operation = CreateModel(
++    name='MyModel',
++    fields=[
++        ('name', models.TextField(primary_key=True)),
++    ],
++    bases=('app.CustomMixin', 'models.Model'),
++    options={'abstract': False},
++)
++
++# Create a migration
++migration = Migration('test_app', '0001')
++migration.operations = [operation]
++
++# Create a migration writer
++writer = MigrationWriter(migration)
++
++# Generate the migration file content
++migration_content = writer.as_string()
++
++print("Generated migration content:")
++print(migration_content)
++
++# Check if 'from django.db import models' is in the migration content
++if 'from django.db import models' not in migration_content:
++    print("\nISSUE FOUND: 'from django.db import models' is missing from imports!")
++else:
++    print("\nNo issue found: 'from django.db import models' is included in imports.")
+\ No newline at end of file
+diff --git a/test_typeserializer.py b/test_typeserializer.py
+new file mode 100644
+index 0000000000..81e03ff421
+--- /dev/null
++++ b/test_typeserializer.py
+@@ -0,0 +1,19 @@
++import sys
++sys.path.insert(0, '/testbed')
++
++from django.db import models
++from django.db.migrations.serializer import TypeSerializer
++
++# Test serializing models.Model
++serializer = TypeSerializer(models.Model)
++string, imports = serializer.serialize()
++
++print("Serialized models.Model:")
++print(f"String: {string}")
++print(f"Imports: {imports}")
++
++# Check if the import is correct
++if 'from django.db import models' not in imports:
++    print("\nISSUE FOUND: 'from django.db import models' is missing from imports!")
++else:
++    print("\nNo issue found: 'from django.db import models' is included in imports.")
+\ No newline at end of file

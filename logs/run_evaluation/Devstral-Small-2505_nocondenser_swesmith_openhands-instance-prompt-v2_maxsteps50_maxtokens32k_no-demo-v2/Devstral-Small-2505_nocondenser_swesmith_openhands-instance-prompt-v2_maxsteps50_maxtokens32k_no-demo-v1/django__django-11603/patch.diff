@@ -1,0 +1,192 @@
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index da4ff928aa..3effaa7533 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -99,6 +99,7 @@ class Aggregate(Func):
+ class Avg(FixDurationInputMixin, NumericOutputFieldMixin, Aggregate):
+     function = 'AVG'
+     name = 'Avg'
++    allow_distinct = True
+ 
+ 
+ class Count(Aggregate):
+@@ -121,11 +122,13 @@ class Count(Aggregate):
+ class Max(Aggregate):
+     function = 'MAX'
+     name = 'Max'
++    allow_distinct = True
+ 
+ 
+ class Min(Aggregate):
+     function = 'MIN'
+     name = 'Min'
++    allow_distinct = True
+ 
+ 
+ class StdDev(NumericOutputFieldMixin, Aggregate):
+@@ -142,6 +145,7 @@ class StdDev(NumericOutputFieldMixin, Aggregate):
+ class Sum(FixDurationInputMixin, Aggregate):
+     function = 'SUM'
+     name = 'Sum'
++    allow_distinct = True
+ 
+ 
+ class Variance(NumericOutputFieldMixin, Aggregate):
+diff --git a/test_distinct_aggregates.py b/test_distinct_aggregates.py
+new file mode 100644
+index 0000000000..6bb42e20b1
+--- /dev/null
++++ b/test_distinct_aggregates.py
+@@ -0,0 +1,73 @@
++import os
++import sys
++import django
++from decimal import Decimal
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.test_sqlite')
++django.setup()
++
++from django.db.models import Avg, Sum, Min, Max
++from django.test import TestCase
++from django.test.utils import Approximate
++
++# Create a simple test model
++from django.db import models, connection
++
++class TestModel(models.Model):
++    value = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create the test database tables
++connection.cursor().execute('''
++    CREATE TABLE IF NOT EXISTS test_app_testmodel (
++        id INTEGER PRIMARY KEY,
++        value INTEGER NOT NULL
++    )
++''')
++
++# Insert test data with duplicates
++connection.cursor().execute('''
++    INSERT INTO test_app_testmodel (id, value) VALUES
++    (1, 10),
++    (2, 20),
++    (3, 10),
++    (4, 30),
++    (5, 20),
++    (6, 40)
++''')
++
++# Test DISTINCT with Avg
++try:
++    from django.db.models import Q
++    qs = TestModel.objects.all()
++    result = qs.aggregate(distinct_avg=Avg('value', distinct=True))
++    print(f"Avg with DISTINCT: {result}")
++except TypeError as e:
++    print(f"Error with Avg(DISTINCT): {e}")
++
++# Test DISTINCT with Sum
++try:
++    result = qs.aggregate(distinct_sum=Sum('value', distinct=True))
++    print(f"Sum with DISTINCT: {result}")
++except TypeError as e:
++    print(f"Error with Sum(DISTINCT): {e}")
++
++# Test DISTINCT with Min
++try:
++    result = qs.aggregate(distinct_min=Min('value', distinct=True))
++    print(f"Min with DISTINCT: {result}")
++except TypeError as e:
++    print(f"Error with Min(DISTINCT): {e}")
++
++# Test DISTINCT with Max
++try:
++    result = qs.aggregate(distinct_max=Max('value', distinct=True))
++    print(f"Max with DISTINCT: {result}")
++except TypeError as e:
++    print(f"Error with Max(DISTINCT): {e}")
++
++# Clean up
++connection.cursor().execute('DROP TABLE IF EXISTS test_app_testmodel')
+\ No newline at end of file
+diff --git a/tests/aggregation/test_distinct_aggregates.py b/tests/aggregation/test_distinct_aggregates.py
+new file mode 100644
+index 0000000000..af4ae6dbe8
+--- /dev/null
++++ b/tests/aggregation/test_distinct_aggregates.py
+@@ -0,0 +1,71 @@
++from django.db.models import Avg, Sum, Min, Max
++from django.test import TestCase
++from django.test.utils import Approximate
++
++from .models import Author, Book, Publisher, Store
++
++class DistinctAggregatesTestCase(TestCase):
++    """
++    Test that Avg, Sum, Min, and Max support the distinct parameter.
++    """
++
++    @classmethod
++    def setUpTestData(cls):
++        # Create test data similar to the AggregateTestCase
++        # This is a simplified version of the setUpTestData in tests.py
++        publisher = Publisher.objects.create(name='Test Publisher', num_awards=5)
++
++        # Create authors with some duplicate ages
++        author1 = Author.objects.create(name='Author 1', age=30)
++        author2 = Author.objects.create(name='Author 2', age=30)
++        author3 = Author.objects.create(name='Author 3', age=40)
++        author4 = Author.objects.create(name='Author 4', age=40)
++
++        # Create books with duplicate ratings
++        book1 = Book.objects.create(
++            isbn='123456789', name='Book 1', pages=100, rating=4.0,
++            price=10.00, contact=author1, publisher=publisher, pubdate='2001-01-01'
++        )
++        book1.authors.add(author1)
++
++        book2 = Book.objects.create(
++            isbn='123456780', name='Book 2', pages=200, rating=4.0,
++            price=20.00, contact=author2, publisher=publisher, pubdate='2002-02-02'
++        )
++        book2.authors.add(author2)
++
++        book3 = Book.objects.create(
++            isbn='123456781', name='Book 3', pages=300, rating=5.0,
++            price=30.00, contact=author3, publisher=publisher, pubdate='2003-03-03'
++        )
++        book3.authors.add(author3)
++
++        book4 = Book.objects.create(
++            isbn='123456782', name='Book 4', pages=400, rating=5.0,
++            price=40.00, contact=author4, publisher=publisher, pubdate='2004-04-04'
++        )
++        book4.authors.add(author4)
++
++    def test_avg_distinct(self):
++        """Test that Avg supports the distinct parameter."""
++        # This should work without raising TypeError
++        result = Author.objects.all().aggregate(distinct_avg=Avg('age', distinct=True))
++        self.assertIn('distinct_avg', result)
++
++    def test_sum_distinct(self):
++        """Test that Sum supports the distinct parameter."""
++        # This should work without raising TypeError
++        result = Author.objects.all().aggregate(distinct_sum=Sum('age', distinct=True))
++        self.assertIn('distinct_sum', result)
++
++    def test_min_distinct(self):
++        """Test that Min supports the distinct parameter."""
++        # This should work without raising TypeError
++        result = Author.objects.all().aggregate(distinct_min=Min('age', distinct=True))
++        self.assertIn('distinct_min', result)
++
++    def test_max_distinct(self):
++        """Test that Max supports the distinct parameter."""
++        # This should work without raising TypeError
++        result = Author.objects.all().aggregate(distinct_max=Max('age', distinct=True))
++        self.assertIn('distinct_max', result)
+\ No newline at end of file

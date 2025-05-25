@@ -1,0 +1,118 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..9d3b936eb
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,32 @@
++import sys
++import io
++import six
++import os
++from _pytest.capture import EncodedFile, safe_text_dupfile
++
++# Create a temporary file
++tmpfile = open("/tmp/test.txt", "w+")
++# Create an EncodedFile instance using safe_text_dupfile
++ef = safe_text_dupfile(tmpfile, mode="r+")
++
++# Check the mode - it will include 'b' from the underlying buffer
++print("Mode:", getattr(ef, "mode"))
++
++# Try to write bytes to it - this should fail
++try:
++    ef.write(b"test")
++    print("SUCCESS: Wrote bytes to EncodedFile")
++except TypeError as e:
++    print("FAILED: ", e)
++
++# Try to write str to it - this should work
++try:
++    ef.write("test")
++    print("SUCCESS: Wrote str to EncodedFile")
++except TypeError as e:
++    print("FAILED: ", e)
++
++# Clean up
++ef.close()
++tmpfile.close()
++os.unlink("/tmp/test.txt")
+\ No newline at end of file
+diff --git a/src/_pytest/capture.py b/src/_pytest/capture.py
+index 25eab7fdf..1363fc144 100644
+--- a/src/_pytest/capture.py
++++ b/src/_pytest/capture.py
+@@ -447,6 +447,12 @@ class EncodedFile(object):
+         """Ensure that file.name is a string."""
+         return repr(self.buffer)
+ 
++    @property
++    def mode(self):
++        """Return the mode without the 'b' flag since this is a text interface."""
++        buffer_mode = getattr(self.buffer, "mode", "")
++        return buffer_mode.replace("b", "")
++
+     def __getattr__(self, name):
+         return getattr(object.__getattribute__(self, "buffer"), name)
+ 
+diff --git a/test_youtube_dl_compatibility.py b/test_youtube_dl_compatibility.py
+new file mode 100644
+index 000000000..a6f1f5a8e
+--- /dev/null
++++ b/test_youtube_dl_compatibility.py
+@@ -0,0 +1,55 @@
++import io
++import os
++import sys
++import pytest
++from _pytest.capture import EncodedFile, safe_text_dupfile
++
++def test_encodedfile_mode_does_not_include_b():
++    """Test that EncodedFile.mode does not include 'b' (binary) flag."""
++    # Create a temporary file
++    tmpfile = open("/tmp/test.txt", "w+")
++    try:
++        # Create an EncodedFile instance
++        ef = safe_text_dupfile(tmpfile, mode="r+")
++
++        # Check that mode does not include 'b'
++        mode = getattr(ef, "mode")
++        assert "b" not in mode, f"Mode should not include 'b', but got: {mode}"
++
++        # Clean up
++        ef.close()
++    finally:
++        tmpfile.close()
++        os.unlink("/tmp/test.txt")
++
++def test_youtube_dl_simulation():
++    """Simulate youtube-dl's behavior of checking for 'b' in mode."""
++    # Create a temporary file
++    tmpfile = open("/tmp/test.txt", "w+")
++    try:
++        # Create an EncodedFile instance
++        ef = safe_text_dupfile(tmpfile, mode="r+")
++
++        # Simulate youtube-dl's check for binary mode
++        is_binary = 'b' in getattr(ef, "mode")
++
++        # If it's binary mode, youtube-dl would write bytes
++        if is_binary:
++            write_data = b"test"
++        else:
++            write_data = "test"
++
++        # Try to write the data
++        try:
++            ef.write(write_data)
++            # If we get here, the write was successful
++            assert not is_binary, "Should not be in binary mode"
++        except TypeError as e:
++            # If we get a TypeError, it means we tried to write bytes to a text interface
++            assert is_binary, f"Unexpected TypeError: {e}"
++
++        # Clean up
++        ef.close()
++    finally:
++        tmpfile.close()
++        os.unlink("/tmp/test.txt")
+\ No newline at end of file

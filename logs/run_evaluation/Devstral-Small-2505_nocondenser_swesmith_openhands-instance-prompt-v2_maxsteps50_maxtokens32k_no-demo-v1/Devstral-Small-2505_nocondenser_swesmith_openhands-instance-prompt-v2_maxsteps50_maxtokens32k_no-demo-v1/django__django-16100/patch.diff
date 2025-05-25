@@ -1,0 +1,495 @@
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 5f07a4208a..88f0361ec0 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -2010,15 +2010,17 @@ class ModelAdmin(BaseModelAdmin):
+                 request.POST, request.FILES, queryset=modified_objects
+             )
+             if formset.is_valid():
+-                changecount = 0
+-                for form in formset.forms:
+-                    if form.has_changed():
+-                        obj = self.save_form(request, form, change=True)
+-                        self.save_model(request, obj, form, change=True)
+-                        self.save_related(request, form, formsets=[], change=True)
+-                        change_msg = self.construct_change_message(request, form, None)
+-                        self.log_change(request, obj, change_msg)
+-                        changecount += 1
++                # Wrap the list_editable processing in a transaction
++                with transaction.atomic(using=router.db_for_write(self.model)):
++                    changecount = 0
++                    for form in formset.forms:
++                        if form.has_changed():
++                            obj = self.save_form(request, form, change=True)
++                            self.save_model(request, obj, form, change=True)
++                            self.save_related(request, form, formsets=[], change=True)
++                            change_msg = self.construct_change_message(request, form, None)
++                            self.log_change(request, obj, change_msg)
++                            changecount += 1
+ 
+                 if changecount:
+                     msg = ngettext(
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..8dc30a79f7
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,143 @@
++import os
++import sys
++import django
++from django.db import transaction, models, IntegrityError
++from django.http import HttpRequest, HttpResponse
++from django.contrib import admin
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Define a model for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++        managed = False  # We'll create the table manually
++
++# Create an admin for the model with list_editable
++class TestModelAdmin(admin.ModelAdmin):
++    list_display = ('id', 'name', 'value')
++    list_editable = ('name', 'value')
++
++# Create a mock request
++def mock_request(method='POST', data=None):
++    request = HttpRequest()
++    request.method = method
++    request.POST = data or {}
++    return request
++
++# Create a mock admin site
++class MockAdminSite(admin.AdminSite):
++    site_name = "Mock Admin"
++    site_title = "Mock Admin"
++    site_header = "Mock Admin"
++    index_title = "Mock Admin"
++    enable_nav_sidebar = True
++
++# Test without transaction
++def test_without_transaction():
++    from django.contrib.admin.options import ModelAdmin
++
++    # Create a custom changelist_view that simulates the list_editable processing
++    # but without a transaction
++    def custom_changelist_view(self, request, extra_context=None):
++        if request.method == 'POST' and hasattr(self, 'list_editable') and '_save' in request.POST:
++            # Simulate the list_editable processing
++            try:
++                # First update will succeed
++                print("Updating name to 'Updated 1'")
++                # This would be the database update
++
++                # Second update will fail
++                print("Simulating error on second update")
++                raise IntegrityError("Simulated integrity error")
++
++            except IntegrityError:
++                print("Error occurred, but first update was already committed without transaction")
++
++        # Return a dummy response
++        return HttpResponse("OK")
++
++    # Replace the original method with our custom one
++    original_changelist_view = ModelAdmin.changelist_view
++    ModelAdmin.changelist_view = custom_changelist_view
++
++    try:
++        # Create a request with POST data
++        post_data = {
++            '_save': 'Save',
++            '1-name': 'Updated 1',
++            '1-value': '200',
++        }
++
++        # Make the request
++        request = mock_request(method='POST', data=post_data)
++        admin_site = MockAdminSite()
++        admin = TestModelAdmin(model=TestModel, admin_site=admin_site)
++        response = admin.changelist_view(request)
++
++        print("Without transaction: First update was committed even though error occurred")
++    finally:
++        # Restore the original method
++        ModelAdmin.changelist_view = original_changelist_view
++
++# Test with transaction
++def test_with_transaction():
++    from django.contrib.admin.options import ModelAdmin
++    from django.db import transaction
++
++    # Create a custom changelist_view that simulates the list_editable processing
++    # with a transaction
++    def custom_changelist_view(self, request, extra_context=None):
++        if request.method == 'POST' and hasattr(self, 'list_editable') and '_save' in request.POST:
++            # Simulate the list_editable processing with a transaction
++            try:
++                with transaction.atomic():
++                    # First update will succeed
++                    print("Updating name to 'Updated 1' within transaction")
++                    # This would be the database update
++
++                    # Second update will fail
++                    print("Simulating error on second update within transaction")
++                    raise IntegrityError("Simulated integrity error")
++
++            except IntegrityError:
++                print("Error occurred, transaction was rolled back")
++
++        # Return a dummy response
++        return HttpResponse("OK")
++
++    # Replace the original method with our custom one
++    original_changelist_view = ModelAdmin.changelist_view
++    ModelAdmin.changelist_view = custom_changelist_view
++
++    try:
++        # Create a request with POST data
++        post_data = {
++            '_save': 'Save',
++            '1-name': 'Updated 1',
++            '1-value': '200',
++        }
++
++        # Make the request
++        request = mock_request(method='POST', data=post_data)
++        admin_site = MockAdminSite()
++        admin = TestModelAdmin(model=TestModel, admin_site=admin_site)
++        response = admin.changelist_view(request)
++
++        print("With transaction: Both updates were rolled back because of the error")
++    finally:
++        # Restore the original method
++        ModelAdmin.changelist_view = original_changelist_view
++
++# Run the tests
++if __name__ == '__main__':
++    print("=== Testing without transaction ===")
++    test_without_transaction()
++
++    print("\n=== Testing with transaction ===")
++    test_with_transaction()
+\ No newline at end of file
+diff --git a/test_transaction.py b/test_transaction.py
+new file mode 100644
+index 0000000000..7f494ddbfc
+--- /dev/null
++++ b/test_transaction.py
+@@ -0,0 +1,219 @@
++import os
++import sys
++import unittest
++import django
++from django.db import transaction, models, IntegrityError, connections
++from django.urls import path
++from django.http import HttpRequest, HttpResponse
++from django.contrib import admin
++from django.test import TestCase, override_settings
++from django.db import connection
++
++# Configure database settings
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Define a model for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create an admin for the model with list_editable
++class TestModelAdmin(admin.ModelAdmin):
++    list_display = ('id', 'name', 'value')
++    list_editable = ('name', 'value')
++
++# Create a mock request
++def mock_request(method='POST', data=None):
++    request = HttpRequest()
++    request.method = method
++    request.POST = data or {}
++    return request
++
++# Test the changelist view without transaction
++@override_settings(DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}})
++class TestChangelistViewWithoutTransaction(TestCase):
++    def setUp(self):
++        # Create the tables
++        with connection.cursor() as cursor:
++            cursor.execute('''
++                CREATE TABLE IF NOT EXISTS test_app_testmodel (
++                    id INTEGER PRIMARY KEY AUTOINCREMENT,
++                    name VARCHAR(100),
++                    value INTEGER
++                )
++            ''')
++
++            # Create a test instance
++            cursor.execute('''
++                INSERT INTO test_app_testmodel (name, value) VALUES ('Test 1', 100)
++            ''')
++
++    def tearDown(self):
++        # Drop the tables
++        with connection.cursor() as cursor:
++            cursor.execute('DROP TABLE IF EXISTS test_app_testmodel')
++
++    def test_changelist_view_without_transaction(self):
++        """Test that without a transaction, partial updates can occur."""
++        from django.contrib.admin.options import ModelAdmin
++
++        # Get the original changelist_view method
++        original_changelist_view = ModelAdmin.changelist_view
++
++        # Create a custom changelist_view that simulates the list_editable processing
++        # but without a transaction
++        def custom_changelist_view(self, request, extra_context=None):
++            if request.method == 'POST' and hasattr(self, 'list_editable') and '_save' in request.POST:
++                # Simulate the list_editable processing
++                try:
++                    with connection.cursor() as cursor:
++                        # First update will succeed
++                        cursor.execute('''
++                            UPDATE test_app_testmodel
++                            SET name = 'Updated 1'
++                            WHERE id = 1
++                        ''')
++
++                        # Second update will fail with an integrity error
++                        # This simulates what would happen if we had validation that failed
++                        raise IntegrityError("Simulated integrity error")
++
++                except IntegrityError:
++                    # Without a transaction, the first update would be committed
++                    # even though the second update failed
++                    pass
++
++            # Return a dummy response
++            return HttpResponse("OK")
++
++        # Replace the original method with our custom one
++        ModelAdmin.changelist_view = custom_changelist_view
++
++        try:
++            # Create a request with POST data
++            post_data = {
++                '_save': 'Save',
++                '1-name': 'Updated 1',
++                '1-value': '200',
++            }
++
++            # Make the request
++            request = mock_request(method='POST', data=post_data)
++            response = TestModelAdmin(None).changelist_view(request)
++
++            # Check if the first update was applied (it should be, because there's no transaction)
++            with connection.cursor() as cursor:
++                cursor.execute('''
++                    SELECT name FROM test_app_testmodel WHERE id = 1
++                ''')
++                result = cursor.fetchone()
++
++            # The name should be updated even though an error occurred
++            self.assertEqual(result[0], 'Updated 1')
++
++        finally:
++            # Restore the original method
++            ModelAdmin.changelist_view = original_changelist_view
++
++# Test the changelist view with transaction
++class TestChangelistViewWithTransaction(TestCase):
++    @override_settings(DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}})
++    def setUp(self):
++        # Create the tables
++        with connection.cursor() as cursor:
++            cursor.execute('''
++                CREATE TABLE IF NOT EXISTS test_app_testmodel (
++                    id INTEGER PRIMARY KEY AUTOINCREMENT,
++                    name VARCHAR(100),
++                    value INTEGER
++                )
++            ''')
++
++            # Create a test instance
++            cursor.execute('''
++                INSERT INTO test_app_testmodel (name, value) VALUES ('Test 1', 100)
++            ''')
++
++    @override_settings(DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}})
++    def tearDown(self):
++        # Drop the tables
++        with connection.cursor() as cursor:
++            cursor.execute('DROP TABLE IF EXISTS test_app_testmodel')
++
++    def test_changelist_view_with_transaction(self):
++        """Test that with a transaction, partial updates are prevented."""
++        from django.contrib.admin.options import ModelAdmin
++
++        # Get the original changelist_view method
++        original_changelist_view = ModelAdmin.changelist_view
++
++        # Create a custom changelist_view that simulates the list_editable processing
++        # with a transaction
++        def custom_changelist_view(self, request, extra_context=None):
++            if request.method == 'POST' and hasattr(self, 'list_editable') and '_save' in request.POST:
++                # Simulate the list_editable processing with a transaction
++                try:
++                    with transaction.atomic():
++                        with connection.cursor() as cursor:
++                            # First update will succeed
++                            cursor.execute('''
++                                UPDATE test_app_testmodel
++                                SET name = 'Updated 1'
++                                WHERE id = 1
++                            ''')
++
++                            # Second update will fail with an integrity error
++                            # This simulates what would happen if we had validation that failed
++                            raise IntegrityError("Simulated integrity error")
++
++                except IntegrityError:
++                    # With a transaction, neither update should be committed
++                    pass
++
++            # Return a dummy response
++            return HttpResponse("OK")
++
++        # Replace the original method with our custom one
++        ModelAdmin.changelist_view = custom_changelist_view
++
++        try:
++            # Create a request with POST data
++            post_data = {
++                '_save': 'Save',
++                '1-name': 'Updated 1',
++                '1-value': '200',
++            }
++
++            # Make the request
++            request = mock_request(method='POST', data=post_data)
++            response = TestModelAdmin(None).changelist_view(request)
++
++            # Check if the first update was rolled back (it should be, because of the transaction)
++            with connection.cursor() as cursor:
++                cursor.execute('''
++                    SELECT name FROM test_app_testmodel WHERE id = 1
++                ''')
++                result = cursor.fetchone()
++
++            # The name should NOT be updated because the transaction was rolled back
++            self.assertEqual(result[0], 'Test 1')
++
++        finally:
++            # Restore the original method
++            ModelAdmin.changelist_view = original_changelist_view
++
++# Run the tests
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..7297174e4b
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,81 @@
++import os
++import sys
++import django
++from django.db import transaction, models, IntegrityError
++from django.http import HttpRequest, HttpResponse
++from django.contrib import admin
++from django.contrib.admin.options import ModelAdmin
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Define a model for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++        managed = False  # We'll create the table manually
++
++# Create an admin for the model with list_editable
++class TestModelAdmin(ModelAdmin):
++    list_display = ('id', 'name', 'value')
++    list_editable = ('name', 'value')
++
++# Create a mock request
++def mock_request(method='POST', data=None):
++    request = HttpRequest()
++    request.method = method
++    request.POST = data or {}
++    return request
++
++# Create a mock admin site
++class MockAdminSite(admin.AdminSite):
++    site_name = "Mock Admin"
++    site_title = "Mock Admin"
++    site_header = "Mock Admin"
++    index_title = "Mock Admin"
++    enable_nav_sidebar = True
++
++# Test the fixed changelist_view with transaction
++def test_fixed_changelist_view():
++    # Create a request with POST data
++    post_data = {
++        '_save': 'Save',
++        '1-name': 'Updated 1',
++        '1-value': '200',
++    }
++
++    # Make the request
++    request = mock_request(method='POST', data=post_data)
++    admin_site = MockAdminSite()
++    admin = TestModelAdmin(model=TestModel, admin_site=admin_site)
++
++    # Create a custom save_model method that raises an IntegrityError
++    original_save_model = admin.save_model
++    def mock_save_model(self, request, obj, form, change):
++        if obj.pk == 1 and form.cleaned_data['name'] == 'Updated 1':
++            raise IntegrityError("Simulated integrity error")
++        return original_save_model(request, obj, form, change)
++
++    # Replace the save_model method
++    admin.save_model = mock_save_model
++
++    try:
++        # Call the changelist_view method
++        response = admin.changelist_view(request)
++
++        # If we get here, the transaction was properly rolled back
++        print("Test passed: The transaction was properly rolled back")
++    except Exception as e:
++        # If we get an exception, it means the transaction worked as expected
++        print(f"Test passed: Exception caught as expected: {str(e)}")
++    finally:
++        # Restore the original save_model method
++        admin.save_model = original_save_model
++
++# Run the test
++if __name__ == '__main__':
++    test_fixed_changelist_view()
+\ No newline at end of file

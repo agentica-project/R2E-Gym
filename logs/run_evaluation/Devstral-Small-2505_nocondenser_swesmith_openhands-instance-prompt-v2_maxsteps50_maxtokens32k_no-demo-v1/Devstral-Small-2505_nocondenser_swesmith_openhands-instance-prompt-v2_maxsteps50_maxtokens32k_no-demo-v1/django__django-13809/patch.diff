@@ -1,0 +1,99 @@
+diff --git a/django/core/management/commands/runserver.py b/django/core/management/commands/runserver.py
+index d9fb088350..93da4f14e5 100644
+--- a/django/core/management/commands/runserver.py
++++ b/django/core/management/commands/runserver.py
+@@ -25,7 +25,7 @@ class Command(BaseCommand):
+     help = "Starts a lightweight Web server for development."
+ 
+     # Validation is called explicitly each time the server is reloaded.
+-    requires_system_checks = []
++    requires_system_checks = True
+     stealth_options = ('shutdown_message',)
+ 
+     default_addr = '127.0.0.1'
+diff --git a/manage.py b/manage.py
+new file mode 100644
+index 0000000000..87731826c3
+--- /dev/null
++++ b/manage.py
+@@ -0,0 +1,15 @@
++#!/usr/bin/env python
++import os
++import sys
++
++if __name__ == '__main__':
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError(
++            "Couldn't import Django. Are you sure it's installed and "
++            "available on your PYTHONPATH environment variable? Did you "
++            "forget to activate a virtual environment?"
++        ) from exc
++    execute_from_command_line(sys.argv)
+\ No newline at end of file
+diff --git a/test_runserver_skip_checks.py b/test_runserver_skip_checks.py
+new file mode 100644
+index 0000000000..9d8d1f8bd4
+--- /dev/null
++++ b/test_runserver_skip_checks.py
+@@ -0,0 +1,57 @@
++import sys
++import subprocess
++import time
++
++def test_runserver_with_skip_checks():
++    print("Testing runserver command with and without --skip-checks...")
++
++    # Start a runserver process without --skip-checks
++    print("\nStarting runserver without --skip-checks...")
++    start_time = time.time()
++    process1 = subprocess.Popen(
++        ["python", "manage.py", "runserver", "--noreload", "--nothreading", "8001"],
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        cwd="/testbed"
++    )
++
++    # Wait a short time and then terminate the process
++    time.sleep(5)  # Give it enough time to start and perform checks
++    process1.terminate()
++    process1.wait()
++
++    duration1 = time.time() - start_time
++    print(f"Runserver without --skip-checks took approximately {duration1:.2f} seconds")
++
++    # Start a runserver process with --skip-checks
++    print("\nStarting runserver with --skip-checks...")
++    start_time = time.time()
++    process2 = subprocess.Popen(
++        ["python", "manage.py", "runserver", "--noreload", "--nothreading", "--skip-checks", "8002"],
++        stdout=subprocess.PIPE,
++        stderr=subprocess.PIPE,
++        cwd="/testbed"
++    )
++
++    # Wait a short time and then terminate the process
++    time.sleep(5)  # Give it enough time to start
++    process2.terminate()
++    process2.wait()
++
++    duration2 = time.time() - start_time
++    print(f"Runserver with --skip-checks took approximately {duration2:.2f} seconds")
++
++    # Check if the --skip-checks option made a difference
++    if duration1 > duration2:
++        print("\nSUCCESS: --skip-checks option appears to be working (faster startup)")
++    else:
++        print("\nFAILURE: --skip-checks option does not appear to be making a difference")
++
++    # Print the output for debugging
++    print("\nOutput without --skip-checks:")
++    print(process1.stderr.read().decode('utf-8')[:500] + "...")
++    print("\nOutput with --skip-checks:")
++    print(process2.stderr.read().decode('utf-8')[:500] + "...")
++
++if __name__ == "__main__":
++    test_runserver_with_skip_checks()
+\ No newline at end of file

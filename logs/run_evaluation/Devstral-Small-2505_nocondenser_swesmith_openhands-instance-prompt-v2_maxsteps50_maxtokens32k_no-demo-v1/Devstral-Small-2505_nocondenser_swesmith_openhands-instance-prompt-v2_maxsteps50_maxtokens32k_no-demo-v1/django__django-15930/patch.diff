@@ -1,0 +1,61 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6efbef9970
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,54 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.db.backends',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    }
++)
++
++django.setup()
++
++from django.db.models import Case, When, Q, Value, BooleanField
++
++# Create a Q object with an empty list
++q = Q(pk__in=[])
++negated_q = ~q
++
++# Create a When with the negated Q
++when = When(negated_q, then=Value(True))
++
++# Print the string representation of the When
++print("When object:")
++print(when)
++
++# Now try to create a Case with the When
++case_expr = Case(when, default=Value(False), output_field=BooleanField())
++
++# Print the string representation of the Case
++print("\nCase object:")
++print(case_expr)
++
++# Let's look at the Q object
++print("\nNegated Q object:")
++print(negated_q)
++print("Is negated Q empty?", not negated_q)
++
++# Let's try to simulate what happens when we compile this
++print("\nSimulating SQL generation:")
++template = "WHEN %(condition)s THEN %(result)s"
++condition = ""  # This would be empty for ~Q(pk__in=[])
++result = "True"
++template_params = {"condition": condition, "result": result}
++sql = template % template_params
++print("Generated SQL would be:")
++print(f"CASE {sql} ELSE False END")
+\ No newline at end of file

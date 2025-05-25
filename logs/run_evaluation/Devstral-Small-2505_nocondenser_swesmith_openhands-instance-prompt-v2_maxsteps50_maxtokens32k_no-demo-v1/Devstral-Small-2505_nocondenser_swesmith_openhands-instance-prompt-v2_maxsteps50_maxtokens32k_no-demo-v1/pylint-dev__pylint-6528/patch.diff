@@ -1,0 +1,144 @@
+diff --git a/pylint/lint/pylinter.py b/pylint/lint/pylinter.py
+index 53345a6b1..92c4a63f4 100644
+--- a/pylint/lint/pylinter.py
++++ b/pylint/lint/pylinter.py
+@@ -31,7 +31,7 @@ from pylint.constants import (
+ )
+ from pylint.lint.base_options import _make_linter_options
+ from pylint.lint.caching import load_results, save_results
+-from pylint.lint.expand_modules import expand_modules
++from pylint.lint.expand_modules import expand_modules, _is_in_ignore_list_re
+ from pylint.lint.message_state_handler import _MessageStateHandler
+ from pylint.lint.parallel import check_parallel
+ from pylint.lint.report_functions import (
+@@ -564,30 +564,62 @@ class PyLinter(
+             if not msg.may_be_emitted():
+                 self._msgs_state[msg.msgid] = False
+ 
+-    @staticmethod
+-    def _discover_files(files_or_modules: Sequence[str]) -> Iterator[str]:
++    def _discover_files(self, files_or_modules: Sequence[str]) -> Iterator[str]:
+         """Discover python modules and packages in sub-directory.
+ 
+         Returns iterator of paths to discovered modules and packages.
+         """
+         for something in files_or_modules:
++            # Skip if the item itself should be ignored
++            if os.path.isdir(something):
++                basename = os.path.basename(something)
++                if (
++                    basename in self.config.ignore
++                    or _is_in_ignore_list_re(basename, self.config.ignore_patterns)
++                    or _is_in_ignore_list_re(something, self.config.ignore_paths)
++                ):
++                    continue
++
+             if os.path.isdir(something) and not os.path.isfile(
+                 os.path.join(something, "__init__.py")
+             ):
+                 skip_subtrees: list[str] = []
+                 for root, _, files in os.walk(something):
++                    # Skip directories that should be ignored
+                     if any(root.startswith(s) for s in skip_subtrees):
+                         # Skip subtree of already discovered package.
+                         continue
++
++                    # Skip if the directory itself should be ignored
++                    basename = os.path.basename(root)
++                    if (
++                        basename in self.config.ignore
++                        or _is_in_ignore_list_re(basename, self.config.ignore_patterns)
++                        or _is_in_ignore_list_re(root, self.config.ignore_paths)
++                    ):
++                        continue
++
+                     if "__init__.py" in files:
+                         skip_subtrees.append(root)
+                         yield root
+                     else:
+-                        yield from (
+-                            os.path.join(root, file)
+-                            for file in files
+-                            if file.endswith(".py")
+-                        )
++                        # Filter out files that should be ignored
++                        for file in files:
++                            if not file.endswith(".py"):
++                                continue
++
++                            filepath = os.path.join(root, file)
++                            filename = os.path.basename(file)
++
++                            # Skip if the file should be ignored
++                            if (
++                                filename in self.config.ignore
++                                or _is_in_ignore_list_re(filename, self.config.ignore_patterns)
++                                or _is_in_ignore_list_re(filepath, self.config.ignore_paths)
++                            ):
++                                continue
++
++                            yield filepath
+             else:
+                 yield something
+ 
+diff --git a/test_ignore_recursive.py b/test_ignore_recursive.py
+new file mode 100755
+index 000000000..c7efb4476
+--- /dev/null
++++ b/test_ignore_recursive.py
+@@ -0,0 +1,40 @@
++#!/usr/bin/env python3
++import os
++import shutil
++import subprocess
++import sys
++import tempfile
++
++# Create test directory structure
++test_dir = "test_ignore_recursive"
++if os.path.exists(test_dir):
++    shutil.rmtree(test_dir)
++os.makedirs(test_dir)
++os.makedirs(os.path.join(test_dir, ".a"))
++
++# Create test files
++with open(os.path.join(test_dir, "bar.py"), "w") as f:
++    f.write("# import re\n")
++
++with open(os.path.join(test_dir, ".a", "foo.py"), "w") as f:
++    f.write("# import re\n")
++
++# Change to test directory
++os.chdir(test_dir)
++
++# Run pylint with different options
++print("=== Running: pylint --recursive=y . ===")
++result = subprocess.run(["pylint", "--recursive=y", "."], check=False, capture_output=True, text=True)
++print(result.stdout)
++
++print("\n=== Running: pylint --recursive=y --ignore=.a . ===")
++result = subprocess.run(["pylint", "--recursive=y", "--ignore=.a", "."], check=False, capture_output=True, text=True)
++print(result.stdout)
++
++print("\n=== Running: pylint --recursive=y --ignore-paths=.a . ===")
++result = subprocess.run(["pylint", "--recursive=y", "--ignore-paths=.a", "."], check=False, capture_output=True, text=True)
++print(result.stdout)
++
++print("\n=== Running: pylint --recursive=y --ignore-patterns='^\.a' . ===")
++result = subprocess.run(["pylint", "--recursive=y", "--ignore-patterns=^\\.a", "."], check=False, capture_output=True, text=True)
++print(result.stdout)
+\ No newline at end of file
+diff --git a/test_ignore_recursive/.a/foo.py b/test_ignore_recursive/.a/foo.py
+new file mode 100644
+index 000000000..1dd4d07d9
+--- /dev/null
++++ b/test_ignore_recursive/.a/foo.py
+@@ -0,0 +1 @@
++# import re
+diff --git a/test_ignore_recursive/bar.py b/test_ignore_recursive/bar.py
+new file mode 100644
+index 000000000..1dd4d07d9
+--- /dev/null
++++ b/test_ignore_recursive/bar.py
+@@ -0,0 +1 @@
++# import re

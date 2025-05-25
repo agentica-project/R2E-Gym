@@ -1,0 +1,162 @@
+diff --git a/django/http/response.py b/django/http/response.py
+index e00bcacefb..a2da406bd7 100644
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -217,6 +217,7 @@ class HttpResponseBase:
+         self.set_cookie(
+             key, max_age=0, path=path, domain=domain, secure=secure,
+             expires='Thu, 01 Jan 1970 00:00:00 GMT',
++            samesite=settings.SESSION_COOKIE_SAMESITE,
+         )
+ 
+     # Common methods used by subclasses
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..447d632751
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,109 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    SESSION_COOKIE_SAMESITE='Lax',
++)
++
++django.setup()
++
++from django.http import HttpResponse
++from http import cookies
++
++def test_delete_cookie():
++    # Simulate how the messages app uses cookies
++    cookie_name = 'messages'
++
++    # Create a response and set a cookie with SameSite attribute
++    response = HttpResponse()
++    response.set_cookie(
++        cookie_name,
++        'test message',
++        path='/',
++        domain=settings.SESSION_COOKIE_DOMAIN,
++        secure=settings.SESSION_COOKIE_SECURE,
++        httponly=settings.SESSION_COOKIE_HTTPONLY,
++        samesite=settings.SESSION_COOKIE_SAMESITE,
++    )
++
++    # Print the Set-Cookie header for the original cookie
++    print("Original cookie header:")
++    original_cookie_str = response.cookies.output(header='Set-Cookie')
++    print(f"  Set-Cookie: {original_cookie_str}")
++
++    # Examine the cookie attributes
++    print("\nOriginal cookie attributes:")
++    for key, value in response.cookies[cookie_name].items():
++        print(f"  {key}: {value}")
++
++    # Now delete the cookie using the same parameters as the messages app
++    response.delete_cookie(cookie_name, domain=settings.SESSION_COOKIE_DOMAIN)
++
++    # Print the Set-Cookie header for the deleted cookie
++    print("\nDeleted cookie header:")
++    deleted_cookie_str = response.cookies.output(header='Set-Cookie')
++    print(f"  Set-Cookie: {deleted_cookie_str}")
++
++    # Examine the cookie attributes
++    print("\nDeleted cookie attributes:")
++    for key, value in response.cookies[cookie_name].items():
++        print(f"  {key}: {value}")
++
++    # Check if SameSite attribute is present in the deleted cookie string
++    if 'SameSite=Lax' in deleted_cookie_str:
++        print("\nSameSite attribute is present in the deleted cookie header.")
++    else:
++        print("\nSameSite attribute is missing in the deleted cookie header!")
++
++    # Now let's try with SameSite=None
++    print("\n\nTesting with SameSite=None:")
++    settings.SESSION_COOKIE_SAMESITE = 'None'
++    settings.SESSION_COOKIE_SECURE = True  # Required for SameSite=None
++
++    response = HttpResponse()
++    response.set_cookie(
++        cookie_name,
++        'test message',
++        path='/',
++        domain=settings.SESSION_COOKIE_DOMAIN,
++        secure=settings.SESSION_COOKIE_SECURE,
++        httponly=settings.SESSION_COOKIE_HTTPONLY,
++        samesite=settings.SESSION_COOKIE_SAMESITE,
++    )
++
++    # Print the Set-Cookie header for the original cookie
++    print("Original cookie header:")
++    original_cookie_str = response.cookies.output(header='Set-Cookie')
++    print(f"  Set-Cookie: {original_cookie_str}")
++
++    # Examine the cookie attributes
++    print("\nOriginal cookie attributes:")
++    for key, value in response.cookies[cookie_name].items():
++        print(f"  {key}: {value}")
++
++    # Now delete the cookie
++    response.delete_cookie(cookie_name, domain=settings.SESSION_COOKIE_DOMAIN)
++
++    # Print the Set-Cookie header for the deleted cookie
++    print("\nDeleted cookie header:")
++    deleted_cookie_str = response.cookies.output(header='Set-Cookie')
++    print(f"  Set-Cookie: {deleted_cookie_str}")
++
++    # Examine the cookie attributes
++    print("\nDeleted cookie attributes:")
++    for key, value in response.cookies[cookie_name].items():
++        print(f"  {key}: {value}")
++
++    # Check if SameSite attribute is present in the deleted cookie string
++    if 'SameSite=None' in deleted_cookie_str:
++        print("\nSameSite attribute is present in the deleted cookie header.")
++    else:
++        print("\nSameSite attribute is missing in the deleted cookie header!")
++
++if __name__ == '__main__':
++    test_delete_cookie()
+\ No newline at end of file
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..2f37fb6930
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,27 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    SESSION_COOKIE_SAMESITE='Lax',
++)
++
++django.setup()
++
++from django.test.utils import setup_test_environment
++setup_test_environment()
++
++from django.test.runner import DiscoverRunner
++runner = DiscoverRunner()
++failures = runner.run_tests(['tests.responses.test_cookie'])
++sys.exit(bool(failures))
+\ No newline at end of file

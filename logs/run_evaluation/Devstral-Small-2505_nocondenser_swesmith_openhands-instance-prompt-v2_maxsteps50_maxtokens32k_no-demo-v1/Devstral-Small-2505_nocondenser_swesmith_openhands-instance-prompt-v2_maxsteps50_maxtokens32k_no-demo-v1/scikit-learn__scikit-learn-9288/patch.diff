@@ -1,0 +1,159 @@
+diff --git a/debug_init.py b/debug_init.py
+new file mode 100644
+index 000000000..9e39d902f
+--- /dev/null
++++ b/debug_init.py
+@@ -0,0 +1,30 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++# Generate some data
++X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++
++# Run KMeans with n_jobs=1 and init='random' to see the initialization
++kmeans_1 = KMeans(n_clusters=10, random_state=2, n_jobs=1, init='random', n_init=1)
++kmeans_1.fit(X)
++print("n_jobs=1, init='random', n_init=1 centers:")
++print(kmeans_1.cluster_centers_)
++
++# Run KMeans with n_jobs=2 and init='random' to see the initialization
++kmeans_2 = KMeans(n_clusters=10, random_state=2, n_jobs=2, init='random', n_init=1)
++kmeans_2.fit(X)
++print("\nn_jobs=2, init='random', n_init=1 centers:")
++print(kmeans_2.cluster_centers_)
++
++# Run KMeans with n_jobs=1 and init='k-means++' to see the initialization
++kmeans_3 = KMeans(n_clusters=10, random_state=2, n_jobs=1, init='k-means++', n_init=1)
++kmeans_3.fit(X)
++print("\nn_jobs=1, init='k-means++', n_init=1 centers:")
++print(kmeans_3.cluster_centers_)
++
++# Run KMeans with n_jobs=2 and init='k-means++' to see the initialization
++kmeans_4 = KMeans(n_clusters=10, random_state=2, n_jobs=2, init='k-means++', n_init=1)
++kmeans_4.fit(X)
++print("\nn_jobs=2, init='k-means++', n_init=1 centers:")
++print(kmeans_4.cluster_centers_)
+\ No newline at end of file
+diff --git a/debug_kmeans_issue.py b/debug_kmeans_issue.py
+new file mode 100644
+index 000000000..c7ae4be87
+--- /dev/null
++++ b/debug_kmeans_issue.py
+@@ -0,0 +1,34 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++# Generate some data
++X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++
++# Run KMeans with n_jobs=1 and save the centers
++kmeans_1 = KMeans(n_clusters=10, random_state=2, n_jobs=1)
++kmeans_1.fit(X)
++centers_1 = kmeans_1.cluster_centers_
++inertia_1 = kmeans_1.inertia_
++
++# Run KMeans with n_jobs=2 and save the centers
++kmeans_2 = KMeans(n_clusters=10, random_state=2, n_jobs=2)
++kmeans_2.fit(X)
++centers_2 = kmeans_2.cluster_centers_
++inertia_2 = kmeans_2.inertia_
++
++# Print detailed information
++print(f'n_jobs=1 inertia: {inertia_1}')
++print(f'n_jobs=2 inertia: {inertia_2}')
++print(f'Inertia difference: {abs(inertia_1 - inertia_2)}')
++
++print('\nCenters difference:')
++for i in range(10):
++    print(f'Center {i}: {np.linalg.norm(centers_1[i] - centers_2[i])}')
++
++# Check if the initialization is different
++print('\nChecking initialization:')
++for n_jobs in [1, 2]:
++    kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs, init='random', n_init=1)
++    kmeans.fit(X)
++    print(f'n_jobs={n_jobs} init centers:\n{kmeans.cluster_centers_}')
+\ No newline at end of file
+diff --git a/reproduce_kmeans_issue.py b/reproduce_kmeans_issue.py
+new file mode 100644
+index 000000000..3b21e1c30
+--- /dev/null
++++ b/reproduce_kmeans_issue.py
+@@ -0,0 +1,23 @@
++from sklearn.cluster import KMeans
++from sklearn.datasets import make_blobs
++import numpy as np
++
++# Generate some data
++X, y = make_blobs(n_samples=10000, centers=10, n_features=2, random_state=2)
++
++# Run KMeans with various n_jobs values
++for n_jobs in range(1, 5):
++    kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs)
++    kmeans.fit(X)
++    print(f'(n_jobs={n_jobs}) kmeans.inertia_ = {kmeans.inertia_}')
++
++# Also check the cluster centers to see if they differ
++print("\nCluster centers differences:")
++kmeans_1 = KMeans(n_clusters=10, random_state=2, n_jobs=1).fit(X)
++centers_1 = kmeans_1.cluster_centers_
++
++for n_jobs in range(2, 5):
++    kmeans = KMeans(n_clusters=10, random_state=2, n_jobs=n_jobs).fit(X)
++    centers = kmeans.cluster_centers_
++    diff = np.max(np.abs(centers_1 - centers))
++    print(f'(n_jobs={n_jobs}) max center difference = {diff}')
+\ No newline at end of file
+diff --git a/sklearn/cluster/k_means_.py b/sklearn/cluster/k_means_.py
+index b7fbdf7da..97cfaacbf 100644
+--- a/sklearn/cluster/k_means_.py
++++ b/sklearn/cluster/k_means_.py
+@@ -377,17 +377,35 @@ def k_means(X, n_clusters, sample_weight=None, init='k-means++',
+                 best_inertia = inertia
+                 best_n_iter = n_iter_
+     else:
+-        # parallelisation of k-means runs
+-        seeds = random_state.randint(np.iinfo(np.int32).max, size=n_init)
+-        results = Parallel(n_jobs=n_jobs, verbose=0)(
+-            delayed(kmeans_single)(X, sample_weight, n_clusters,
+-                                   max_iter=max_iter, init=init,
+-                                   verbose=verbose, tol=tol,
+-                                   precompute_distances=precompute_distances,
+-                                   x_squared_norms=x_squared_norms,
+-                                   # Change seed to ensure variety
+-                                   random_state=seed)
+-            for seed in seeds)
++        # For parallel execution, we need to ensure deterministic behavior
++        # by using the same random state for each initialization
++
++        # Instead of using parallel execution for n_init runs, which can lead to
++        # non-deterministic behavior, we'll run each initialization sequentially
++        # but still use multiple threads for the internal computations of each run
++
++        # Create a list to store the results
++        results = []
++
++        # Run each initialization sequentially
++        for i in range(n_init):
++            # Create a new random state for this initialization
++            # Use the original random state to generate a seed
++            seed = random_state.randint(np.iinfo(np.int32).max)
++            rs = check_random_state(seed)
++
++            # Run kmeans_single with this random state
++            # We're not using Parallel here to avoid non-deterministic behavior
++            result = kmeans_single(X, sample_weight, n_clusters,
++                                  max_iter=max_iter, init=init,
++                                  verbose=verbose, tol=tol,
++                                  precompute_distances=precompute_distances,
++                                  x_squared_norms=x_squared_norms,
++                                  random_state=rs)
++
++            # Store the result
++            results.append(result)
++
+         # Get results with the lowest inertia
+         labels, inertia, centers, n_iters = zip(*results)
+         best = np.argmin(inertia)

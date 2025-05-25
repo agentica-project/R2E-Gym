@@ -1,0 +1,188 @@
+diff --git a/django/db/models/fields/related.py b/django/db/models/fields/related.py
+index d517d7269b..c2aea9c730 100644
+--- a/django/db/models/fields/related.py
++++ b/django/db/models/fields/related.py
+@@ -914,7 +914,7 @@ class ForeignKey(ForeignObject):
+             return
+ 
+         using = router.db_for_read(self.remote_field.model, instance=model_instance)
+-        qs = self.remote_field.model._default_manager.using(using).filter(
++        qs = self.remote_field.model._base_manager.using(using).filter(
+             **{self.remote_field.field_name: value}
+         )
+         qs = qs.complex_filter(self.get_limit_choices_to())
+diff --git a/minimal_test.py b/minimal_test.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_foreignkey_validate.py b/test_foreignkey_validate.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/test_foreignkey_validation.py b/test_foreignkey_validation.py
+new file mode 100644
+index 0000000000..2244388300
+--- /dev/null
++++ b/test_foreignkey_validation.py
+@@ -0,0 +1,98 @@
++import os
++import sys
++import django
++from django.db import models
++from django import forms
++from django.core import exceptions
++from django.conf import settings
++from unittest.mock import patch, MagicMock
++
++# Set up Django
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key-for-testing',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++# Define a mock database backend to avoid actual database operations
++class MockDatabaseBackend:
++    def __init__(self):
++        self.articles = [
++            {'id': 123, 'title': 'Archived Article', 'archived': True}
++        ]
++
++    def filter(self, **kwargs):
++        results = [a for a in self.articles if a.get('archived') == False]
++        mock_qs = MagicMock()
++        mock_qs.exists.return_value = False  # Default to not found
++        mock_qs.__bool__.return_value = False
++        return mock_qs
++
++    def complex_filter(self, *args, **kwargs):
++        return self
++
++# Define models as described in the issue
++class ArticleManager(models.Manager):
++    def get_queryset(self):
++        qs = super().get_queryset()
++        return qs.filter(archived=False)
++
++class Article(models.Model):
++    title = models.CharField(max_length=100)
++    archived = models.BooleanField(default=False)
++    # Don't include archived articles by default.
++    objects = ArticleManager()
++
++    # Mock the _default_manager and _base_manager
++    _default_manager = MockDatabaseBackend()
++    _base_manager = MockDatabaseBackend()
++
++    class Meta:
++        app_label = 'test_app'
++        # Avoid creating actual tables
++        managed = False
++
++class FavoriteArticle(models.Model):
++    article = models.ForeignKey(Article, on_delete=models.CASCADE)
++
++    class Meta:
++        app_label = 'test_app'
++        # Avoid creating actual tables
++        managed = False
++
++# Define the form as described in the issue
++class FavoriteArticlesForm(forms.ModelForm):
++    class Meta:
++        model = FavoriteArticle
++        fields = '__all__'
++
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        # Use the base manager instead of the default manager to allow archived articles.
++        self.fields['article'].queryset = Article._base_manager.all()
++
++# Create a test article (simulate an archived article with ID 123)
++class TestForeignKeyValidation:
++    def run(self):
++        # Create a form with the archived article
++        form = FavoriteArticlesForm({'article': 123})
++
++        # Check if the form is valid
++        is_valid = form.is_valid()
++
++        print(f"Form is valid: {is_valid}")
++
++        if not is_valid:
++            print("Form errors:", form.errors)
++            print("This demonstrates the issue: the form should be valid but isn't because")
++            print("ForeignKey validation uses _default_manager instead of _base_manager")
++        else:
++            print("The fix works! The form is valid as expected.")
++
++if __name__ == "__main__":
++    test = TestForeignKeyValidation()
++    test.run()
+\ No newline at end of file
+diff --git a/verify.py b/verify.py
+new file mode 100644
+index 0000000000..935ee56da3
+--- /dev/null
++++ b/verify.py
+@@ -0,0 +1,49 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Set up Django
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key-for-testing',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++# Import necessary modules
++from django.db.models.fields.related import ForeignKey
++from django.db import models
++from django.core.exceptions import ValidationError
++from unittest.mock import MagicMock
++
++# Create a mock model
++class MockModel(models.Model):
++    class Meta:
++        app_label = 'test_app'
++        verbose_name = 'mock model'
++
++# Create a ForeignKey instance
++fk = ForeignKey(MockModel, on_delete=models.CASCADE)
++
++# Create mock managers
++mock_base_manager = MagicMock()
++mock_base_filter = MagicMock()
++mock_base_filter.exists.return_value = True
++mock_base_manager.filter.return_value = mock_base_filter
++
++# Assign the mock managers to the model
++MockModel._base_manager = mock_base_manager
++
++# Create a mock model instance
++model_instance = MagicMock()
++
++# Test validation
++try:
++    fk.validate(123, model_instance)
++    print('✅ Fix works! Validation succeeded with _base_manager')
++except ValidationError:
++    print('❌ Fix failed! Validation raised an exception')
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/verify_fix_simple.py b/verify_fix_simple.py
+new file mode 100644
+index 0000000000..e69de29bb2

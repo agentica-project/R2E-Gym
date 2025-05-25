@@ -1,0 +1,202 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..6142dca16
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,15 @@
++import numpy as np
++from unittest.mock import patch
++
++# Create a simple function to patch
++def target_function():
++    return "original"
++
++# Patch the function with a NumPy array as the new value
++@patch('__main__.target_function', new=np.array([-5.5, 3.0]))
++def test_patch_with_array():
++    result = target_function()
++    print(f"Patched result: {result}")
++
++if __name__ == "__main__":
++    test_patch_with_array()
+\ No newline at end of file
+diff --git a/src/_pytest/compat.py b/src/_pytest/compat.py
+index d238061b4..b3c58ed0f 100644
+--- a/src/_pytest/compat.py
++++ b/src/_pytest/compat.py
+@@ -68,7 +68,7 @@ def num_mock_patch_args(function):
+     if any(mock_modules):
+         sentinels = [m.DEFAULT for m in mock_modules if m is not None]
+         return len(
+-            [p for p in patchings if not p.attribute_name and p.new in sentinels]
++            [p for p in patchings if not p.attribute_name and any(p.new == s for s in sentinels)]
+         )
+     return len(patchings)
+ 
+diff --git a/test_patch_array.py b/test_patch_array.py
+new file mode 100644
+index 000000000..528f5677e
+--- /dev/null
++++ b/test_patch_array.py
+@@ -0,0 +1,13 @@
++import numpy as np
++from unittest.mock import patch
++
++# Create a simple function to patch
++def target_function():
++    return "original"
++
++# Patch the function with a NumPy array as the new value
++@patch('test_patch_array.target_function', new=np.array([-5.5, 3.0]))
++def test_patch_with_array():
++    result = target_function()
++    assert result[0] == -5.5
++    assert result[1] == 3.0
+\ No newline at end of file
+diff --git a/test_patch_fix.py b/test_patch_fix.py
+new file mode 100644
+index 000000000..ee4b49e36
+--- /dev/null
++++ b/test_patch_fix.py
+@@ -0,0 +1,30 @@
++import pytest
++from unittest.mock import patch
++
++# Create a simple function to patch
++def target_function():
++    return "original"
++
++# Patch the function with a list as the new value
++@patch('test_patch_fix.target_function', new=[1, 2, 3])
++def test_patch_with_list():
++    result = target_function()
++    assert result == [1, 2, 3]
++
++# Patch the function with a dictionary as the new value
++@patch('test_patch_fix.target_function', new={'a': 1, 'b': 2})
++def test_patch_with_dict():
++    result = target_function()
++    assert result == {'a': 1, 'b': 2}
++
++# Patch the function with a tuple as the new value
++@patch('test_patch_fix.target_function', new=(1, 2, 3))
++def test_patch_with_tuple():
++    result = target_function()
++    assert result == (1, 2, 3)
++
++# Patch the function with a scalar value
++@patch('test_patch_fix.target_function', new=42)
++def test_patch_with_scalar():
++    result = target_function()
++    assert result == 42
+\ No newline at end of file
+diff --git a/test_patch_list.py b/test_patch_list.py
+new file mode 100644
+index 000000000..f4f0730b3
+--- /dev/null
++++ b/test_patch_list.py
+@@ -0,0 +1,13 @@
++from unittest.mock import patch
++
++# Create a simple function to patch
++def target_function():
++    return "original"
++
++# Patch the function with a list as the new value
++@patch('test_patch_list.target_function', new=[1, 2, 3])
++def test_patch_with_list():
++    result = target_function()
++    assert result[0] == 1
++    assert result[1] == 2
++    assert result[2] == 3
+\ No newline at end of file
+diff --git a/test_patch_mock.py b/test_patch_mock.py
+new file mode 100644
+index 000000000..63a4e4ba4
+--- /dev/null
++++ b/test_patch_mock.py
+@@ -0,0 +1,28 @@
++import pytest
++from unittest.mock import patch, Mock
++
++# Create a simple function to patch
++def target_function():
++    return "original"
++
++# Patch the function with a Mock
++@patch('test_patch_mock.target_function')
++def test_patch_with_mock(mock_target):
++    mock_target.return_value = [1, 2, 3]
++    result = target_function()
++    assert result == [1, 2, 3]
++
++# Patch the function with a specific value
++@patch('test_patch_mock.target_function')
++def test_patch_with_return_value(mock_target):
++    mock_target.return_value = [1, 2, 3]
++    result = target_function()
++    assert result == [1, 2, 3]
++
++# Patch the function with a side_effect
++@patch('test_patch_mock.target_function')
++def test_patch_with_side_effect(mock_target):
++    mock_target.side_effect = [1, 2, 3]
++    assert target_function() == 1
++    assert target_function() == 2
++    assert target_function() == 3
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 000000000..5ab399017
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,48 @@
++import sys
++import os
++import inspect
++
++# Add the src directory to the Python path
++sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
++
++from _pytest.compat import num_mock_patch_args
++
++# Create a mock patching object with a NumPy array as new value
++class MockPatch:
++    def __init__(self, attribute_name, new_value):
++        self.attribute_name = attribute_name
++        self.new = new_value
++
++# Create a mock function with patchings attribute
++def mock_function():
++    pass
++
++# Test with a scalar value
++mock_function.patchings = [MockPatch(None, 123)]
++print(f"Scalar value: {num_mock_patch_args(mock_function)}")
++
++# Test with a list value
++mock_function.patchings = [MockPatch(None, [1, 2, 3])]
++print(f"List value: {num_mock_patch_args(mock_function)}")
++
++# Test with a tuple value
++mock_function.patchings = [MockPatch(None, (1, 2, 3))]
++print(f"Tuple value: {num_mock_patch_args(mock_function)}")
++
++# Test with a dictionary value
++mock_function.patchings = [MockPatch(None, {'a': 1, 'b': 2})]
++print(f"Dict value: {num_mock_patch_args(mock_function)}")
++
++# Test with no patchings
++mock_function.patchings = []
++print(f"No patchings: {num_mock_patch_args(mock_function)}")
++
++# Test with None patchings
++mock_function.patchings = None
++print(f"None patchings: {num_mock_patch_args(mock_function)}")
++
++# Test with attribute_name set
++mock_function.patchings = [MockPatch("attr", 123)]
++print(f"With attribute_name: {num_mock_patch_args(mock_function)}")
++
++print("All tests completed successfully!")
+\ No newline at end of file

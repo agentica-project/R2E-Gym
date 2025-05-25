@@ -1,0 +1,515 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index a44adfc760..c68c2184c5 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -425,7 +425,10 @@ class SQLCompiler:
+                 # If the columns list is limited, then all combined queries
+                 # must have the same columns list. Set the selects defined on
+                 # the query on all combined queries, if not already set.
+-                if not compiler.query.values_select and self.query.values_select:
++                # However, respect the column list if the query is in a values()/values_list() call.
++                if (not compiler.query.values_select and
++                    self.query.values_select and
++                    not getattr(compiler.query, '_in_values_call', False)):
+                     compiler.query.set_values((
+                         *self.query.extra_select,
+                         *self.query.values_select,
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 08d7faf194..c53cacee2c 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -2031,6 +2031,8 @@ class Query(BaseExpression):
+         self.select_related = False
+         self.clear_deferred_loading()
+         self.clear_select_fields()
++        # Set a flag to indicate that this query is in a values()/values_list() call
++        self._in_values_call = True
+ 
+         if self.group_by is True:
+             self.add_fields((f.attname for f in self.model._meta.concrete_fields), False)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..d976789d80
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,54 @@
++import os
++import sys
++import django
++from django.db import models
++from django.conf import settings
++
++# Set up Django
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key-for-testing',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'reproduce_issue',
++        ],
++    )
++    django.setup()
++
++# Define a simple model
++class ReservedName(models.Model):
++    name = models.CharField(max_length=255)
++    order = models.IntegerField()
++
++    class Meta:
++        app_label = 'reproduce_issue'
++        # Use a non-existent database table to avoid actual database operations
++        managed = False
++        db_table = 'reserved_name'
++
++# Create a test instance
++obj = ReservedName(name='a', order=2)
++
++# Create a query
++qs1 = ReservedName.objects.all()
++
++# Test the issue
++print("Testing composed query with values_list...")
++# First evaluation with two columns
++try:
++    result1 = qs1.union(qs1).values_list('name', 'order').get()
++    print(f"First evaluation with values_list('name', 'order'): {result1}")
++except Exception as e:
++    print(f"Error in first evaluation: {e}")
++
++# Second evaluation with one column
++try:
++    result2 = qs1.union(qs1).values_list('order').get()
++    print(f"Second evaluation with values_list('order'): {result2}")
++    # Check if the issue exists
++    if len(result2) > 1:
++        print("ISSUE DETECTED: The second evaluation still returns multiple columns!")
++    else:
++        print("FIXED: The second evaluation returns only the requested column.")
++except Exception as e:
++    print(f"Error in second evaluation: {e}")
+\ No newline at end of file
+diff --git a/test_direct.py b/test_direct.py
+new file mode 100644
+index 0000000000..3abf455c0d
+--- /dev/null
++++ b/test_direct.py
+@@ -0,0 +1,125 @@
++"""
++Direct test for the composed query values_list issue.
++"""
++
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models
++from django.db.models.sql.query import Query
++from django.db.models.sql.compiler import SQLCompiler
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key-for-testing',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a simple model for testing
++class ReservedName(models.Model):
++    name = models.CharField(max_length=255)
++    order = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++        managed = False
++        db_table = 'reserved_name'
++
++# Create a mock database connection
++from unittest.mock import MagicMock
++from django.db import connection
++connection.cursor = MagicMock()
++
++# Test the fix
++def test_composed_query_values_list():
++    """Test that composed queries can change the list of columns with values_list()."""
++    print("Testing composed query values_list...")
++
++    # Create queries
++    qs1 = ReservedName.objects.all()
++    qs2 = ReservedName.objects.all()
++
++    # First evaluation with two columns
++    composed_query1 = qs1.union(qs2).query
++    composed_query1.set_values(['name', 'order'])
++    print(f"First evaluation values_select: {composed_query1.values_select}")
++
++    # Second evaluation with one column
++    composed_query2 = qs1.union(qs2).query
++    composed_query2._in_values_call = True  # Set the flag to indicate values_list call
++    composed_query2.set_values(['order'])
++    print(f"Second evaluation values_select: {composed_query2.values_select}")
++
++    # Check if the fix works
++    if len(composed_query2.values_select) == 1:
++        print("SUCCESS: The second evaluation returns only the requested column.")
++    else:
++        print("FAILURE: The second evaluation still returns multiple columns!")
++
++    # Test the compiler behavior
++    print("\nTesting SQLCompiler behavior...")
++
++    # Create a main query with values_select
++    main_query = Query(ReservedName)
++    main_query.values_select = ('name', 'order')
++
++    # Create a combined query without values_select
++    combined_query = Query(ReservedName)
++
++    # Create compilers
++    main_compiler = SQLCompiler(main_query, connection, 'default')
++    combined_compiler = SQLCompiler(combined_query, connection, 'default')
++
++    # Test with our fix
++    print("With proposed fix:")
++    print(f"Before: combined_query.values_select = {combined_query.values_select}")
++
++    # This is the code from get_combinator_sql with our fix
++    if (not combined_query.values_select and
++        main_query.values_select and
++        not getattr(combined_query, '_in_values_call', False)):
++
++        combined_query.set_values((
++            *main_query.extra_select,
++            *main_query.values_select,
++            *main_query.annotation_select,
++        ))
++
++    print(f"After: combined_query.values_select = {combined_query.values_select}")
++
++    # Now test with _in_values_call set to True
++    combined_query.values_select = ()
++    combined_query._in_values_call = True
++    combined_query.set_values(['order'])
++    print(f"After setting values with _in_values_call: {combined_query.values_select}")
++
++    # Test the compiler behavior with _in_values_call
++    print(f"Before compiler check with _in_values_call: {combined_query.values_select}")
++
++    # This is the code from get_combinator_sql with our fix
++    if (not combined_query.values_select and
++        main_query.values_select and
++        not getattr(combined_query, '_in_values_call', False)):
++
++        combined_query.set_values((
++            *main_query.extra_select,
++            *main_query.values_select,
++            *main_query.annotation_select,
++        ))
++
++    print(f"After compiler check with _in_values_call: {combined_query.values_select}")
++
++if __name__ == "__main__":
++    test_composed_query_values_list()
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..3411a85581
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,65 @@
++"""
++This script tests the fix for the issue where composed queries cannot change
++the list of columns with values()/values_list().
++"""
++
++import sys
++from django.db.models.sql.compiler import SQLCompiler
++from django.db.models.sql.query import Query
++
++def test_composed_query_values():
++    """
++    Test that composed queries can change the list of columns with values()/values_list().
++    """
++    # Create a mock query with values_select
++    main_query = Query()
++    main_query.values_select = ('name', 'order')
++
++    # Create a mock combined query without values_select
++    combined_query = Query()
++
++    # Create a compiler for the main query
++    compiler = SQLCompiler(queryset=None, connection=None)
++    compiler.query = main_query
++
++    # Create a compiler for the combined query
++    combined_compiler = SQLCompiler(queryset=None, connection=None)
++    combined_compiler.query = combined_query
++
++    # Test the current behavior
++    print("Testing current behavior:")
++    print(f"Before: combined_query.values_select = {combined_query.values_select}")
++
++    # This is the code that causes the issue
++    if not combined_compiler.query.values_select and compiler.query.values_select:
++        combined_compiler.query.set_values((
++            *compiler.query.extra_select,
++            *compiler.query.values_select,
++            *compiler.query.annotation_select,
++        ))
++
++    print(f"After: combined_query.values_select = {combined_query.values_select}")
++
++    # Now let's test our proposed fix
++    # Reset the combined query
++    combined_query.values_select = ()
++
++    print("\nTesting proposed fix:")
++    print(f"Before: combined_query.values_select = {combined_query.values_select}")
++
++    # Proposed fix: Only set values if they're not already set
++    # and if we're not in a values()/values_list() call
++    if (not combined_compiler.query.values_select and
++        compiler.query.values_select and
++        not getattr(combined_compiler.query, '_in_values_call', False)):
++
++        combined_compiler.query.set_values((
++            *compiler.query.extra_select,
++            *compiler.query.values_select,
++            *compiler.query.annotation_select,
++        ))
++
++    print(f"After: combined_query.values_select = {combined_query.values_select}")
++
++if __name__ == "__main__":
++    test_composed_query_values()
+\ No newline at end of file
+diff --git a/test_values_fix.py b/test_values_fix.py
+new file mode 100644
+index 0000000000..f40ebad390
+--- /dev/null
++++ b/test_values_fix.py
+@@ -0,0 +1,138 @@
++"""
++This script demonstrates the issue with composed queries and values()/values_list()
++and tests our proposed fix.
++"""
++
++import os
++import sys
++import django
++from django.db import models
++from django.db.models import Q
++
++# Set up Django
++if not django.get_version():
++    from django.conf import settings
++    settings.configure(
++        SECRET_KEY='fake-key-for-testing',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a simple model class for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++
++    class Meta:
++        # We don't need a real database table
++        app_label = 'test_app'
++        managed = False
++        abstract = True
++
++# Create a mock database connection to avoid actual database operations
++from unittest.mock import MagicMock
++from django.db import connection
++
++# Mock the database cursor to return our test data
++class MockCursor:
++    def execute(self, sql, params=None):
++        print(f"Executing SQL: {sql}")
++        return None
++
++    def fetchone(self):
++        # Return a mock row that matches our TestModel
++        return ['test_name', 42]
++
++    def fetchall(self):
++        return [['test_name', 42]]
++
++# Replace the real cursor with our mock
++connection.cursor = MagicMock(return_value=MockCursor())
++
++# Now let's demonstrate the issue and our fix
++from django.db.models.sql.compiler import SQLCompiler
++
++# Original code from compiler.py
++def original_code(compiler, compiler_query):
++    """The original code that causes the issue."""
++    if not compiler_query.query.values_select and compiler.query.values_select:
++        compiler_query.query.set_values((
++            *compiler.query.extra_select,
++            *compiler.query.values_select,
++            *compiler.query.annotation_select,
++        ))
++
++# Our proposed fix
++def fixed_code(compiler, compiler_query):
++    """Our proposed fix that respects values()/values_list() calls."""
++    if (not compiler_query.query.values_select and
++        compiler.query.values_select and
++        not getattr(compiler_query.query, '_in_values_call', False)):
++
++        compiler_query.query.set_values((
++            *compiler.query.extra_select,
++            *compiler.query.values_select,
++            *compiler.query.annotation_select,
++        ))
++
++# Demonstrate the issue
++print("Demonstrating the issue:")
++print("-" * 50)
++
++# Create a mock query with values_select
++main_query = TestModel.objects.all().query
++main_query.values_select = ('name', 'value')
++
++# Create a mock combined query without values_select
++combined_query = TestModel.objects.all().query
++
++# Create compilers
++main_compiler = SQLCompiler(main_query, connection)
++combined_compiler = SQLCompiler(combined_query, connection)
++
++# Test with original code
++print("With original code:")
++print(f"Before: combined_query.values_select = {combined_query.values_select}")
++original_code(main_compiler, combined_compiler)
++print(f"After: combined_query.values_select = {combined_query.values_select}")
++
++# Reset for our fix
++combined_query.values_select = ()
++
++# Test with our fix
++print("\nWith proposed fix:")
++print(f"Before: combined_query.values_select = {combined_query.values_select}")
++fixed_code(main_compiler, combined_compiler)
++print(f"After: combined_query.values_select = {combined_query.values_select}")
++
++# Now let's test what happens when we call values_list
++print("\nTesting values_list behavior:")
++print("-" * 50)
++
++# Reset queries
++main_query = TestModel.objects.all().query
++combined_query = TestModel.objects.all().query
++
++# Set up a composed query with values_list
++main_query.values_select = ('name', 'value')
++combined_query._in_values_call = True
++combined_query.values_select = ('value',)  # This should be respected
++
++# Create compilers
++main_compiler = SQLCompiler(main_query, connection)
++combined_compiler = SQLCompiler(combined_query, connection)
++
++# Test with our fix
++print("With proposed fix and values_list:")
++print(f"Before: combined_query.values_select = {combined_query.values_select}")
++fixed_code(main_compiler, combined_compiler)
++print(f"After: combined_query.values_select = {combined_query.values_select}")
+\ No newline at end of file
+diff --git a/tests/queries/test_composed_values.py b/tests/queries/test_composed_values.py
+new file mode 100644
+index 0000000000..ae29fce2e2
+--- /dev/null
++++ b/tests/queries/test_composed_values.py
+@@ -0,0 +1,69 @@
++import os
++import django
++from django.conf import settings
++from django.test import TestCase
++from django.db import models
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key-for-testing',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a simple model for testing
++class ReservedName(models.Model):
++    name = models.CharField(max_length=255)
++    order = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++        # Use a non-existent database table to avoid actual database operations
++        managed = False
++        db_table = 'reserved_name'
++
++class ComposedValuesTestCase(TestCase):
++    def test_composed_query_values_list(self):
++        """Test that composed queries can change the list of columns with values_list()."""
++        # Create a query
++        qs1 = ReservedName.objects.all()
++
++        # First evaluation with two columns
++        result1 = list(qs1.union(qs1).values_list('name', 'order'))
++        # We expect a list of tuples with two values each
++        self.assertTrue(all(isinstance(item, tuple) and len(item) == 2 for item in result1),
++                        "First evaluation should return tuples with two values")
++
++        # Second evaluation with one column
++        result2 = list(qs1.union(qs1).values_list('order'))
++        # We expect a list of tuples with one value each
++        self.assertTrue(all(isinstance(item, tuple) and len(item) == 1 for item in result2),
++                        "Second evaluation should return tuples with one value")
++
++    def test_composed_query_values(self):
++        """Test that composed queries can change the list of columns with values()."""
++        # Create a query
++        qs1 = ReservedName.objects.all()
++
++        # First evaluation with two columns
++        result1 = list(qs1.union(qs1).values('name', 'order'))
++        # We expect a list of dicts with two keys each
++        self.assertTrue(all(isinstance(item, dict) and len(item) == 2 for item in result1),
++                        "First evaluation should return dicts with two keys")
++
++        # Second evaluation with one column
++        result2 = list(qs1.union(qs1).values('order'))
++        # We expect a list of dicts with one key each
++        self.assertTrue(all(isinstance(item, dict) and len(item) == 1 for item in result2),
++                        "Second evaluation should return dicts with one key")
+\ No newline at end of file

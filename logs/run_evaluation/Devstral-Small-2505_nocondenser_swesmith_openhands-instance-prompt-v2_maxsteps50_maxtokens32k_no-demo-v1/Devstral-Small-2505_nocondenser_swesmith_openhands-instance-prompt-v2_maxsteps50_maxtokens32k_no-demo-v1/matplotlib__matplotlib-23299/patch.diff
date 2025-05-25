@@ -1,0 +1,106 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..7a2b97ec06
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,63 @@
++import matplotlib.pyplot as plt
++from matplotlib import get_backend, rc_context
++
++def test_rc_context_figure():
++    """Test that figures created in rc_context are not removed when get_backend() is called."""
++    with rc_context():
++        fig = plt.figure()
++    before = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++    get_backend()
++    after = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++
++    print("Test 1 - rc_context figure:")
++    print("Before:", before)
++    print("After:", after)
++    print("Test passed:", before == after)
++    print()
++
++    # Clean up
++    plt.close(fig)
++
++def test_regular_figure():
++    """Test that regular figures are not affected."""
++    fig = plt.figure()
++    before = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++    get_backend()
++    after = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++
++    print("Test 2 - regular figure:")
++    print("Before:", before)
++    print("After:", after)
++    print("Test passed:", before == after)
++    print()
++
++    # Clean up
++    plt.close(fig)
++
++def test_multiple_figures():
++    """Test with multiple figures, some created in rc_context."""
++    fig1 = plt.figure()
++    with rc_context():
++        fig2 = plt.figure()
++    with rc_context():
++        fig3 = plt.figure()
++
++    before = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++    get_backend()
++    after = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++
++    print("Test 3 - multiple figures:")
++    print("Before:", before)
++    print("After:", after)
++    print("Test passed:", before == after)
++    print()
++
++    # Clean up
++    plt.close(fig1)
++    plt.close(fig2)
++    plt.close(fig3)
++
++if __name__ == "__main__":
++    test_rc_context_figure()
++    test_regular_figure()
++    test_multiple_figures()
+\ No newline at end of file
+diff --git a/lib/matplotlib/__init__.py b/lib/matplotlib/__init__.py
+index c268a56724..4009ae4996 100644
+--- a/lib/matplotlib/__init__.py
++++ b/lib/matplotlib/__init__.py
+@@ -1175,7 +1175,8 @@ def get_backend():
+     --------
+     matplotlib.use
+     """
+-    return rcParams['backend']
++    # Direct dictionary access to avoid triggering switch_backend
++    return dict.__getitem__(rcParams, 'backend')
+ 
+ 
+ def interactive(b):
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..9e8e6b613d
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,15 @@
++import matplotlib.pyplot as plt
++from matplotlib import get_backend, rc_context
++
++# fig1 = plt.figure()  # <- UNCOMMENT THIS LINE AND IT WILL WORK
++# plt.ion()            # <- ALTERNATIVELY, UNCOMMENT THIS LINE AND IT WILL ALSO WORK
++with rc_context():
++    fig2 = plt.figure()
++before = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++get_backend()
++after = f'{id(plt._pylab_helpers.Gcf)} {plt._pylab_helpers.Gcf.figs!r}'
++
++print("Before:", before)
++print("After:", after)
++
++assert before == after, '\n' + before + '\n' + after
+\ No newline at end of file

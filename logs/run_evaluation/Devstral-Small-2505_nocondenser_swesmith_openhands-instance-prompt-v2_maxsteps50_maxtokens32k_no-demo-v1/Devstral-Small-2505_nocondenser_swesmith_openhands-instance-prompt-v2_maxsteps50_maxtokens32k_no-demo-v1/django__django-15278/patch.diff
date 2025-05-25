@@ -1,0 +1,75 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..9b2581aaa5
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,68 @@
++import os
++import sys
++import django
++from django.db import models, migrations
++from django.db.models import fields
++from django.db import connection
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++class RefreshToken(models.Model):
++    class Meta:
++        app_label = 'reproduce_issue'
++    id = models.AutoField(primary_key=True)
++    token = models.CharField(max_length=255)
++
++class AccessToken(models.Model):
++    class Meta:
++        app_label = 'reproduce_issue'
++    id = models.AutoField(primary_key=True)
++    token = models.CharField(max_length=255)
++    # This is the field we're trying to add
++    source_refresh_token = models.OneToOneField(
++        RefreshToken,
++        null=True,
++        blank=True,
++        on_delete=models.SET_NULL,
++        related_name="refreshed_access_token"
++    )
++
++# Create the initial tables
++with connection.cursor() as cursor:
++    cursor.execute("""
++    CREATE TABLE IF NOT EXISTS RefreshToken (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        token VARCHAR(255) NOT NULL
++    )
++    """)
++
++    cursor.execute("""
++    CREATE TABLE IF NOT EXISTS AccessToken (
++        id INTEGER PRIMARY KEY AUTOINCREMENT,
++        token VARCHAR(255) NOT NULL
++    )
++    """)
++
++# Now try to add the field with a migration-like approach
++try:
++    # This is similar to what migrations.AddField would do
++    field = AccessToken._meta.get_field('source_refresh_token')
++    column = field.column
++    definition = connection.ops.deferrable_sql()
++    sql = connection.cursor().execute(
++        'ALTER TABLE "AccessToken" ADD COLUMN "%s" bigint NULL REFERENCES "RefreshToken" ("id") DEFERRABLE INITIALLY DEFERRED' % column
++    )
++    print("Field added successfully - THIS IS UNEXPECTED!")
++except Exception as e:
++    print(f"Error adding field: {e}")
++    print("This is the expected error for the issue.")
++
++# Clean up
++try:
++    with connection.cursor() as cursor:
++        cursor.execute("DROP TABLE IF EXISTS RefreshToken")
++        cursor.execute("DROP TABLE IF EXISTS AccessToken")
++except:
++    pass
+\ No newline at end of file

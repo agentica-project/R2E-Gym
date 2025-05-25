@@ -1,0 +1,15 @@
+diff --git a/test_duplicate_code.py b/test_duplicate_code.py
+new file mode 100644
+index 000000000..a972bf17c
+--- /dev/null
++++ b/test_duplicate_code.py
+@@ -0,0 +1,8 @@
++def function1():
++    print("Hello, world!")
++
++def function2():
++    print("Hello, universe!")
++
++def function3():
++    print("Hello, galaxy!")
+\ No newline at end of file

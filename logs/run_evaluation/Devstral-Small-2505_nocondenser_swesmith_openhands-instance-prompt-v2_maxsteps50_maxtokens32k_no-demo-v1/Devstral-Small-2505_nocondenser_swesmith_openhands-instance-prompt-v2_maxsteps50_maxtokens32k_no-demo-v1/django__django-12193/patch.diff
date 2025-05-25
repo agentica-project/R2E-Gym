@@ -1,0 +1,477 @@
+diff --git a/direct_test.py b/direct_test.py
+new file mode 100644
+index 0000000000..76e9d5617f
+--- /dev/null
++++ b/direct_test.py
+@@ -0,0 +1,76 @@
++import sys
++import os
++import copy
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
++
++# Import the necessary modules directly from the file
++from django.contrib.postgres.forms.array import SplitArrayWidget
++
++# Create a simple test to verify the fix
++def test_fix():
++    # Create a mock CheckboxInput class that records if it's called with the same attrs dict
++    class MockCheckboxInput:
++        def __init__(self):
++            self.calls = []
++
++        def get_context(self, name, value, attrs):
++            # Make a copy of attrs to avoid modifying the original
++            attrs_copy = dict(attrs)
++
++            # Record if this is the same object as previous calls
++            if self.calls:
++                is_same_object = (attrs is self.calls[-1]['attrs'])
++            else:
++                is_same_object = None
++
++            # Add 'checked' to attrs if value is True
++            if value is True:
++                attrs_copy['checked'] = True
++
++            self.calls.append({
++                'name': name,
++                'value': value,
++                'attrs': attrs,
++                'attrs_copy': attrs_copy,
++                'is_same_object': is_same_object
++            })
++
++            return {'widget': {
++                'name': name,
++                'value': value,
++                'attrs': attrs_copy
++            }}
++
++    # Create a SplitArrayWidget with our mock CheckboxInput
++    widget = SplitArrayWidget(widget=MockCheckboxInput(), size=3)
++
++    # Create initial values with a mix of True and False
++    initial_values = [True, False, True]
++
++    # Get the context for the widget
++    context = widget.get_context('array', initial_values)
++
++    # Print the results
++    print("Test results:")
++    for i, call in enumerate(widget.widget.calls):
++        print(f"\nCall {i}:")
++        print(f"  Name: {call['name']}")
++        print(f"  Value: {call['value']}")
++        print(f"  Attrs is same object as previous: {call['is_same_object']}")
++        print(f"  Attrs id: {id(call['attrs'])}")
++        print(f"  Attrs copy id: {id(call['attrs_copy'])}")
++        print(f"  Checked in attrs: {'checked' in call['attrs']}")
++        print(f"  Checked in attrs_copy: {'checked' in call['attrs_copy']}")
++
++    # Verify that the fix works
++    is_fixed = all(
++        ('checked' in call['attrs_copy']) == (call['value'] is True)
++        for call in widget.widget.calls
++    )
++
++    print(f"\nFix verified: {is_fixed}")
++
++if __name__ == "__main__":
++    test_fix()
+\ No newline at end of file
+diff --git a/django/contrib/postgres/forms/array.py b/django/contrib/postgres/forms/array.py
+index 2e19cd574a..dcb147f1ec 100644
+--- a/django/contrib/postgres/forms/array.py
++++ b/django/contrib/postgres/forms/array.py
+@@ -144,10 +144,13 @@ class SplitArrayWidget(forms.Widget):
+                 widget_value = value[i]
+             except IndexError:
+                 widget_value = None
++            # Create a new copy of final_attrs for each widget to avoid side effects
++            # from widgets that modify the attrs dict (like CheckboxInput)
++            widget_attrs = dict(final_attrs)
+             if id_:
+-                final_attrs = {**final_attrs, 'id': '%s_%s' % (id_, i)}
++                widget_attrs = {**widget_attrs, 'id': '%s_%s' % (id_, i)}
+             context['widget']['subwidgets'].append(
+-                self.widget.get_context(name + '_%s' % i, widget_value, final_attrs)['widget']
++                self.widget.get_context(name + '_%s' % i, widget_value, widget_attrs)['widget']
+             )
+         return context
+ 
+diff --git a/mock_test.py b/mock_test.py
+new file mode 100644
+index 0000000000..f895e2cec6
+--- /dev/null
++++ b/mock_test.py
+@@ -0,0 +1,82 @@
++import sys
++import os
++import copy
++import types
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
++
++# Mock the necessary modules to avoid importing psycopg2
++sys.modules['psycopg2'] = types.ModuleType('psycopg2')
++sys.modules['psycopg2.extras'] = types.ModuleType('psycopg2.extras')
++sys.modules['psycopg2.extras'].DateRange = None
++sys.modules['psycopg2.extras'].DateTimeTZRange = None
++sys.modules['psycopg2.extras'].NumericRange = None
++
++# Import the necessary modules
++from django.contrib.postgres.forms.array import SplitArrayWidget
++
++# Create a simple test to verify the fix
++def test_fix():
++    # Create a mock CheckboxInput class
++    class MockCheckboxInput:
++        def __init__(self):
++            self.calls = []
++            self.is_hidden = False
++            self.is_localized = False
++
++        def get_context(self, name, value, attrs):
++            # Record the call
++            self.calls.append({
++                'name': name,
++                'value': value,
++                'attrs_id': id(attrs),
++                'attrs': dict(attrs)  # Make a copy to preserve the state
++            })
++
++            # Modify attrs if value is True (like CheckboxInput does)
++            if value is True:
++                attrs['checked'] = True
++
++            return {'widget': {
++                'name': name,
++                'value': value,
++                'attrs': dict(attrs),  # Make a copy to preserve the state
++                'is_hidden': self.is_hidden,
++                'is_localized': self.is_localized,
++                'template_name': 'mock/template.html',
++                'type': 'checkbox'
++            }}
++
++    # Create a SplitArrayWidget with our mock CheckboxInput
++    widget = SplitArrayWidget(widget=MockCheckboxInput(), size=3)
++
++    # Create initial values with a mix of True and False
++    initial_values = [True, False, True]
++
++    # Get the context for the widget
++    context = widget.get_context('array', initial_values)
++
++    # Print the results
++    print("Test results:")
++    for i, call in enumerate(widget.widget.calls):
++        print(f"\nCall {i}:")
++        print(f"  Name: {call['name']}")
++        print(f"  Value: {call['value']}")
++        print(f"  Attrs id: {call['attrs_id']}")
++        print(f"  Attrs: {call['attrs']}")
++
++    # Check if the fix works
++    # Before the fix: All attrs dictionaries after the first True would have 'checked': True
++    # After the fix: Only the attrs dictionary for the True value should have 'checked': True
++
++    # Verify that the fix works
++    is_fixed = all(
++        ('checked' in call['attrs']) == (call['value'] is True)
++        for call in widget.widget.calls
++    )
++
++    print(f"\nFix verified: {is_fixed}")
++
++if __name__ == "__main__":
++    test_fix()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..f51eb0fab4
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,43 @@
++import sys
++from pathlib import Path
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, str(Path(__file__).parent))
++
++# Import the necessary modules directly
++from django.contrib.postgres.forms.array import SplitArrayWidget
++from django.forms.widgets import CheckboxInput
++
++# Create a simple test to demonstrate the issue
++def test_split_array_widget_with_boolean():
++    # Create a SplitArrayWidget with CheckboxInput
++    widget = SplitArrayWidget(widget=CheckboxInput, size=3)
++
++    # Create initial values with a mix of True and False
++    initial_values = [True, False, True]
++
++    # Get the context for the widget
++    context = widget.get_context('array', initial_values)
++
++    # Print the subwidgets' attributes
++    print("Subwidgets attributes:")
++    for i, subwidget in enumerate(context['widget']['subwidgets']):
++        print(f"Subwidget {i}:")
++        print(f"  Value: {subwidget.get('value')}")
++        print(f"  Attrs: {subwidget.get('attrs', {})}")
++        if 'checked' in subwidget.get('attrs', {}):
++            print(f"  Checked: {subwidget['attrs']['checked']}")
++        else:
++            print("  Checked: Not set")
++
++    # Check if the issue exists (all widgets after the first True are checked)
++    issue_exists = all(
++        'checked' in subwidget.get('attrs', {})
++        for subwidget in context['widget']['subwidgets'][1:]
++        if initial_values[0]
++    )
++
++    print(f"\nIssue exists: {issue_exists}")
++
++if __name__ == "__main__":
++    test_split_array_widget_with_boolean()
+\ No newline at end of file
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..43732106c9
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,28 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.test.utils import get_runner
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key',
++        INSTALLED_APPS=[
++            'django.contrib.postgres',
++            'tests.postgres_tests',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++    )
++    django.setup()
++
++# Run the tests
++TestRunner = get_runner(settings)
++test_runner = TestRunner(verbosity=2, interactive=True, failfast=False)
++failures = test_runner.run_tests(['tests.postgres_tests.test_array'])
++sys.exit(bool(failures))
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..7bcf8d615e
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,68 @@
++import sys
++import os
++import copy
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
++
++# Import the necessary modules directly from the file
++from django.contrib.postgres.forms.array import SplitArrayWidget
++
++# Create a simple test to verify the fix
++def test_fix():
++    # Create a mock CheckboxInput class
++    class MockCheckboxInput:
++        def __init__(self):
++            self.calls = []
++
++        def get_context(self, name, value, attrs):
++            # Record the call
++            self.calls.append({
++                'name': name,
++                'value': value,
++                'attrs_id': id(attrs),
++                'attrs': dict(attrs)  # Make a copy to preserve the state
++            })
++
++            # Modify attrs if value is True (like CheckboxInput does)
++            if value is True:
++                attrs['checked'] = True
++
++            return {'widget': {
++                'name': name,
++                'value': value,
++                'attrs': dict(attrs)  # Make a copy to preserve the state
++            }}
++
++    # Create a SplitArrayWidget with our mock CheckboxInput
++    widget = SplitArrayWidget(widget=MockCheckboxInput(), size=3)
++
++    # Create initial values with a mix of True and False
++    initial_values = [True, False, True]
++
++    # Get the context for the widget
++    context = widget.get_context('array', initial_values)
++
++    # Print the results
++    print("Test results:")
++    for i, call in enumerate(widget.widget.calls):
++        print(f"\nCall {i}:")
++        print(f"  Name: {call['name']}")
++        print(f"  Value: {call['value']}")
++        print(f"  Attrs id: {call['attrs_id']}")
++        print(f"  Attrs: {call['attrs']}")
++
++    # Check if the fix works
++    # Before the fix: All attrs dictionaries after the first True would have 'checked': True
++    # After the fix: Only the attrs dictionary for the True value should have 'checked': True
++
++    # Verify that the fix works
++    is_fixed = all(
++        ('checked' in call['attrs']) == (call['value'] is True)
++        for call in widget.widget.calls
++    )
++
++    print(f"\nFix verified: {is_fixed}")
++
++if __name__ == "__main__":
++    test_fix()
+\ No newline at end of file
+diff --git a/test_checkbox_issue.py b/test_checkbox_issue.py
+new file mode 100644
+index 0000000000..426a2df525
+--- /dev/null
++++ b/test_checkbox_issue.py
+@@ -0,0 +1,68 @@
++import sys
++import os
++import copy
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
++
++# Import the necessary modules
++from django.contrib.postgres.forms.array import SplitArrayWidget
++from django.forms.widgets import CheckboxInput
++
++def test_checkbox_input_modifies_attrs():
++    """Test that CheckboxInput modifies the attrs dictionary."""
++    widget = CheckboxInput()
++    attrs = {'class': 'test'}
++
++    # Call get_context with value=True
++    context_true = widget.get_context('name', True, attrs)
++    print("CheckboxInput with value=True:")
++    print(f"  Original attrs: {attrs}")
++    print(f"  Context attrs: {context_true['widget']['attrs']}")
++    print(f"  Checked: {context_true['widget'].get('checked', 'Not set')}")
++
++    # Reset attrs and call with value=False
++    attrs = {'class': 'test'}
++    context_false = widget.get_context('name', False, attrs)
++    print("\nCheckboxInput with value=False:")
++    print(f"  Original attrs: {attrs}")
++    print(f"  Context attrs: {context_false['widget']['attrs']}")
++    print(f"  Checked: {context_false['widget'].get('checked', 'Not set')}")
++
++def test_split_array_widget_with_checkbox():
++    """Test the issue with SplitArrayWidget and CheckboxInput."""
++    # Create a SplitArrayWidget with CheckboxInput
++    widget = SplitArrayWidget(widget=CheckboxInput, size=3)
++
++    # Create initial values with a mix of True and False
++    initial_values = [True, False, True]
++
++    # Make a deep copy of the widget to avoid side effects
++    widget_copy = copy.deepcopy(widget)
++
++    # Get the context for the widget
++    context = widget.get_context('array', initial_values)
++
++    # Print the subwidgets' attributes
++    print("\nSplitArrayWidget with CheckboxInput (initial=[True, False, True]):")
++    for i, subwidget in enumerate(context['widget']['subwidgets']):
++        print(f"  Subwidget {i}:")
++        print(f"    Value: {subwidget.get('value')}")
++        print(f"    Attrs: {subwidget.get('attrs', {})}")
++        if 'checked' in subwidget.get('attrs', {}):
++            print(f"    Checked: {subwidget['attrs']['checked']}")
++        else:
++            print(f"    Checked: Not set")
++
++    # Check if the issue exists (all widgets after the first True are checked)
++    issue_exists = all(
++        'checked' in subwidget.get('attrs', {})
++        for subwidget in context['widget']['subwidgets'][1:]
++        if initial_values[0]
++    )
++
++    print(f"\nIssue exists: {issue_exists}")
++
++if __name__ == "__main__":
++    test_checkbox_input_modifies_attrs()
++    test_split_array_widget_with_checkbox()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..4c91769f96
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,43 @@
++import sys
++import os
++import copy
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
++
++# Import the necessary modules
++from django.contrib.postgres.forms.array import SplitArrayWidget
++from django.forms.widgets import CheckboxInput
++
++def test_split_array_widget_with_checkbox():
++    """Test that the fix works correctly."""
++    # Create a SplitArrayWidget with CheckboxInput
++    widget = SplitArrayWidget(widget=CheckboxInput, size=3)
++
++    # Create initial values with a mix of True and False
++    initial_values = [True, False, True]
++
++    # Get the context for the widget
++    context = widget.get_context('array', initial_values)
++
++    # Print the subwidgets' attributes
++    print("SplitArrayWidget with CheckboxInput (initial=[True, False, True]):")
++    for i, subwidget in enumerate(context['widget']['subwidgets']):
++        print(f"  Subwidget {i}:")
++        print(f"    Value: {subwidget.get('value')}")
++        print(f"    Attrs: {subwidget.get('attrs', {})}")
++        if 'checked' in subwidget.get('attrs', {}):
++            print(f"    Checked: {subwidget['attrs']['checked']}")
++        else:
++            print(f"    Checked: Not set")
++
++    # Verify that only the widgets with True values have 'checked' attribute
++    is_fixed = all(
++        ('checked' in subwidget.get('attrs', {})) == (value is True)
++        for subwidget, value in zip(context['widget']['subwidgets'], initial_values)
++    )
++
++    print(f"\nFix verified: {is_fixed}")
++
++if __name__ == "__main__":
++    test_split_array_widget_with_checkbox()
+\ No newline at end of file

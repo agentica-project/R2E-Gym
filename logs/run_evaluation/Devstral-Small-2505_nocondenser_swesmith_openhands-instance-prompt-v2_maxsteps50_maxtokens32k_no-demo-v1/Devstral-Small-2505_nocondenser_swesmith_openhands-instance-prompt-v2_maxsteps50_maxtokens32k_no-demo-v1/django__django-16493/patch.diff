@@ -1,0 +1,282 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..58fed210d6
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,68 @@
++import os
++import random
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        STORAGES={
++            'default': {
++                'BACKEND': 'django.core.files.storage.FileSystemStorage',
++            },
++        },
++        DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage'
++    )
++    django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db.models.fields.files import FileField
++
++print("Test 1: FileField with storage=default_storage (direct assignment)")
++field1 = FileField(storage=default_storage)
++name, path, args, kwargs = field1.deconstruct()
++print(f"Storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"Storage value: {kwargs['storage']}")
++print()
++
++print("Test 2: FileField with storage callable that returns default_storage")
++def get_storage():
++    return default_storage
++
++field2 = FileField(storage=get_storage)
++name, path, args, kwargs = field2.deconstruct()
++print(f"Storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"Storage value: {kwargs['storage']}")
++print()
++
++print("Test 3: FileField with storage=custom_storage (direct assignment)")
++other_storage = FileSystemStorage(location='/media/other')
++field3 = FileField(storage=other_storage)
++name, path, args, kwargs = field3.deconstruct()
++print(f"Storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"Storage value: {kwargs['storage']}")
++print()
++
++print("Test 4: FileField with storage callable that returns custom_storage")
++def get_custom_storage():
++    return other_storage
++
++field4 = FileField(storage=get_custom_storage)
++name, path, args, kwargs = field4.deconstruct()
++print(f"Storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"Storage value: {kwargs['storage']}")
++print()
+\ No newline at end of file
+diff --git a/django/db/models/fields/files.py b/django/db/models/fields/files.py
+index 7a99b12691..e277fd181d 100644
+--- a/django/db/models/fields/files.py
++++ b/django/db/models/fields/files.py
+@@ -295,7 +295,8 @@ class FileField(Field):
+         if kwargs.get("max_length") == 100:
+             del kwargs["max_length"]
+         kwargs["upload_to"] = self.upload_to
+-        if self.storage is not default_storage:
++        # Check if we have a storage callable or if storage is not default_storage
++        if hasattr(self, "_storage_callable") or self.storage is not default_storage:
+             kwargs["storage"] = getattr(self, "_storage_callable", self.storage)
+         return name, path, args, kwargs
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..351b741f7a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,49 @@
++import os
++import random
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'reproduce_issue',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db import models
++
++# Create a model with a FileField that uses a callable returning default_storage
++other_storage = FileSystemStorage(location='/media/other')
++
++def get_storage():
++    return random.choice([default_storage, other_storage])
++
++class MyModel(models.Model):
++    class Meta:
++        app_label = 'reproduce_issue'
++    my_file = models.FileField(storage=get_storage)
++
++# Create an instance of the field to test deconstruction
++field = MyModel._meta.get_field('my_file')
++
++# Print the deconstructed form
++name, path, args, kwargs = field.deconstruct()
++print("Deconstructed field:")
++print(f"Name: {name}")
++print(f"Path: {path}")
++print(f"Args: {args}")
++print(f"Kwargs: {kwargs}")
++print(f"Storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"Storage value: {kwargs['storage']}")
+\ No newline at end of file
+diff --git a/test_filefield_deconstruct.py b/test_filefield_deconstruct.py
+new file mode 100644
+index 0000000000..23141707a2
+--- /dev/null
++++ b/test_filefield_deconstruct.py
+@@ -0,0 +1,47 @@
++import os
++import random
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        STORAGES={
++            'default': {
++                'BACKEND': 'django.core.files.storage.FileSystemStorage',
++            },
++        },
++        DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage'
++    )
++    django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db.models.fields.files import FileField
++
++# Create a callable that returns default_storage
++def get_storage():
++    return default_storage
++
++# Create a FileField with the callable storage
++field = FileField(storage=get_storage)
++
++# Print the deconstructed form
++name, path, args, kwargs = field.deconstruct()
++print("Deconstructed field:")
++print(f"Name: {name}")
++print(f"Path: {path}")
++print(f"Args: {args}")
++print(f"Kwargs: {kwargs}")
++print(f"Storage in kwargs: {'storage' in kwargs}")
++if 'storage' in kwargs:
++    print(f"Storage value: {kwargs['storage']}")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..e6edd30f18
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,76 @@
++import os
++import random
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        STORAGES={
++            'default': {
++                'BACKEND': 'django.core.files.storage.FileSystemStorage',
++            },
++        },
++        DEFAULT_FILE_STORAGE='django.core.files.storage.FileSystemStorage',
++        DEBUG=True
++    )
++    django.setup()
++
++from django.core.files.storage import FileSystemStorage, default_storage
++from django.db.models.fields.files import FileField
++
++# Test case 1: Callable returning default_storage
++def test_callable_returning_default():
++    def get_storage():
++        return default_storage
++
++    field = FileField(storage=get_storage)
++    name, path, args, kwargs = field.deconstruct()
++    assert 'storage' in kwargs, "Storage should be included when it's a callable returning default_storage"
++    assert kwargs['storage'] == get_storage, "Storage should be the original callable"
++    print("Test 1 passed: Callable returning default_storage is correctly preserved")
++
++# Test case 2: Direct default_storage assignment
++def test_direct_default():
++    field = FileField(storage=default_storage)
++    name, path, args, kwargs = field.deconstruct()
++    assert 'storage' not in kwargs, "Storage should be omitted when it's directly assigned as default_storage"
++    print("Test 2 passed: Direct default_storage assignment is correctly omitted")
++
++# Test case 3: Callable returning custom storage
++def test_callable_returning_custom():
++    other_storage = FileSystemStorage(location='/media/other')
++    def get_custom_storage():
++        return other_storage
++
++    field = FileField(storage=get_custom_storage)
++    name, path, args, kwargs = field.deconstruct()
++    assert 'storage' in kwargs, "Storage should be included when it's a callable returning custom storage"
++    assert kwargs['storage'] == get_custom_storage, "Storage should be the original callable"
++    print("Test 3 passed: Callable returning custom storage is correctly preserved")
++
++# Test case 4: Direct custom storage assignment
++def test_direct_custom():
++    other_storage = FileSystemStorage(location='/media/other')
++    field = FileField(storage=other_storage)
++    name, path, args, kwargs = field.deconstruct()
++    assert 'storage' in kwargs, "Storage should be included when it's directly assigned as custom storage"
++    assert kwargs['storage'] == other_storage, "Storage should be the custom storage instance"
++    print("Test 4 passed: Direct custom storage assignment is correctly preserved")
++
++if __name__ == "__main__":
++    test_callable_returning_default()
++    test_direct_default()
++    test_callable_returning_custom()
++    test_direct_custom()
++    print("\nAll tests passed! The fix is working correctly.")
+\ No newline at end of file

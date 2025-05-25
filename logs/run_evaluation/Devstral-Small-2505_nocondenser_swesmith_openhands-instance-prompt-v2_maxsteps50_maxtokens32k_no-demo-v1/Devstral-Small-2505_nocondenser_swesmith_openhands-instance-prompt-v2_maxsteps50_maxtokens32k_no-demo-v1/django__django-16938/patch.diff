@@ -1,0 +1,406 @@
+diff --git a/django/core/serializers/python.py b/django/core/serializers/python.py
+index 36048601af..c116de643a 100644
+--- a/django/core/serializers/python.py
++++ b/django/core/serializers/python.py
+@@ -78,8 +78,33 @@ class Serializer(base.Serializer):
+                 def m2m_value(value):
+                     return self._value_from_field(value, value._meta.pk)
+ 
+-                def queryset_iterator(obj, field):
+-                    return getattr(obj, field.name).only("pk").iterator()
++                # Check if the related model has a custom manager that uses select_related
++                related_model = field.remote_field.model
++                has_select_related_manager = False
++                for manager_name, manager in related_model._meta.managers.items():
++                    # Skip the default manager
++                    if manager_name == '_default_manager':
++                        continue
++
++                    # This is a custom manager or the default 'objects' manager
++                    # Get the queryset to check if it has select_related
++                    try:
++                        qs = manager.get_queryset()
++                        # Check if the queryset has select_related applied
++                        if hasattr(qs.query, 'select_related') and qs.query.select_related:
++                            # If the manager's queryset uses select_related, we should avoid using only()
++                            has_select_related_manager = True
++                            def queryset_iterator(obj, field):
++                                return getattr(obj, field.name).iterator()
++                            break
++                    except (AttributeError, NotImplementedError, TypeError):
++                        # If get_queryset doesn't exist or doesn't return a queryset with select_related
++                        pass
++
++                # Default implementation if no manager with select_related is found
++                if not has_select_related_manager:
++                    def queryset_iterator(obj, field):
++                        return getattr(obj, field.name).only("pk").iterator()
+ 
+             m2m_iter = getattr(obj, "_prefetched_objects_cache", {}).get(
+                 field.name,
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..4b63e8deab
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,110 @@
++import os
++import sys
++import django
++from django.db import models
++from django.core import serializers
++from django.db import models
++
++# Add the Django module to the path
++sys.path.insert(0, '/testbed')
++
++# Set up Django with minimal settings
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++
++# Create a minimal settings object
++from django.conf import Settings
++settings = Settings({
++    'INSTALLED_APPS': [
++        'django.contrib.contenttypes',
++    ],
++    'DATABASES': {
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    'DEFAULT_AUTO_FIELD': 'django.db.models.AutoField',
++})
++
++django.setup()
++
++# Define the models as described in the issue
++class TestTagManager(models.Manager):
++    def get_queryset(self):
++        qs = super().get_queryset()
++        qs = qs.select_related("master")  # follow master when retrieving object by default
++        return qs
++
++class TestTagMaster(models.Model):
++    name = models.CharField(max_length=120)
++
++    def __str__(self):
++        return self.name
++
++class TestTag(models.Model):
++    # default = Manager()  # solution is to define custom default manager, which is used by RelatedManager
++    objects = TestTagManager()
++    name = models.CharField(max_length=120)
++    master = models.ForeignKey(TestTagMaster, on_delete=models.SET_NULL, null=True)
++
++    def __str__(self):
++        return self.name
++
++class Test(models.Model):
++    name = models.CharField(max_length=120)
++    tags = models.ManyToManyField(TestTag, blank=True)
++
++    def __str__(self):
++        return self.name
++
++# Create the database tables
++from django.db import connection
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test_tag_master (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120)
++)
++''')
++
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test_tag (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120),
++    master_id INTEGER,
++    FOREIGN KEY (master_id) REFERENCES test_tag_master(id)
++)
++''')
++
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120)
++)
++''')
++
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test_tags (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    test_id INTEGER,
++    tag_id INTEGER,
++    FOREIGN KEY (test_id) REFERENCES test(id),
++    FOREIGN KEY (tag_id) REFERENCES test_tag(id)
++)
++''')
++
++# Create test data
++tag_master = TestTagMaster.objects.create(name="master")
++tag = TestTag.objects.create(name="tag", master=tag_master)
++test = Test.objects.create(name="test")
++test.tags.add(tag)
++test.save()
++
++# Try to serialize the test object
++try:
++    serialized = serializers.serialize("json", [test])
++    print("Serialization successful!")
++    print(serialized)
++except Exception as e:
++    print(f"Serialization failed with error: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/simple_reproduce.py b/simple_reproduce.py
+new file mode 100644
+index 0000000000..9c2f422be9
+--- /dev/null
++++ b/simple_reproduce.py
+@@ -0,0 +1,123 @@
++import sys
++import os
++from django.db import models
++from django.core import serializers
++
++# Add the Django module to the path
++sys.path.insert(0, '/testbed')
++
++# Import Django modules
++from django.apps import apps
++from django.conf import settings
++from django.db import connection
++
++# Configure settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'test_app',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    DEFAULT_AUTO_FIELD='django.db.models.AutoField',
++)
++
++# Setup Django
++import django
++django.setup()
++
++# Create a simple app config
++from django.apps import AppConfig
++class TestAppConfig(AppConfig):
++    name = 'test_app'
++    verbose_name = "Test App"
++
++# Register the app
++apps.register_config(TestAppConfig)
++
++# Define the models as described in the issue
++class TestTagManager(models.Manager):
++    def get_queryset(self):
++        qs = super().get_queryset()
++        qs = qs.select_related("master")  # follow master when retrieving object by default
++        return qs
++
++class TestTagMaster(models.Model):
++    name = models.CharField(max_length=120)
++    app_label = 'test_app'
++
++    def __str__(self):
++        return self.name
++
++class TestTag(models.Model):
++    # default = Manager()  # solution is to define custom default manager, which is used by RelatedManager
++    objects = TestTagManager()
++    name = models.CharField(max_length=120)
++    master = models.ForeignKey(TestTagMaster, on_delete=models.SET_NULL, null=True)
++    app_label = 'test_app'
++
++    def __str__(self):
++        return self.name
++
++class Test(models.Model):
++    name = models.CharField(max_length=120)
++    tags = models.ManyToManyField(TestTag, blank=True)
++    app_label = 'test_app'
++
++    def __str__(self):
++        return self.name
++
++# Create the database tables
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test_tag_master (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120)
++)
++''')
++
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test_tag (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120),
++    master_id INTEGER,
++    FOREIGN KEY (master_id) REFERENCES test_tag_master(id)
++)
++''')
++
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120)
++)
++''')
++
++connection.cursor().execute('''
++CREATE TABLE IF NOT EXISTS test_tags (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    test_id INTEGER,
++    tag_id INTEGER,
++    FOREIGN KEY (test_id) REFERENCES test(id),
++    FOREIGN KEY (tag_id) REFERENCES test_tag(id)
++)
++''')
++
++# Create test data
++tag_master = TestTagMaster.objects.create(name="master")
++tag = TestTag.objects.create(name="tag", master=tag_master)
++test = Test.objects.create(name="test")
++test.tags.add(tag)
++test.save()
++
++# Try to serialize the test object
++try:
++    serialized = serializers.serialize("json", [test])
++    print("Serialization successful!")
++    print(serialized)
++except Exception as e:
++    print(f"Serialization failed with error: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..719e6908f4
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,112 @@
++import os
++import sys
++import django
++from django.db import models
++from django.core import serializers
++
++# Add the Django module to the path
++sys.path.insert(0, '/testbed')
++
++# Set up Django with minimal settings
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++
++# Create a minimal settings object
++from django.conf import Settings
++settings = Settings({
++    'INSTALLED_APPS': [
++        'django.contrib.contenttypes',
++    ],
++    'DATABASES': {
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    'DEFAULT_AUTO_FIELD': 'django.db.models.AutoField',
++})
++
++django.setup()
++
++# Define the models as described in the issue
++class TestTagManager(models.Manager):
++    def get_queryset(self):
++        qs = super().get_queryset()
++        qs = qs.select_related("master")  # follow master when retrieving object by default
++        return qs
++
++class TestTagMaster(models.Model):
++    name = models.CharField(max_length=120)
++
++    def __str__(self):
++        return self.name
++
++class TestTag(models.Model):
++    # Using the custom manager
++    objects = TestTagManager()
++    name = models.CharField(max_length=120)
++    master = models.ForeignKey(TestTagMaster, on_delete=models.SET_NULL, null=True)
++
++    def __str__(self):
++        return self.name
++
++class Test(models.Model):
++    name = models.CharField(max_length=120)
++    tags = models.ManyToManyField(TestTag, blank=True)
++
++    def __str__(self):
++        return self.name
++
++# Create the database tables using Django's migration framework
++from django.db import connection
++cursor = connection.cursor()
++
++# Create tables
++cursor.execute('''
++CREATE TABLE IF NOT EXISTS test_tag_master (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120)
++)
++''')
++
++cursor.execute('''
++CREATE TABLE IF NOT EXISTS test_tag (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120),
++    master_id INTEGER,
++    FOREIGN KEY (master_id) REFERENCES test_tag_master(id)
++)
++''')
++
++cursor.execute('''
++CREATE TABLE IF NOT EXISTS test (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(120)
++)
++''')
++
++cursor.execute('''
++CREATE TABLE IF NOT EXISTS test_tags (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    test_id INTEGER,
++    tag_id INTEGER,
++    FOREIGN KEY (test_id) REFERENCES test(id),
++    FOREIGN KEY (tag_id) REFERENCES test_tag(id)
++)
++''')
++
++# Create test data
++tag_master = TestTagMaster.objects.create(name="master")
++tag = TestTag.objects.create(name="tag", master=tag_master)
++test = Test.objects.create(name="test")
++test.tags.add(tag)
++test.save()
++
++# Try to serialize the test object
++try:
++    serialized = serializers.serialize("json", [test])
++    print("Serialization successful!")
++    print(serialized)
++except Exception as e:
++    print(f"Serialization failed with error: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file

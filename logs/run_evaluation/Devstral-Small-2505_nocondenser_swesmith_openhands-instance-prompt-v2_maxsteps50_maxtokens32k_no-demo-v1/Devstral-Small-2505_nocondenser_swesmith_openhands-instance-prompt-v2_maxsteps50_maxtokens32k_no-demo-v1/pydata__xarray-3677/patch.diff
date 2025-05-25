@@ -1,0 +1,101 @@
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 00000000..b2393f98
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,18 @@
++import xarray as xr
++
++# Reproduce the exact issue from the problem statement
++ds = xr.Dataset({'a': 0})
++da = xr.DataArray(1, name='b')
++
++# This works fine
++expected = xr.merge([ds, da])
++print("Top-level merge result:")
++print(expected)
++
++# This should now work with our fix
++actual = ds.merge(da)
++print("\nDataset merge method result:")
++print(actual)
++
++# Verify they produce the same result
++print("\nResults are identical:", expected.equals(actual))
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..3ce20185
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,52 @@
++import xarray as xr
++import numpy as np
++
++# Test case 1: Basic merge
++print("Test case 1: Basic merge")
++ds = xr.Dataset({'a': 0})
++da = xr.DataArray(1, name='b')
++
++# This works fine
++print("Top-level merge:")
++expected = xr.merge([ds, da])
++print(expected)
++
++# This should now work with our fix
++print("\nDataset merge method:")
++actual = ds.merge(da)
++print(actual)
++
++# Test case 2: DataArray with dimensions
++print("\nTest case 2: DataArray with dimensions")
++ds2 = xr.Dataset({'a': (('x',), [1, 2, 3])})
++da2 = xr.DataArray([4, 5, 6], dims='x', name='b')
++print("Top-level merge:")
++expected2 = xr.merge([ds2, da2])
++print(expected2)
++print("\nDataset merge method:")
++actual2 = ds2.merge(da2)
++print(actual2)
++
++# Test case 3: Overwrite variables
++print("\nTest case 3: Overwrite variables")
++ds3 = xr.Dataset({'a': 0, 'c': 2})
++da3 = xr.DataArray(1, name='a')  # Same name as ds3's variable
++print("Top-level merge with compat='override':")
++expected3 = xr.merge([ds3, da3], compat='override')
++print(expected3)
++print("\nDataset merge method with overwrite_vars:")
++actual3 = ds3.merge(da3, overwrite_vars='a')
++print(actual3)
++
++# Test case 4: Multiple DataArrays
++print("\nTest case 4: Multiple DataArrays")
++ds4 = xr.Dataset({'a': 0})
++da4a = xr.DataArray(1, name='b')
++da4b = xr.DataArray(2, name='c')
++print("Top-level merge:")
++expected4 = xr.merge([ds4, da4a, da4b])
++print(expected4)
++print("\nDataset merge method (chained):")
++actual4a = ds4.merge(da4a)
++actual4b = actual4a.merge(da4b)
++print(actual4b)
+\ No newline at end of file
+diff --git a/xarray/core/merge.py b/xarray/core/merge.py
+index 10c7804d..48094b75 100644
+--- a/xarray/core/merge.py
++++ b/xarray/core/merge.py
+@@ -809,6 +809,12 @@ def dataset_merge_method(
+     # method due for backwards compatibility
+     # TODO: consider deprecating it?
+ 
++    from .dataarray import DataArray
++
++    # Convert DataArray to Dataset if needed
++    if isinstance(other, DataArray):
++        other = other.to_dataset()
++
+     if isinstance(overwrite_vars, Iterable) and not isinstance(overwrite_vars, str):
+         overwrite_vars = set(overwrite_vars)
+     else:

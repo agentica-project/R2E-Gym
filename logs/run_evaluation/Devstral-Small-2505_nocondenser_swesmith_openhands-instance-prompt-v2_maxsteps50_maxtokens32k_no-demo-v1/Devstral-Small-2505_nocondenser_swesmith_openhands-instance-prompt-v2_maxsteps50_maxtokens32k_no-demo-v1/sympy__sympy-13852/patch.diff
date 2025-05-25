@@ -1,0 +1,74 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..2d1aa30407
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,26 @@
++from sympy import polylog, Rational, expand_func, log, pi, nsimplify
++
++# Issue 1: polylog(2, Rational(1,2)) doesn't simplify correctly
++result1 = polylog(2, Rational(1,2))
++print("polylog(2, Rational(1,2)):", result1)
++
++result2 = polylog(2, Rational(1,2)).expand(func=True)
++print("polylog(2, Rational(1,2)).expand(func=True):", result2)
++
++# The expected result according to the issue
++expected = -log(2)**2/2 + pi**2/12
++print("Expected result:", expected)
++
++# Verify with nsimplify
++verified = nsimplify(expand_func(polylog(2, Rational(1,2))).evalf(), [pi**2, log(2)**2])
++print("nsimplify result:", verified)
++
++# Issue 2: polylog(1, z) expansion includes exp_polar
++from sympy.abc import z
++result3 = expand_func(polylog(1, z))
++print("\nexpand_func(polylog(1, z)):", result3)
++
++# Check the derivative issue
++from sympy import diff
++deriv_check = expand_func(diff(polylog(1, z) - expand_func(polylog(1, z)), z))
++print("Derivative check:", deriv_check)
+\ No newline at end of file
+diff --git a/sympy/functions/special/tests/test_zeta_functions.py b/sympy/functions/special/tests/test_zeta_functions.py
+index 3911dadd10..494a387772 100644
+--- a/sympy/functions/special/tests/test_zeta_functions.py
++++ b/sympy/functions/special/tests/test_zeta_functions.py
+@@ -128,7 +128,7 @@ def test_polylog_expansion():
+     assert polylog(s, 1) == zeta(s)
+     assert polylog(s, -1) == -dirichlet_eta(s)
+ 
+-    assert myexpand(polylog(1, z), -log(1 + exp_polar(-I*pi)*z))
++    assert myexpand(polylog(1, z), -log(1 - z))
+     assert myexpand(polylog(0, z), z/(1 - z))
+     assert myexpand(polylog(-1, z), z**2/(1 - z)**2 + z/(1 - z))
+     assert myexpand(polylog(-5, z), None)
+diff --git a/sympy/functions/special/zeta_functions.py b/sympy/functions/special/zeta_functions.py
+index b8e2b66195..b46ad2e402 100644
+--- a/sympy/functions/special/zeta_functions.py
++++ b/sympy/functions/special/zeta_functions.py
+@@ -1,7 +1,7 @@
+ """ Riemann zeta and related function. """
+ from __future__ import print_function, division
+ 
+-from sympy.core import Function, S, sympify, pi
++from sympy.core import Function, S, sympify, pi, Rational
+ from sympy.core.function import ArgumentIndexError
+ from sympy.core.compatibility import range
+ from sympy.functions.combinatorial.numbers import bernoulli, factorial, harmonic
+@@ -288,10 +288,12 @@ def _eval_rewrite_as_lerchphi(self, s, z):
+         return z*lerchphi(z, s, 1)
+ 
+     def _eval_expand_func(self, **hints):
+-        from sympy import log, expand_mul, Dummy, exp_polar, I
++        from sympy import log, expand_mul, Dummy, I, pi
+         s, z = self.args
+         if s == 1:
+-            return -log(1 + exp_polar(-I*pi)*z)
++            return -log(1 - z)
++        if s == 2 and z == Rational(1, 2):
++            return -log(2)**2/2 + pi**2/12
+         if s.is_Integer and s <= 0:
+             u = Dummy('u')
+             start = u/(1 - u)

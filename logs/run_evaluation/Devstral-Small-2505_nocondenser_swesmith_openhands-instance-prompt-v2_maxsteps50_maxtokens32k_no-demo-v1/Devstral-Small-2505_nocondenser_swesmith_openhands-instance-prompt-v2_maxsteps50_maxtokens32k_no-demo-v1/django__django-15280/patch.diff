@@ -1,0 +1,200 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6a72c4ef8e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,93 @@
++from django.db import models
++from django.test import TestCase, override_settings
++from django.db.models import Prefetch
++from django.test.utils import CaptureQueriesContext
++
++class User(models.Model):
++    email = models.EmailField()
++    kind = models.CharField(
++        max_length=10, choices=[("ADMIN", "Admin"), ("REGULAR", "Regular")]
++    )
++
++class Profile(models.Model):
++    full_name = models.CharField(max_length=255)
++    user = models.OneToOneField(User, on_delete=models.CASCADE)
++
++class DeferredFieldsTest(TestCase):
++    def test_only_related_queryset(self):
++        user = User.objects.create(
++            email="test@example.com",
++            kind="ADMIN",
++        )
++        Profile.objects.create(user=user, full_name="Test Tester")
++
++        # Create a queryset with deferred fields and nested prefetches
++        queryset = User.objects.only("email").prefetch_related(
++            Prefetch(
++                "profile",
++                queryset=Profile.objects.prefetch_related(
++                    Prefetch("user", queryset=User.objects.only("kind"))
++                ),
++            )
++        )
++
++        # Check the number of queries executed when getting the first user
++        with self.assertNumQueries(3):
++            user = queryset.first()
++
++        # Check the number of queries executed when accessing user.profile.user.kind
++        # This should not execute any additional queries, but it currently does
++        with self.assertNumQueries(0):
++            self.assertEqual(user.profile.user.kind, "ADMIN")
++
++        # Print the deferred fields of user.profile.user to debug
++        print(f"Deferred fields of user.profile.user: {user.profile.user.get_deferred_fields()}")
++
++# Run the test
++if __name__ == "__main__":
++    # Set up the database
++    from django.conf import settings
++    settings.configure(
++        DATABASES={
++            "default": {
++                "ENGINE": "django.db.backends.sqlite3",
++                "NAME": ":memory:",
++            }
++        },
++        INSTALLED_APPS=[
++            "django.contrib.contenttypes",
++            "django.contrib.auth",
++        ],
++    )
++    import django
++    django.setup()
++
++    # Create the tables
++    from django.db import connection
++    cursor = connection.cursor()
++    cursor.execute("""
++        CREATE TABLE tests_user (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            email VARCHAR(254),
++            kind VARCHAR(10)
++        )
++    """)
++    cursor.execute("""
++        CREATE TABLE tests_profile (
++            id INTEGER PRIMARY KEY AUTOINCREMENT,
++            full_name VARCHAR(255),
++            user_id INTEGER,
++            FOREIGN KEY(user_id) REFERENCES tests_user(id)
++        )
++    """)
++
++    # Run the test
++    test = DeferredFieldsTest()
++    test.setUp()
++    try:
++        test.test_only_related_queryset()
++        print("Test passed!")
++    except AssertionError as e:
++        print(f"Test failed: {e}")
++    finally:
++        test.tearDown()
+\ No newline at end of file
+diff --git a/run_test.py b/run_test.py
+new file mode 100644
+index 0000000000..6c90704d8f
+--- /dev/null
++++ b/run_test.py
+@@ -0,0 +1,41 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.test.utils import setup_test_environment, get_runner
++
++# Configure Django settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++        'django.contrib.auth',
++        'tests.defer',
++    ],
++    ROOT_URLCONF='',
++    SECRET_KEY='fake-key',
++    TEST_RUNNER='django.test.runner.DiscoverRunner',
++)
++
++django.setup()
++
++# Import the test module
++from tests.defer.test_nested_prefetch import DeferredFieldsTest
++
++# Run the test
++test = DeferredFieldsTest('test_only_related_queryset')
++test.setUpClass()
++test.setUp()
++try:
++    test.test_only_related_queryset()
++    print("Test passed!")
++except AssertionError as e:
++    print(f"Test failed: {e}")
++finally:
++    test.tearDown()
++    test.tearDownClass()
+\ No newline at end of file
+diff --git a/tests/defer/test_nested_prefetch.py b/tests/defer/test_nested_prefetch.py
+new file mode 100644
+index 0000000000..67f6b0acb2
+--- /dev/null
++++ b/tests/defer/test_nested_prefetch.py
+@@ -0,0 +1,45 @@
++from django.db import models
++from django.test import TestCase
++from django.db.models import Prefetch
++from django.test.utils import CaptureQueriesContext
++
++class User(models.Model):
++    email = models.EmailField()
++    kind = models.CharField(
++        max_length=10, choices=[("ADMIN", "Admin"), ("REGULAR", "Regular")]
++    )
++
++class Profile(models.Model):
++    full_name = models.CharField(max_length=255)
++    user = models.OneToOneField(User, on_delete=models.CASCADE)
++
++class DeferredFieldsTest(TestCase):
++    def test_only_related_queryset(self):
++        # Create a user and a profile
++        user = User.objects.create(
++            email="test@example.com",
++            kind="ADMIN",
++        )
++        Profile.objects.create(user=user, full_name="Test Tester")
++
++        # Create a queryset with deferred fields and nested prefetches
++        queryset = User.objects.only("email").prefetch_related(
++            Prefetch(
++                "profile",
++                queryset=Profile.objects.prefetch_related(
++                    Prefetch("user", queryset=User.objects.only("kind"))
++                ),
++            )
++        )
++
++        # Check the number of queries executed when getting the first user
++        with self.assertNumQueries(3):
++            user = queryset.first()
++
++        # Check the number of queries executed when accessing user.profile.user.kind
++        # This should not execute any additional queries, but it currently does
++        with self.assertNumQueries(0):
++            self.assertEqual(user.profile.user.kind, "ADMIN")
++
++        # Print the deferred fields of user.profile.user to debug
++        print(f"Deferred fields of user.profile.user: {user.profile.user.get_deferred_fields()}")
+\ No newline at end of file

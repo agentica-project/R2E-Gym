@@ -1,0 +1,123 @@
+diff --git a/lib/matplotlib/figure.py b/lib/matplotlib/figure.py
+index c55864243a..2426c120c2 100644
+--- a/lib/matplotlib/figure.py
++++ b/lib/matplotlib/figure.py
+@@ -3036,6 +3036,9 @@ class Figure(FigureBase):
+         version = state.pop('__mpl_version__')
+         restore_to_pylab = state.pop('_restore_to_pylab', False)
+ 
++        # Store the original DPI before restoring the state
++        original_dpi = state.get('dpi', None)
++
+         if version != mpl.__version__:
+             _api.warn_external(
+                 f"This figure was saved with matplotlib version {version} and "
+@@ -3046,6 +3049,10 @@ class Figure(FigureBase):
+         # re-initialise some of the unstored state information
+         FigureCanvasBase(self)  # Set self.canvas.
+ 
++        # Restore the original DPI to prevent doubling on MacOSX backend
++        if original_dpi is not None and hasattr(self, '_dpi'):
++            self._dpi = original_dpi
++
+         if restore_to_pylab:
+             # lazy import to avoid circularity
+             import matplotlib.pyplot as plt
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..0826a729e1
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,36 @@
++import numpy as np
++import matplotlib
++import matplotlib.pyplot as plt
++import pickle
++import platform
++import os
++
++# Force the MacOSX backend
++matplotlib.use('MacOSX')
++
++print(matplotlib.get_backend())
++print('Matplotlib ver:', matplotlib.__version__)
++print('Platform:', platform.platform())
++print('System:', platform.system())
++print('Release:', platform.release())
++print('Python ver:', platform.python_version())
++
++def dump_load_get_dpi(fig):
++    with open('sinus.pickle','wb') as file:
++        pickle.dump(fig, file)
++
++    with open('sinus.pickle', 'rb') as blob:
++        fig2 = pickle.load(blob)
++    return fig2, fig2.dpi
++
++def run():
++    fig = plt.figure()
++    x = np.linspace(0,2*np.pi)
++    y = np.sin(x)
++
++    for i in range(8):  # Reduced from 32 to 8 to avoid OverflowError
++        print(f'{i}: {fig.dpi}')
++        fig, dpi = dump_load_get_dpi(fig)
++
++if __name__ == '__main__':
++    run()
+\ No newline at end of file
+diff --git a/sinus.pickle b/sinus.pickle
+new file mode 100644
+index 0000000000..f3db0c016e
+Binary files /dev/null and b/sinus.pickle differ
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..f903abfb6c
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,44 @@
++import numpy as np
++import matplotlib
++import matplotlib.pyplot as plt
++import pickle
++import platform
++import os
++
++print(matplotlib.get_backend())
++print('Matplotlib ver:', matplotlib.__version__)
++print('Platform:', platform.platform())
++print('System:', platform.system())
++print('Release:', platform.release())
++print('Python ver:', platform.python_version())
++
++def dump_load_get_dpi(fig):
++    with open('sinus.pickle','wb') as file:
++        pickle.dump(fig, file)
++
++    with open('sinus.pickle', 'rb') as blob:
++        fig2 = pickle.load(blob)
++    return fig2, fig2.dpi
++
++def run():
++    fig = plt.figure()
++    x = np.linspace(0,2*np.pi)
++    y = np.sin(x)
++
++    # Print the original DPI
++    print(f'Original DPI: {fig.dpi}')
++
++    # Test multiple pickle/unpickle cycles
++    for i in range(10):
++        print(f'{i}: {fig.dpi}')
++        fig, dpi = dump_load_get_dpi(fig)
++
++    # Verify that the DPI hasn't changed significantly
++    print(f'Final DPI: {fig.dpi}')
++    if abs(fig.dpi - 100) < 1e-10:  # Default DPI is 100
++        print("SUCCESS: DPI remains stable!")
++    else:
++        print(f"FAILURE: DPI has changed from the original value!")
++
++if __name__ == '__main__':
++    run()
+\ No newline at end of file

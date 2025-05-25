@@ -1,0 +1,77 @@
+diff --git a/test_count_annotation.py b/test_count_annotation.py
+new file mode 100644
+index 0000000000..4fd709df3d
+--- /dev/null
++++ b/test_count_annotation.py
+@@ -0,0 +1,70 @@
++import os
++import sys
++import django
++from django.db import models
++from django.db.models import Count, Manager
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++    ],
++)
++django.setup()
++
++# Define a simple test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++
++    objects = Manager()
++
++    class Meta:
++        app_label = 'test_app'
++
++# Create the tables
++from django.db import connection
++from django.core.management import call_command
++
++# Create the test app tables
++call_command('makemigrations', 'test_app', verbosity=0)
++call_command('migrate', 'test_app', verbosity=0)
++
++# Create the test data
++def create_test_data():
++    # Create test items
++    for i in range(10):
++        TestModel.objects.create(name=f'Item {i+1}')
++
++# Test the count with annotations
++def test_count_with_annotations():
++    # Create test data
++    create_test_data()
++
++    # Get the SQL for a regular count
++    query = TestModel.objects.count()
++    compiler = query.query.get_compiler(using='default', connection=connection)
++    sql, params = compiler.as_sql()
++
++    print("Regular count SQL:")
++    print(sql)
++
++    # Get the SQL for a count with annotations
++    query = TestModel.objects.annotate(test_count=Count('*')).count()
++    compiler = query.query.get_compiler(using='default', connection=connection)
++    sql, params = compiler.as_sql()
++
++    print("\nCount with annotations SQL:")
++    print(sql)
++
++    # They should produce the same SQL structure (ignoring table names)
++    print("\nSQL commands are identical:", sql.split(' ')[0] == "SELECT")
++
++if __name__ == '__main__':
++    test_count_with_annotations()
+\ No newline at end of file

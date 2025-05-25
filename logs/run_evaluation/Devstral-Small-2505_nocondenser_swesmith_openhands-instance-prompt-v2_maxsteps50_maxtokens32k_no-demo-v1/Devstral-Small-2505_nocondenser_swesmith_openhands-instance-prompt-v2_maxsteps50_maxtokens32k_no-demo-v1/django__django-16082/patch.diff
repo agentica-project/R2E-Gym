@@ -1,0 +1,132 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index 5e3c7cab82..2bbf13e07d 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -533,6 +533,7 @@ _connector_combinations = [
+             Combinable.SUB,
+             Combinable.MUL,
+             Combinable.DIV,
++            Combinable.MOD,  # Added MOD to handle different numeric types
+         )
+     },
+     # Bitwise operators.
+@@ -848,7 +849,7 @@ class ResolvedOuterRef(F):
+         col = super().resolve_expression(*args, **kwargs)
+         # FIXME: Rename possibly_multivalued to multivalued and fix detection
+         # for non-multivalued JOINs (e.g. foreign key fields). This should take
+-        # into account only many-to-many and one-to-many relationships.
++        # into accountÂ only many-to-many and one-to-many relationships.
+         col.possibly_multivalued = LOOKUP_SEP in self.name
+         return col
+ 
+diff --git a/reproduce_mod_issue.py b/reproduce_mod_issue.py
+new file mode 100644
+index 0000000000..7ee4af2cf4
+--- /dev/null
++++ b/reproduce_mod_issue.py
+@@ -0,0 +1,44 @@
++import sys
++import os
++from decimal import Decimal
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Import directly from the Django codebase
++from django.db.models import F, IntegerField, DecimalField
++from django.db.models.expressions import CombinedExpression, Combinable
++
++# Create a simple test to check the connector combinations
++def print_connector_combinations():
++    from django.db.models.expressions import _connector_combinators
++
++    # Print MOD combinations
++    print("MOD Combinations:")
++    for combinator in _connector_combinators.get(Combinable.MOD, []):
++        lhs, rhs, result = combinator
++        print(f"  {lhs.__name__} MOD {rhs.__name__} -> {result.__name__}")
++
++    # Print ADD combinations (for comparison)
++    print("\nADD Combinations:")
++    for combinator in _connector_combinators.get(Combinable.ADD, []):
++        lhs, rhs, result = combinator
++        print(f"  {lhs.__name__} ADD {rhs.__name__} -> {result.__name__}")
++
++print_connector_combinations()
++
++# Create a simple test to verify the fix
++print("\nVerifying the fix:")
++from django.db.models.expressions import _resolve_combined_type
++
++# Test IntegerField MOD DecimalField
++result_type = _resolve_combined_type(Combinable.MOD, IntegerField, DecimalField)
++print(f"IntegerField MOD DecimalField -> {result_type.__name__}")
++
++# Test DecimalField MOD IntegerField
++result_type = _resolve_combined_type(Combinable.MOD, DecimalField, IntegerField)
++print(f"DecimalField MOD IntegerField -> {result_type.__name__}")
++
++# For comparison, test with ADD
++result_type = _resolve_combined_type(Combinable.ADD, IntegerField, DecimalField)
++print(f"IntegerField ADD DecimalField -> {result_type.__name__}")
+\ No newline at end of file
+diff --git a/verify_mod_fix.py b/verify_mod_fix.py
+new file mode 100644
+index 0000000000..339565eeae
+--- /dev/null
++++ b/verify_mod_fix.py
+@@ -0,0 +1,53 @@
++import sys
++import os
++from decimal import Decimal
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Import directly from the Django codebase
++from django.db.models import F, IntegerField, DecimalField
++from django.db.models.expressions import CombinedExpression, Combinable
++from django.db.models.expressions import _resolve_combined_type
++
++def test_mod_type_resolution():
++    """Test that MOD operator correctly resolves types for different numeric combinations."""
++    # Test same-type combinations
++    print("Testing same-type combinations:")
++    result = _resolve_combined_type(Combinable.MOD, IntegerField, IntegerField)
++    print(f"IntegerField MOD IntegerField -> {result.__name__}")
++
++    result = _resolve_combined_type(Combinable.MOD, DecimalField, DecimalField)
++    print(f"DecimalField MOD DecimalField -> {result.__name__}")
++
++    result = _resolve_combined_type(Combinable.MOD, FloatField, FloatField)
++    print(f"FloatField MOD FloatField -> {result.__name__}")
++
++    # Test different-type combinations
++    print("\nTesting different-type combinations:")
++    result = _resolve_combined_type(Combinable.MOD, IntegerField, DecimalField)
++    print(f"IntegerField MOD DecimalField -> {result.__name__}")
++
++    result = _resolve_combined_type(Combinable.MOD, DecimalField, IntegerField)
++    print(f"DecimalField MOD IntegerField -> {result.__name__}")
++
++    result = _resolve_combined_type(Combinable.MOD, IntegerField, FloatField)
++    print(f"IntegerField MOD FloatField -> {result.__name__}")
++
++    result = _resolve_combined_type(Combinable.MOD, FloatField, IntegerField)
++    print(f"FloatField MOD IntegerField -> {result.__name__}")
++
++    # For comparison, test with ADD operator
++    print("\nComparing with ADD operator:")
++    result = _resolve_combined_type(Combinable.ADD, IntegerField, DecimalField)
++    print(f"IntegerField ADD DecimalField -> {result.__name__}")
++
++    result = _resolve_combined_type(Combinable.ADD, DecimalField, IntegerField)
++    print(f"DecimalField ADD IntegerField -> {result.__name__}")
++
++# Run the test
++if __name__ == "__main__":
++    # Import FloatField
++    from django.db.models import FloatField
++
++    test_mod_type_resolution()
+\ No newline at end of file

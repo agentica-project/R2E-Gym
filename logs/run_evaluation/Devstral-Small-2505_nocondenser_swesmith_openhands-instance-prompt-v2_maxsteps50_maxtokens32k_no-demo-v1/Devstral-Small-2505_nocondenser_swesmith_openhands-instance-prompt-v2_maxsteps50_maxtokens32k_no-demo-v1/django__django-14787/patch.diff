@@ -1,0 +1,113 @@
+diff --git a/django/utils/decorators.py b/django/utils/decorators.py
+index 5c9a5d01c7..c196f6b589 100644
+--- a/django/utils/decorators.py
++++ b/django/utils/decorators.py
+@@ -38,6 +38,8 @@ def _multi_decorate(decorators, method):
+         # 'func'. Also, wrap method.__get__() in a function because new
+         # attributes can't be set on bound method objects, only on functions.
+         bound_method = partial(method.__get__(self, type(self)))
++        # Ensure the partial object has the same attributes as the original method
++        update_wrapper(bound_method, method)
+         for dec in decorators:
+             bound_method = dec(bound_method)
+         return bound_method(*args, **kwargs)
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..1c28b882fe
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,33 @@
++import logging
++from functools import wraps
++from django.utils.decorators import method_decorator
++
++# Set up logging
++logging.basicConfig(level=logging.DEBUG)
++logger = logging.getLogger(__name__)
++
++def logger_decorator(func):
++    @wraps(func)
++    def inner(*args, **kwargs):
++        try:
++            result = func(*args, **kwargs)
++        except Exception as e:
++            result = str(e)
++        finally:
++            logger.debug(f"{func.__name__} called with args: {args} and kwargs: {kwargs} resulting: {result}")
++        return result
++    return inner
++
++class Test:
++    @method_decorator(logger_decorator)
++    def hello_world(self):
++        return "hello"
++
++# Try to access the method
++test_instance = Test()
++print(f"Method name: {test_instance.hello_world.__name__}")
++print(f"Method module: {test_instance.hello_world.__module__}")
++print(f"Method doc: {test_instance.hello_world.__doc__}")
++
++# Call the method to trigger the logger
++test_instance.hello_world()
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..13680f1ac4
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,53 @@
++import unittest
++from functools import wraps
++from django.utils.decorators import method_decorator
++
++# Define a simple decorator that uses wraps
++def my_decorator(func):
++    @wraps(func)
++    def wrapper(*args, **kwargs):
++        print(f"Called {func.__name__}")
++        return func(*args, **kwargs)
++    return wrapper
++
++# Define a decorator that accesses function attributes
++def attribute_accessor_decorator(func):
++    @wraps(func)
++    def wrapper(*args, **kwargs):
++        # This would fail before our fix
++        print(f"Function name: {func.__name__}")
++        print(f"Function module: {func.__module__}")
++        print(f"Function doc: {func.__doc__}")
++        return func(*args, **kwargs)
++    return wrapper
++
++class TestMethodDecorator(unittest.TestCase):
++    def test_preserves_attributes(self):
++        # Define a class with a decorated method
++        class Test:
++            @method_decorator(my_decorator)
++            def test_method(self):
++                """Test docstring"""
++                return 'test'
++
++        # Create an instance and check attributes
++        instance = Test()
++        self.assertEqual(instance.test_method.__name__, 'test_method')
++        self.assertEqual(instance.test_method.__doc__, 'Test docstring')
++        self.assertTrue(callable(instance.test_method))
++
++    def test_attribute_access(self):
++        # Define a class with a decorated method that accesses attributes
++        class Test:
++            @method_decorator(attribute_accessor_decorator)
++            def test_method(self):
++                """Test docstring"""
++                return 'test'
++
++        # Create an instance and call the method
++        instance = Test()
++        result = instance.test_method()
++        self.assertEqual(result, 'test')
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file

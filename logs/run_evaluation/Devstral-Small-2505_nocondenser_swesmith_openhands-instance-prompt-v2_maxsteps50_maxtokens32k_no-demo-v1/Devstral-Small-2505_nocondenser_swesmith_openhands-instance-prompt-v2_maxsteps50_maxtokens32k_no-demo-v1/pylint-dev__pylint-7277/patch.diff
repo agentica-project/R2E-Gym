@@ -1,0 +1,272 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..b5f102b3d
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,179 @@
++#!/usr/bin/env python3
++
++import sys
++import os
++import copy
++
++def test_with_empty_path():
++    """Test with an empty string as the first path."""
++    print("\n=== Testing with empty string as first path ===")
++    original_path = copy.deepcopy(sys.path)
++    sys.path.insert(0, "")
++
++    # Store original sys.path for restoration
++    original = sys.path[:]
++
++    try:
++        import pylint
++        pylint.modify_sys_path()
++
++        # Check if the empty string was removed
++        if "" not in sys.path:
++            print("✓ Empty string was removed as expected")
++        else:
++            print("✗ Empty string was not removed")
++
++        # Restore original sys.path
++        sys.path[:] = original
++    except Exception as e:
++        print(f"Error: {e}")
++        # Restore original sys.path
++        sys.path[:] = original
++
++def test_with_dot_path():
++    """Test with '.' as the first path."""
++    print("\n=== Testing with '.' as first path ===")
++    original_path = copy.deepcopy(sys.path)
++    sys.path.insert(0, ".")
++
++    # Store original sys.path for restoration
++    original = sys.path[:]
++
++    try:
++        import pylint
++        pylint.modify_sys_path()
++
++        # Check if '.' was removed
++        if "." not in sys.path:
++            print("✓ '.' was removed as expected")
++        else:
++            print("✗ '.' was not removed")
++
++        # Restore original sys.path
++        sys.path[:] = original
++    except Exception as e:
++        print(f"Error: {e}")
++        # Restore original sys.path
++        sys.path[:] = original
++
++def test_with_cwd_path():
++    """Test with current working directory as the first path."""
++    print("\n=== Testing with current working directory as first path ===")
++    original_path = copy.deepcopy(sys.path)
++    cwd = os.getcwd()
++    sys.path.insert(0, cwd)
++
++    # Store original sys.path for restoration
++    original = sys.path[:]
++
++    # Debug info
++    print(f"Current working directory: {cwd}")
++    print(f"First path in sys.path: {sys.path[0]}")
++    print(f"Are they equal? {cwd == sys.path[0]}")
++    print(f"Absolute paths - cwd: {os.path.abspath(cwd)}, path: {os.path.abspath(sys.path[0])}")
++    print(f"Are absolute paths equal? {os.path.abspath(cwd) == os.path.abspath(sys.path[0])}")
++
++    try:
++        import pylint
++        print("\nBefore modify_sys_path:")
++        for i, path in enumerate(sys.path):
++            print(f"{i}: {path}")
++
++        # Check if cwd is at the beginning of sys.path
++        cwd_at_start = len(sys.path) > 0 and sys.path[0] == cwd
++        print(f"\nCWD at start of sys.path: {cwd_at_start}")
++
++        pylint.modify_sys_path()
++
++        print("\nAfter modify_sys_path:")
++        for i, path in enumerate(sys.path):
++            print(f"{i}: {path}")
++
++        # Check if cwd was removed from the beginning
++        if len(sys.path) == 0 or sys.path[0] != cwd:
++            print(f"\n✓ Current working directory '{cwd}' was removed from the beginning as expected")
++        else:
++            print(f"\n✗ Current working directory '{cwd}' was not removed from the beginning")
++
++        # Restore original sys.path
++        sys.path[:] = original
++    except Exception as e:
++        print(f"Error: {e}")
++        # Restore original sys.path
++        sys.path[:] = original
++
++def test_with_custom_path():
++    """Test with a custom path as the first path."""
++    print("\n=== Testing with custom path as first path ===")
++    original_path = copy.deepcopy(sys.path)
++    custom_path = "/path/to/custom/module"
++    sys.path.insert(0, custom_path)
++
++    # Store original sys.path for restoration
++    original = sys.path[:]
++
++    try:
++        import pylint
++        pylint.modify_sys_path()
++
++        # Check if custom path was removed
++        if custom_path not in sys.path:
++            print(f"✗ Custom path '{custom_path}' was incorrectly removed")
++        else:
++            print(f"✓ Custom path '{custom_path}' was preserved as expected")
++
++        # Restore original sys.path
++        sys.path[:] = original
++    except Exception as e:
++        print(f"Error: {e}")
++        # Restore original sys.path
++        sys.path[:] = original
++
++def test_with_pythonpath():
++    """Test with PYTHONPATH environment variable set."""
++    print("\n=== Testing with PYTHONPATH environment variable ===")
++    original_path = copy.deepcopy(sys.path)
++    custom_path = "/path/to/custom/module"
++    sys.path.insert(0, custom_path)
++
++    # Store original sys.path for restoration
++    original = sys.path[:]
++
++    # Store original PYTHONPATH
++    original_pythonpath = os.environ.get("PYTHONPATH", "")
++    os.environ["PYTHONPATH"] = ":other:path"
++
++    try:
++        import pylint
++        pylint.modify_sys_path()
++
++        # Check if custom path was removed
++        if custom_path not in sys.path:
++            print(f"✗ Custom path '{custom_path}' was incorrectly removed")
++        else:
++            print(f"✓ Custom path '{custom_path}' was preserved as expected")
++
++        # Restore original sys.path
++        sys.path[:] = original
++    except Exception as e:
++        print(f"Error: {e}")
++        # Restore original sys.path
++        sys.path[:] = original
++    finally:
++        # Restore original PYTHONPATH
++        if original_pythonpath:
++            os.environ["PYTHONPATH"] = original_pythonpath
++        else:
++            del os.environ["PYTHONPATH"]
++
++if __name__ == "__main__":
++    print("Running comprehensive tests for pylint.modify_sys_path()")
++    print("======================================================")
++
++    test_with_empty_path()
++    test_with_dot_path()
++    test_with_cwd_path()
++    test_with_custom_path()
++    test_with_pythonpath()
++
++    print("\nAll tests completed.")
+\ No newline at end of file
+diff --git a/pylint/__init__.py b/pylint/__init__.py
+index 9f3dd74e6..ea818caa0 100644
+--- a/pylint/__init__.py
++++ b/pylint/__init__.py
+@@ -86,7 +86,7 @@ def modify_sys_path() -> None:
+     stdlib or pylint's own modules.
+     CPython issue: https://bugs.python.org/issue33053
+ 
+-    - Remove the first entry. This will always be either "" or the working directory
++    - Remove the first entry if it's "", "." or the current working directory
+     - Remove the working directory from the second and third entries
+       if PYTHONPATH includes a ":" at the beginning or the end.
+       https://github.com/PyCQA/pylint/issues/3636
+@@ -96,13 +96,21 @@ def modify_sys_path() -> None:
+       if pylint is installed in an editable configuration (as the last item).
+       https://github.com/PyCQA/pylint/issues/4161
+     """
+-    sys.path.pop(0)
+-    env_pythonpath = os.environ.get("PYTHONPATH", "")
+     cwd = os.getcwd()
+-    if env_pythonpath.startswith(":") and env_pythonpath not in (f":{cwd}", ":."):
++
++    # Only remove the first entry if it's "", "." or the current working directory
++    if sys.path and (sys.path[0] in ("", ".") or sys.path[0] == cwd):
+         sys.path.pop(0)
++
++    env_pythonpath = os.environ.get("PYTHONPATH", "")
++    if env_pythonpath.startswith(":") and env_pythonpath not in (f":{cwd}", ":."):
++        # Only remove the second entry if it's "", "." or the current working directory
++        if sys.path and (sys.path[0] in ("", ".") or sys.path[0] == cwd):
++            sys.path.pop(0)
+     elif env_pythonpath.endswith(":") and env_pythonpath not in (f"{cwd}:", ".:"):
+-        sys.path.pop(1)
++        # Only remove the third entry if it's "", "." or the current working directory
++        if len(sys.path) > 1 and (sys.path[1] in ("", ".") or sys.path[1] == cwd):
++            sys.path.pop(1)
+ 
+ 
+ version = __version__
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100755
+index 000000000..998fbf549
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,40 @@
++#!/usr/bin/env python3
++
++import sys
++import os
++import importlib
++
++# Print original sys.path
++print("Original sys.path:")
++for i, path in enumerate(sys.path):
++    print(f"{i}: {path}")
++
++# Add a custom path at the beginning of sys.path
++custom_path = "/path/to/custom/module"
++sys.path.insert(0, custom_path)
++
++print("\nModified sys.path (before importing pylint):")
++for i, path in enumerate(sys.path):
++    print(f"{i}: {path}")
++
++# Import pylint's modify_sys_path function directly
++print("\nImporting pylint and calling modify_sys_path...")
++try:
++    import pylint
++    # Store the original sys.path
++    original_path = sys.path[:]
++    # Call the function that modifies sys.path
++    pylint.modify_sys_path()
++except Exception as e:
++    print(f"Error importing or using pylint: {e}")
++
++# Check sys.path after calling modify_sys_path
++print("\nSys.path after calling modify_sys_path:")
++for i, path in enumerate(sys.path):
++    print(f"{i}: {path}")
++
++# Verify if the custom path was removed
++if custom_path not in sys.path:
++    print(f"\nIssue confirmed: Custom path '{custom_path}' was removed from sys.path")
++else:
++    print(f"\nCustom path '{custom_path}' is still in sys.path")
+\ No newline at end of file

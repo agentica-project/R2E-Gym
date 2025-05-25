@@ -1,0 +1,160 @@
+diff --git a/django/db/models/fields/json.py b/django/db/models/fields/json.py
+index fafc1beee8..609eec3d47 100644
+--- a/django/db/models/fields/json.py
++++ b/django/db/models/fields/json.py
+@@ -487,6 +487,75 @@ KeyTransform.register_lookup(KeyTransformStartsWith)
+ KeyTransform.register_lookup(KeyTransformIStartsWith)
+ KeyTransform.register_lookup(KeyTransformEndsWith)
+ KeyTransform.register_lookup(KeyTransformIEndsWith)
++class KeyTransformIn(KeyTransformTextLookupMixin, lookups.In):
++    def as_sql(self, compiler, connection):
++        lhs, params, key_transforms = self.lhs.preprocess_lhs(compiler, connection)
++        json_path = compile_json_path(key_transforms)
++
++        # Process the RHS (the values in the IN clause)
++        if self.rhs_is_direct_value():
++            # Remove None from the list as NULL is never equal to anything.
++            try:
++                rhs = set(self.rhs)
++                rhs.discard(None)
++            except TypeError:  # Unhashable items in self.rhs
++                rhs = [r for r in self.rhs if r is not None]
++
++            if not rhs:
++                from django.db.models.sql.where import EmptyResultSet
++                raise EmptyResultSet
++
++            # Format the values for the SQL query
++            rhs_params = []
++            rhs_placeholders = []
++            for value in rhs:
++                rhs_params.append(value)
++                rhs_placeholders.append('%s')
++
++            rhs_sql = 'IN (' + ', '.join(rhs_placeholders) + ')'
++            return f"JSON_EXTRACT({lhs}, %s) {rhs_sql}", tuple(params) + (json_path,) + tuple(rhs_params)
++        else:
++            # Handle subquery case
++            subquery_sql, subquery_params = self.process_rhs(compiler, connection)
++            return f"JSON_EXTRACT({lhs}, %s) IN ({subquery_sql})", tuple(params) + (json_path,) + subquery_params
++
++    def as_mysql(self, compiler, connection):
++        return self.as_sql(compiler, connection)
++
++    def as_oracle(self, compiler, connection):
++        lhs, params, key_transforms = self.lhs.preprocess_lhs(compiler, connection)
++        json_path = compile_json_path(key_transforms)
++
++        # Process the RHS (the values in the IN clause)
++        if self.rhs_is_direct_value():
++            # Remove None from the list as NULL is never equal to anything.
++            try:
++                rhs = set(self.rhs)
++                rhs.discard(None)
++            except TypeError:  # Unhashable items in self.rhs
++                rhs = [r for r in self.rhs if r is not None]
++
++            if not rhs:
++                from django.db.models.sql.where import EmptyResultSet
++                raise EmptyResultSet
++
++            # Format the values for the SQL query
++            rhs_params = []
++            rhs_placeholders = []
++            for value in rhs:
++                rhs_params.append(value)
++                rhs_placeholders.append(':p%d' % (len(rhs_params)))
++
++            rhs_sql = 'IN (' + ', '.join(rhs_placeholders) + ')'
++            return f"JSON_VALUE({lhs}, %s) {rhs_sql}", tuple(params) + (json_path,) + tuple(rhs_params)
++        else:
++            # Handle subquery case
++            subquery_sql, subquery_params = self.process_rhs(compiler, connection)
++            return f"JSON_VALUE({lhs}, %s) IN ({subquery_sql})", tuple(params) + (json_path,) + subquery_params
++
++    def as_sqlite(self, compiler, connection):
++        return self.as_sql(compiler, connection)
++
+ KeyTransform.register_lookup(KeyTransformRegex)
+ KeyTransform.register_lookup(KeyTransformIRegex)
+ 
+@@ -494,6 +563,7 @@ KeyTransform.register_lookup(KeyTransformLt)
+ KeyTransform.register_lookup(KeyTransformLte)
+ KeyTransform.register_lookup(KeyTransformGt)
+ KeyTransform.register_lookup(KeyTransformGte)
++KeyTransform.register_lookup(KeyTransformIn)
+ 
+ 
+ class KeyTransformFactory:
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..ac3a5ee5b6
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,65 @@
++import os
++import sys
++import json
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        INSTALLED_APPS=[
++            'django.db.models',
++        ],
++    )
++    django.setup()
++
++from django.db import models, connection
++from django.db.models import JSONField
++
++# Create a test model
++class TestModel(models.Model):
++    data = JSONField()
++
++    class Meta:
++        app_label = 'reproduce_issue'
++
++# Create the test database tables
++connection.cursor().execute('CREATE TABLE IF NOT EXISTS reproduce_issue_testmodel (id integer primary key, data json)')
++
++# Insert test data
++test_data = [
++    {'key': 0},  # This should be found by both filters
++    {'key': 1},  # This should not be found by the first filter
++    {'key': 0},  # This should be found by both filters
++]
++
++for item in test_data:
++    connection.cursor().execute(
++        "INSERT INTO reproduce_issue_testmodel (data) VALUES (?)",
++        [json.dumps(item)]
++    )
++
++# Test the filters
++first_filter = {'data__key__in': [0]}
++second_filter = {'data__key': 0}
++
++print("Testing first filter (data__key__in=[0]):")
++first_query = TestModel.objects.filter(**first_filter)
++first_items = list(first_query)
++print(f"Number of items: {len(first_items)}")
++for item in first_items:
++    print(f"  - {item.data}")
++
++print("\nTesting second filter (data__key=0):")
++second_items = list(second_query)
++print(f"Number of items: {len(second_items)}")
++for item in second_items:
++    print(f"  - {item.data}")
++
++print("\nExpected: Both filters should return the same number of items (2)")
+\ No newline at end of file

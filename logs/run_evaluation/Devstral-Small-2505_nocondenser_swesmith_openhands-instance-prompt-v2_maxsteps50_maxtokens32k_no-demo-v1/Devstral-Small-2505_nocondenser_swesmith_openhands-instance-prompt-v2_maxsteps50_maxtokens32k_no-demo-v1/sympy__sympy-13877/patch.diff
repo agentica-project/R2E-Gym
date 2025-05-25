@@ -1,0 +1,102 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..b0d6937f77
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,32 @@
++from sympy import *
++from sympy.abc import a, b, c
++
++def test_determinant_with_symbols():
++    """Test determinant calculation with various symbolic matrices."""
++    print("Testing determinant with symbolic matrices...")
++
++    # Test 1: Matrix with a single symbol
++    M1 = Matrix([[i + a*j for i in range(5)] for j in range(5)])
++    print(f"5x5 matrix with one symbol: det(M1) = {det(M1)}")
++
++    # Test 2: Matrix with multiple symbols
++    M2 = Matrix([[i + a*j + b for i in range(4)] for j in range(4)])
++    print(f"4x4 matrix with two symbols: det(M2) = {det(M2)}")
++
++    # Test 3: Matrix with more symbols
++    M3 = Matrix([[i + a*j + b*k + c for i in range(6)] for j in range(6) for k in [0]])
++    print(f"6x6 matrix with three symbols: det(M3) = {det(M3)}")
++
++    # Test 4: Mixed symbolic and numeric matrix
++    M4 = Matrix([[i + a*j if i < 2 else i + b*j for i in range(5)] for j in range(5)])
++    print(f"5x5 mixed symbolic matrix: det(M4) = {det(M4)}")
++
++    # Test 5: Original test case from issue
++    f = lambda n: det(Matrix([[i + a*j for i in range(n)] for j in range(n)]))
++    for i in range(1, 8):
++        print(f"Original test case f({i}) = {f(i)}")
++
++    print("All tests completed successfully!")
++
++if __name__ == "__main__":
++    test_determinant_with_symbols()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..479bf2c9c9
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,17 @@
++from sympy import *
++from sympy.abc import a
++
++def test_determinant(n):
++    """Test determinant calculation for matrices of size n x n."""
++    f = lambda n: det(Matrix([[i + a*j for i in range(n)] for j in range(n)]))
++    try:
++        result = f(n)
++        print(f"f({n}) = {result}")
++        return True
++    except Exception as e:
++        print(f"Error for f({n}): {type(e).__name__}: {e}")
++        return False
++
++# Test for different matrix sizes
++for i in range(1, 7):
++    test_determinant(i)
+\ No newline at end of file
+diff --git a/sympy/matrices/matrices.py b/sympy/matrices/matrices.py
+index 97cde62e26..12833d68d4 100644
+--- a/sympy/matrices/matrices.py
++++ b/sympy/matrices/matrices.py
+@@ -207,13 +207,18 @@ def bareiss(mat, cumm=1):
+ 
+             def entry(i, j):
+                 ret = (pivot_val*tmp_mat[i, j + 1] - mat[pivot_pos, j + 1]*tmp_mat[i, 0]) / cumm
+-                if not ret.is_Atom:
++                # Check for NaN before attempting to cancel
++                if not ret.is_Atom and not ret.is_NaN:
+                     cancel(ret)
+                 return ret
+ 
+             return sign*bareiss(self._new(mat.rows - 1, mat.cols - 1, entry), pivot_val)
+ 
+-        return cancel(bareiss(self))
++        result = bareiss(self)
++        # Only cancel if result is not NaN
++        if not result.is_NaN:
++            return cancel(result)
++        return result
+ 
+     def _eval_det_berkowitz(self):
+         """ Use the Berkowitz algorithm to compute the determinant."""
+@@ -422,6 +427,13 @@ def det(self, method="bareiss"):
+                    - self[0, 0] * self[1, 2] * self[2, 1]
+                    - self[0, 1] * self[1, 0] * self[2, 2])
+ 
++        # Check if the matrix contains symbolic entries
++        has_symbols = any(isinstance(x, Symbol) for x in self)
++        # If the matrix contains symbolic entries and method is bareiss, use LU instead
++        # to avoid "Invalid NaN comparison" errors with symbolic matrices
++        if has_symbols and method == "bareiss":
++            method = "lu"
++
+         if method == "bareiss":
+             return self._eval_det_bareiss()
+         elif method == "berkowitz":

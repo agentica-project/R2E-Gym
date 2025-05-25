@@ -1,0 +1,173 @@
+diff --git a/django/db/migrations/operations/models.py b/django/db/migrations/operations/models.py
+index dddf7c679c..aff66b6bd4 100644
+--- a/django/db/migrations/operations/models.py
++++ b/django/db/migrations/operations/models.py
+@@ -137,11 +137,19 @@ class CreateModel(ModelOperation):
+                 ),
+             ]
+         elif isinstance(operation, AlterModelOptions) and self.name_lower == operation.name_lower:
++            # If operation.options is empty, we need to remove all options from ALTER_OPTION_KEYS
++            # similar to how AlterModelOptions.state_forwards() works
++            if not operation.options:
++                options = self.options.copy()
++                for key in operation.ALTER_OPTION_KEYS:
++                    options.pop(key, None)
++            else:
++                options = {**self.options, **operation.options}
+             return [
+                 CreateModel(
+                     self.name,
+                     fields=self.fields,
+-                    options={**self.options, **operation.options},
++                    options=options,
+                     bases=self.bases,
+                     managers=self.managers,
+                 ),
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..1c46e23c1e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,54 @@
++import sys
++import os
++from django.db.migrations.operations.models import CreateModel, AlterModelOptions
++
++def test_create_model_reduce_with_empty_options():
++    """Test that CreateModel.reduce() properly handles AlterModelOptions with empty options."""
++    # Create a model with some options
++    initial_options = {
++        'verbose_name': 'Initial Model',
++        'ordering': ['field1'],
++        'permissions': [('can_do_something', 'Can do something')],
++    }
++    create_model = CreateModel(
++        name='TestModel',
++        fields=[],
++        options=initial_options,
++    )
++
++    # Create an AlterModelOptions operation that clears all options
++    alter_options = AlterModelOptions(
++        name='TestModel',
++        options={},
++    )
++
++    # Reduce the operations
++    reduced_operations = create_model.reduce(alter_options, 'app_label')
++
++    # Get the resulting CreateModel operation
++    reduced_create_model = reduced_operations[0]
++
++    # Check if options were properly cleared
++    print("Initial options:", initial_options)
++    print("Reduced options:", reduced_create_model.options)
++
++    # All options should be cleared since AlterModelOptions with empty options
++    # should remove all options from ALTER_OPTION_KEYS
++    all_options_cleared = all(
++        key not in reduced_create_model.options
++        for key in AlterModelOptions.ALTER_OPTION_KEYS
++    )
++
++    print("All options cleared:", all_options_cleared)
++
++    return all_options_cleared
++
++if __name__ == "__main__":
++    # Set up Django environment
++    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
++
++    # Run the test
++    result = test_create_model_reduce_with_empty_options()
++
++    # Exit with appropriate status code
++    sys.exit(0 if result else 1)
+\ No newline at end of file
+diff --git a/tests/migrations/test_create_model_reduce.py b/tests/migrations/test_create_model_reduce.py
+new file mode 100644
+index 0000000000..655d228537
+--- /dev/null
++++ b/tests/migrations/test_create_model_reduce.py
+@@ -0,0 +1,80 @@
++"""
++Tests for CreateModel.reduce() with AlterModelOptions.
++"""
++from django.db.migrations.operations.models import CreateModel, AlterModelOptions
++import unittest
++
++class CreateModelReduceTests(unittest.TestCase):
++    """
++    Tests for CreateModel.reduce() with AlterModelOptions.
++    """
++
++    def test_reduce_with_empty_options(self):
++        """
++        Test that CreateModel.reduce() properly handles AlterModelOptions with empty options.
++        """
++        # Create a model with some options
++        initial_options = {
++            'verbose_name': 'Initial Model',
++            'ordering': ['field1'],
++            'permissions': [('can_do_something', 'Can do something')],
++        }
++        create_model = CreateModel(
++            name='TestModel',
++            fields=[],
++            options=initial_options,
++        )
++
++        # Create an AlterModelOptions operation that clears all options
++        alter_options = AlterModelOptions(
++            name='TestModel',
++            options={},
++        )
++
++        # Reduce the operations
++        reduced_operations = create_model.reduce(alter_options, 'app_label')
++
++        # Get the resulting CreateModel operation
++        reduced_create_model = reduced_operations[0]
++
++        # Check if options were properly cleared
++        for key in AlterModelOptions.ALTER_OPTION_KEYS:
++            with self.subTest(key=key):
++                self.assertNotIn(key, reduced_create_model.options)
++
++    def test_reduce_with_some_options(self):
++        """
++        Test that CreateModel.reduce() properly handles AlterModelOptions with some options.
++        """
++        # Create a model with some options
++        initial_options = {
++            'verbose_name': 'Initial Model',
++            'ordering': ['field1'],
++            'permissions': [('can_do_something', 'Can do something')],
++        }
++        create_model = CreateModel(
++            name='TestModel',
++            fields=[],
++            options=initial_options,
++        )
++
++        # Create an AlterModelOptions operation that changes some options
++        new_options = {
++            'verbose_name': 'New Model',
++            'ordering': ['field2'],
++        }
++        alter_options = AlterModelOptions(
++            name='TestModel',
++            options=new_options,
++        )
++
++        # Reduce the operations
++        reduced_operations = create_model.reduce(alter_options, 'app_label')
++
++        # Get the resulting CreateModel operation
++        reduced_create_model = reduced_operations[0]
++
++        # Check if options were properly updated
++        self.assertEqual(reduced_create_model.options['verbose_name'], 'New Model')
++        self.assertEqual(reduced_create_model.options['ordering'], ['field2'])
++        self.assertEqual(reduced_create_model.options['permissions'], [('can_do_something', 'Can do something')])
+\ No newline at end of file

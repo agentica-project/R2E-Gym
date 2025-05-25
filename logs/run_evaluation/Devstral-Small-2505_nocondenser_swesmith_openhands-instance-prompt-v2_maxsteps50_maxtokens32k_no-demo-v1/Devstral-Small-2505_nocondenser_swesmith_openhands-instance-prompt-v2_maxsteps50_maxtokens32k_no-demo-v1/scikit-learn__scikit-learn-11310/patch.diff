@@ -1,0 +1,176 @@
+diff --git a/sklearn/model_selection/_search.py b/sklearn/model_selection/_search.py
+index 99d6096af..63dba9a21 100644
+--- a/sklearn/model_selection/_search.py
++++ b/sklearn/model_selection/_search.py
+@@ -17,6 +17,7 @@ from collections import Mapping, namedtuple, defaultdict, Sequence, Iterable
+ from functools import partial, reduce
+ from itertools import product
+ import operator
++import time
+ import warnings
+ 
+ import numpy as np
+@@ -766,10 +767,14 @@ class BaseSearchCV(six.with_metaclass(ABCMeta, BaseEstimator,
+         if self.refit:
+             self.best_estimator_ = clone(base_estimator).set_params(
+                 **self.best_params_)
++            # Measure time for refitting
++            start_refit = time.time()
+             if y is not None:
+                 self.best_estimator_.fit(X, y, **fit_params)
+             else:
+                 self.best_estimator_.fit(X, **fit_params)
++            end_refit = time.time()
++            self.refit_time_ = end_refit - start_refit
+ 
+         # Store the only scorer not as a dict for single metric evaluation
+         self.scorer_ = scorers if self.multimetric_ else scorers['score']
+diff --git a/test_refit_time.py b/test_refit_time.py
+new file mode 100644
+index 000000000..3abdd4565
+--- /dev/null
++++ b/test_refit_time.py
+@@ -0,0 +1,32 @@
++import sklearn.datasets
++import sklearn.model_selection
++import sklearn.ensemble
++import time
++
++# Load iris dataset
++X, y = sklearn.datasets.load_iris(return_X_y=True)
++
++# Create a GridSearchCV instance
++rs = sklearn.model_selection.GridSearchCV(
++    estimator=sklearn.ensemble.RandomForestClassifier(),
++    param_grid={'n_estimators': [2, 3, 4, 5]}
++)
++
++# Fit the model
++start_time = time.time()
++rs.fit(X, y)
++end_time = time.time()
++
++# Print the fit and score times for each fold
++print("Mean fit time per fold:", rs.cv_results_['mean_fit_time'])
++print("Mean score time per fold:", rs.cv_results_['mean_score_time'])
++
++# Check if refit_time_ attribute exists
++if hasattr(rs, 'refit_time_'):
++    print("Refit time:", rs.refit_time_)
++else:
++    print("refit_time_ attribute not found")
++
++# Calculate total time manually for verification
++total_time = end_time - start_time
++print("Total time (manual calculation):", total_time)
+\ No newline at end of file
+diff --git a/test_refit_time_comprehensive.py b/test_refit_time_comprehensive.py
+new file mode 100644
+index 000000000..3a2e554d3
+--- /dev/null
++++ b/test_refit_time_comprehensive.py
+@@ -0,0 +1,103 @@
++import numpy as np
++import time
++import sklearn.datasets
++import sklearn.model_selection
++import sklearn.ensemble
++import sklearn.svm
++import sklearn.linear_model
++
++# Load datasets
++X, y = sklearn.datasets.load_iris(return_X_y=True)
++X_large, y_large = sklearn.datasets.make_classification(n_samples=1000, n_features=20, random_state=42)
++
++def test_grid_search_refit_time():
++    print("\n=== Testing GridSearchCV with RandomForest ===")
++    rs = sklearn.model_selection.GridSearchCV(
++        estimator=sklearn.ensemble.RandomForestClassifier(),
++        param_grid={'n_estimators': [10, 50, 100]}
++    )
++
++    start_time = time.time()
++    rs.fit(X, y)
++    total_time = time.time() - start_time
++
++    print(f"Mean fit time per fold: {rs.cv_results_['mean_fit_time']}")
++    print(f"Mean score time per fold: {rs.cv_results_['mean_score_time']}")
++    print(f"Refit time: {rs.refit_time_}")
++    print(f"Total time: {total_time}")
++    print(f"Sum of fit times: {np.sum(rs.cv_results_['mean_fit_time']) * len(rs.cv_results_['mean_fit_time'])}")
++    print(f"Sum of score times: {np.sum(rs.cv_results_['mean_score_time']) * len(rs.cv_results_['mean_score_time'])}")
++
++    # Verify that refit_time is reasonable
++    assert rs.refit_time_ > 0, "refit_time_ should be positive"
++    assert rs.refit_time_ < total_time, "refit_time_ should be less than total time"
++
++def test_randomized_search_refit_time():
++    print("\n=== Testing RandomizedSearchCV with SVM ===")
++    rs = sklearn.model_selection.RandomizedSearchCV(
++        estimator=sklearn.svm.SVC(),
++        param_distributions={'C': [0.1, 1, 10], 'kernel': ['linear', 'rbf']},
++        n_iter=3,
++        random_state=42
++    )
++
++    start_time = time.time()
++    rs.fit(X, y)
++    total_time = time.time() - start_time
++
++    print(f"Mean fit time per fold: {rs.cv_results_['mean_fit_time']}")
++    print(f"Mean score time per fold: {rs.cv_results_['mean_score_time']}")
++    print(f"Refit time: {rs.refit_time_}")
++    print(f"Total time: {total_time}")
++
++    # Verify that refit_time is reasonable
++    assert rs.refit_time_ > 0, "refit_time_ should be positive"
++    assert rs.refit_time_ < total_time, "refit_time_ should be less than total time"
++
++def test_no_refit_option():
++    print("\n=== Testing GridSearchCV with refit=False ===")
++    rs = sklearn.model_selection.GridSearchCV(
++        estimator=sklearn.linear_model.LogisticRegression(),
++        param_grid={'C': [0.1, 1, 10]},
++        refit=False
++    )
++
++    start_time = time.time()
++    rs.fit(X, y)
++    total_time = time.time() - start_time
++
++    print(f"Mean fit time per fold: {rs.cv_results_['mean_fit_time']}")
++    print(f"Mean score time per fold: {rs.cv_results_['mean_score_time']}")
++    print(f"Has refit_time_: {'refit_time_' in dir(rs)}")
++
++    # Verify that refit_time_ is not set when refit=False
++    assert not hasattr(rs, 'refit_time_'), "refit_time_ should not be set when refit=False"
++
++def test_multimetric_refit():
++    print("\n=== Testing GridSearchCV with multimetric scoring ===")
++    rs = sklearn.model_selection.GridSearchCV(
++        estimator=sklearn.ensemble.RandomForestClassifier(),
++        param_grid={'n_estimators': [10, 50]},
++        scoring={'accuracy': 'accuracy', 'f1': 'f1_weighted'},
++        refit='accuracy'
++    )
++
++    start_time = time.time()
++    rs.fit(X, y)
++    total_time = time.time() - start_time
++
++    print(f"Mean fit time per fold: {rs.cv_results_['mean_fit_time']}")
++    print(f"Mean score time per fold: {rs.cv_results_['mean_score_time']}")
++    print(f"Refit time: {rs.refit_time_}")
++    print(f"Total time: {total_time}")
++
++    # Verify that refit_time is reasonable
++    assert rs.refit_time_ > 0, "refit_time_ should be positive"
++    assert rs.refit_time_ < total_time, "refit_time_ should be less than total time"
++
++if __name__ == "__main__":
++    test_grid_search_refit_time()
++    test_randomized_search_refit_time()
++    test_no_refit_option()
++    test_multimetric_refit()
++    print("\nAll tests passed!")
+\ No newline at end of file

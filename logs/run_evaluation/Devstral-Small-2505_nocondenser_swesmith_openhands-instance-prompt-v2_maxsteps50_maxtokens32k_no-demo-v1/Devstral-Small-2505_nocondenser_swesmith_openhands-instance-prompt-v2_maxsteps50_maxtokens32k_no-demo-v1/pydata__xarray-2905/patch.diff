@@ -1,0 +1,91 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 00000000..646fd90c
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,41 @@
++import xarray as xr
++import numpy as np
++import pandas as pd
++
++# Test 1: Original issue - objects with values property
++print("Test 1: Objects with values property")
++class HasValues(object):
++    values = 5
++
++da1 = xr.DataArray([None])
++da1.loc[{'dim_0': 0}] = HasValues()
++print("Type of da1.values[0]:", type(da1.values[0]))
++print("da1.values:", da1.values)
++print()
++
++# Test 2: Custom objects without values property
++print("Test 2: Custom objects without values property")
++class NoValues:
++    pass
++
++da2 = xr.DataArray([None])
++da2.loc[{'dim_0': 0}] = NoValues()
++print("Type of da2.values[0]:", type(da2.values[0]))
++print("da2.values:", da2.values)
++print()
++
++# Test 3: Python built-in types (should work as before)
++print("Test 3: Python built-in types")
++da3 = xr.DataArray([None])
++da3.loc[{'dim_0': 0}] = 42
++print("Type of da3.values[0]:", type(da3.values[0]))
++print("da3.values:", da3.values)
++print()
++
++# Test 4: Sets (as in the original issue)
++print("Test 4: Sets")
++da4 = xr.DataArray([None])
++da4.loc[{'dim_0': 0}] = set()
++print("Type of da4.values[0]:", type(da4.values[0]))
++print("da4.values:", da4.values)
++print()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..9695e1b7
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,20 @@
++import xarray as xr
++import numpy as np
++
++# Create test DataArrays
++good_indexed, bad_indexed = xr.DataArray([None]), xr.DataArray([None])
++
++# Define a class with a values property
++class HasValues(object):
++    values = 5
++
++# Test with a set (should work correctly)
++good_indexed.loc[{'dim_0': 0}] = set()
++print("good_indexed.values:", good_indexed.values)
++
++# Test with an object that has a values property (currently broken)
++bad_indexed.loc[{'dim_0': 0}] = HasValues()
++print("bad_indexed.values:", bad_indexed.values)
++print("Type of bad_indexed.values[0]:", type(bad_indexed.values[0]))
++
++# Expected: bad_indexed.values should contain the HasValues object, not array(5)
+\ No newline at end of file
+diff --git a/xarray/core/variable.py b/xarray/core/variable.py
+index 45553eb9..cb8ca8d5 100644
+--- a/xarray/core/variable.py
++++ b/xarray/core/variable.py
+@@ -218,7 +218,10 @@ def as_compatible_data(data, fastpath=False):
+         data = np.timedelta64(getattr(data, "value", data), "ns")
+ 
+     # we don't want nested self-described arrays
+-    data = getattr(data, "values", data)
++    # Only get values from xarray objects (DataArray, Dataset, Variable)
++    # to avoid coercing objects from other libraries that happen to have a values property
++    if isinstance(data, (xr.DataArray, xr.Dataset, Variable)):
++        data = getattr(data, "values", data)
+ 
+     if isinstance(data, np.ma.MaskedArray):
+         mask = np.ma.getmaskarray(data)

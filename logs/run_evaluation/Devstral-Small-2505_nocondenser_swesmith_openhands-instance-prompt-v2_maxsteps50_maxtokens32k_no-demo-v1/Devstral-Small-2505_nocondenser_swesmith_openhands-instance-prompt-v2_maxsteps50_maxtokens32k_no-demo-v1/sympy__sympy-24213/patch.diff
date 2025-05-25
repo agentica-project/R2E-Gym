@@ -1,0 +1,133 @@
+diff --git a/check_equivalence.py b/check_equivalence.py
+new file mode 100644
+index 0000000000..b1e7791553
+--- /dev/null
++++ b/check_equivalence.py
+@@ -0,0 +1,19 @@
++from sympy.physics import units
++from sympy.physics.units.systems.si import SI
++
++# Create the dimensions
++acceleration_time = units.acceleration * units.time
++velocity = units.velocity
++
++# Check if they are equivalent
++dim_sys = SI.get_dimension_system()
++are_equivalent = dim_sys.equivalent_dims(acceleration_time, velocity)
++
++print(f"acceleration*time: {acceleration_time}")
++print(f"velocity: {velocity}")
++print(f"Are equivalent: {are_equivalent}")
++
++# Print the dimensional dependencies
++print("\nDimensional dependencies:")
++print(f"acceleration*time: {dim_sys.get_dimensional_dependencies(acceleration_time)}")
++print(f"velocity: {dim_sys.get_dimensional_dependencies(velocity)}")
+\ No newline at end of file
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..50aa821777
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,61 @@
++from sympy.physics import units
++from sympy.physics.units.systems.si import SI
++
++def test_addition_of_equivalent_dimensions():
++    # Test case from the issue description
++    v1 = units.Quantity('v1')
++    SI.set_quantity_dimension(v1, units.velocity)
++    SI.set_quantity_scale_factor(v1, 2 * units.meter / units.second)
++
++    a1 = units.Quantity('a1')
++    SI.set_quantity_dimension(a1, units.acceleration)
++    SI.set_quantity_scale_factor(a1, -9.8 * units.meter / units.second**2)
++
++    t1 = units.Quantity('t1')
++    SI.set_quantity_dimension(t1, units.time)
++    SI.set_quantity_scale_factor(t1, 5 * units.second)
++
++    expr1 = a1*t1 + v1
++    result = SI._collect_factor_and_dimension(expr1)
++    print(f"Test 1 result: {result}")
++    # Check if the dimensions are equivalent rather than exactly equal
++    dim_sys = SI.get_dimension_system()
++    assert dim_sys.equivalent_dims(result[1], units.velocity)
++
++    # Additional test case: more complex expression with equivalent dimensions
++    v2 = units.Quantity('v2')
++    SI.set_quantity_dimension(v2, units.velocity)
++    SI.set_quantity_scale_factor(v2, 3 * units.meter / units.second)
++
++    a2 = units.Quantity('a2')
++    SI.set_quantity_dimension(a2, units.acceleration)
++    SI.set_quantity_scale_factor(a2, 2 * units.meter / units.second**2)
++
++    t2 = units.Quantity('t2')
++    SI.set_quantity_dimension(t2, units.time)
++    SI.set_quantity_scale_factor(t2, 4 * units.second)
++
++    expr2 = a2*t2 + v2 - a1*t1
++    result2 = SI._collect_factor_and_dimension(expr2)
++    print(f"Test 2 result: {result2}")
++    # Check if the dimensions are equivalent rather than exactly equal
++    dim_sys = SI.get_dimension_system()
++    assert dim_sys.equivalent_dims(result2[1], units.velocity)
++
++    # Test with non-equivalent dimensions (should raise ValueError)
++    try:
++        l = units.Quantity('l')
++        SI.set_quantity_dimension(l, units.length)
++        SI.set_quantity_scale_factor(l, 10 * units.meter)
++
++        expr3 = v1 + l
++        result3 = SI._collect_factor_and_dimension(expr3)
++        print(f"Test 3 result: {result3}")
++        assert False, "Should have raised ValueError for non-equivalent dimensions"
++    except ValueError as e:
++        print(f"Test 3 correctly raised ValueError: {e}")
++
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_addition_of_equivalent_dimensions()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..3a280cb3dc
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,19 @@
++from sympy.physics import units
++from sympy.physics.units.systems.si import SI
++
++v1 = units.Quantity('v1')
++SI.set_quantity_dimension(v1, units.velocity)
++SI.set_quantity_scale_factor(v1, 2 * units.meter / units.second)
++
++a1 = units.Quantity('a1')
++SI.set_quantity_dimension(a1, units.acceleration)
++SI.set_quantity_scale_factor(a1, -9.8 * units.meter / units.second**2)
++
++t1 = units.Quantity('t1')
++SI.set_quantity_dimension(t1, units.time)
++SI.set_quantity_scale_factor(t1, 5 * units.second)
++
++expr1 = a1*t1 + v1
++print("Trying to collect factor and dimension...")
++result = SI._collect_factor_and_dimension(expr1)
++print(f"Result: {result}")
+\ No newline at end of file
+diff --git a/sympy/physics/units/unitsystem.py b/sympy/physics/units/unitsystem.py
+index a436880c4b..5705c821c2 100644
+--- a/sympy/physics/units/unitsystem.py
++++ b/sympy/physics/units/unitsystem.py
+@@ -175,7 +175,7 @@ def _collect_factor_and_dimension(self, expr):
+             for addend in expr.args[1:]:
+                 addend_factor, addend_dim = \
+                     self._collect_factor_and_dimension(addend)
+-                if dim != addend_dim:
++                if not self.get_dimension_system().equivalent_dims(dim, addend_dim):
+                     raise ValueError(
+                         'Dimension of "{}" is {}, '
+                         'but it should be {}'.format(

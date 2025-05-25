@@ -1,0 +1,102 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..4f435f15
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,29 @@
++#!/usr/bin/env python
++# Script to reproduce the UnicodeError issue with invalid URLs
++
++import requests
++import traceback
++import sys
++
++# Add a hook to print all exceptions, not just uncaught ones
++def info(type, value, tb):
++    print(f"Exception type: {type}")
++    print(f"Exception value: {value}")
++    print("Traceback:")
++    traceback.print_tb(tb)
++    print("\n" + "="*80 + "\n")
++
++sys.excepthook = info
++
++try:
++    response = requests.get("http://.example.com")
++    print("Request succeeded unexpectedly!")
++except UnicodeError as e:
++    print(f"UnicodeError caught: {e}")
++    print("This is the current behavior (bug)")
++except requests.exceptions.InvalidURL as e:
++    print(f"InvalidURL caught: {e}")
++    print("This is the expected behavior (fixed)")
++except Exception as e:
++    print(f"Other exception caught: {type(e).__name__}: {e}")
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/requests/adapters.py b/requests/adapters.py
+index fe22ff45..3ff3b368 100644
+--- a/requests/adapters.py
++++ b/requests/adapters.py
+@@ -28,6 +28,7 @@ from urllib3.exceptions import ReadTimeoutError
+ from urllib3.exceptions import SSLError as _SSLError
+ from urllib3.exceptions import ResponseError
+ from urllib3.exceptions import LocationValueError
++from urllib3.exceptions import LocationParseError
+ 
+ from .models import Response
+ from .compat import urlparse, basestring
+@@ -311,9 +312,16 @@ class HTTPAdapter(BaseAdapter):
+             conn = proxy_manager.connection_from_url(url)
+         else:
+             # Only scheme should be lower case
+-            parsed = urlparse(url)
+-            url = parsed.geturl()
+-            conn = self.poolmanager.connection_from_url(url)
++            try:
++                parsed = urlparse(url)
++                url = parsed.geturl()
++                conn = self.poolmanager.connection_from_url(url)
++            except LocationParseError as e:
++                # Convert urllib3.LocationParseError to requests.InvalidURL
++                # with a consistent error message
++                if 'label empty or too long' in str(e):
++                    raise InvalidURL('URL has an invalid label.')
++                raise InvalidURL(*e.args)
+ 
+         return conn
+ 
+@@ -413,6 +421,12 @@ class HTTPAdapter(BaseAdapter):
+             conn = self.get_connection(request.url, proxies)
+         except LocationValueError as e:
+             raise InvalidURL(e, request=request)
++        except LocationParseError as e:
++            # Convert urllib3.LocationParseError to requests.InvalidURL
++            # with a consistent error message
++            if 'label empty or too long' in str(e):
++                raise InvalidURL('URL has an invalid label.', request=request)
++            raise InvalidURL(*e.args, request=request)
+ 
+         self.cert_verify(conn, request.url, verify, cert)
+         url = self.request_url(request, proxies)
+diff --git a/requests/models.py b/requests/models.py
+index e7d292d5..8e6196e3 100644
+--- a/requests/models.py
++++ b/requests/models.py
+@@ -383,7 +383,16 @@ class PreparedRequest(RequestEncodingMixin, RequestHooksMixin):
+         try:
+             scheme, auth, host, port, path, query, fragment = parse_url(url)
+         except LocationParseError as e:
++            # Convert urllib3.LocationParseError to requests.InvalidURL
++            # with a consistent error message
++            if 'label empty or too long' in str(e):
++                raise InvalidURL('URL has an invalid label.')
+             raise InvalidURL(*e.args)
++        except Exception as e:
++            # Catch any other exceptions that might be raised during URL parsing
++            if 'label empty or too long' in str(e):
++                raise InvalidURL('URL has an invalid label.')
++            raise
+ 
+         if not scheme:
+             error = ("Invalid URL {0!r}: No schema supplied. Perhaps you meant http://{0}?")

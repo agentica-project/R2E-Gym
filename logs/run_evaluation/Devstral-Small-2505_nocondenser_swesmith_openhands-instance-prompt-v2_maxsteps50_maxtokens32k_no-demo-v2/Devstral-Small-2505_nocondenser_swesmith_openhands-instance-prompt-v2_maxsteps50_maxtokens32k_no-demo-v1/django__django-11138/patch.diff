@@ -1,0 +1,217 @@
+diff --git a/django/db/backends/mysql/operations.py b/django/db/backends/mysql/operations.py
+index 50f85e0621..632e497494 100644
+--- a/django/db/backends/mysql/operations.py
++++ b/django/db/backends/mysql/operations.py
+@@ -70,7 +70,11 @@ class DatabaseOperations(BaseDatabaseOperations):
+ 
+     def _convert_field_to_tz(self, field_name, tzname):
+         if settings.USE_TZ:
+-            field_name = "CONVERT_TZ(%s, 'UTC', '%s')" % (field_name, tzname)
++            # Get the database's timezone
++            db_timezone = self.connection.timezone_name
++            # Only convert if the timezones are different
++            if db_timezone and db_timezone != tzname:
++                field_name = "CONVERT_TZ(%s, '%s', '%s')" % (field_name, db_timezone, tzname)
+         return field_name
+ 
+     def datetime_cast_date_sql(self, field_name, tzname):
+diff --git a/django/db/backends/oracle/operations.py b/django/db/backends/oracle/operations.py
+index c1afb2ed5e..1d8ba4aab0 100644
+--- a/django/db/backends/oracle/operations.py
++++ b/django/db/backends/oracle/operations.py
+@@ -99,9 +99,16 @@ END;
+             return field_name
+         if not self._tzname_re.match(tzname):
+             raise ValueError("Invalid time zone name: %s" % tzname)
+-        # Convert from UTC to local time, returning TIMESTAMP WITH TIME ZONE
+-        # and cast it back to TIMESTAMP to strip the TIME ZONE details.
+-        return "CAST((FROM_TZ(%s, '0:00') AT TIME ZONE '%s') AS TIMESTAMP)" % (field_name, tzname)
++
++        # Get the database's timezone
++        db_timezone = self.connection.timezone_name
++
++        # Only convert if the timezones are different
++        if db_timezone and db_timezone != tzname:
++            # Convert from database timezone to target timezone
++            return "CAST((FROM_TZ(%s, '%s') AT TIME ZONE '%s') AS TIMESTAMP)" % (field_name, db_timezone, tzname)
++
++        return field_name
+ 
+     def datetime_cast_date_sql(self, field_name, tzname):
+         field_name = self._convert_field_to_tz(field_name, tzname)
+diff --git a/django/db/backends/sqlite3/operations.py b/django/db/backends/sqlite3/operations.py
+index c4b02e5c60..6b54e9ce68 100644
+--- a/django/db/backends/sqlite3/operations.py
++++ b/django/db/backends/sqlite3/operations.py
+@@ -85,7 +85,16 @@ class DatabaseOperations(BaseDatabaseOperations):
+         return "django_time_trunc('%s', %s)" % (lookup_type.lower(), field_name)
+ 
+     def _convert_tzname_to_sql(self, tzname):
+-        return "'%s'" % tzname if settings.USE_TZ else 'NULL'
++        if not settings.USE_TZ:
++            return 'NULL'
++
++        # Get the database's timezone
++        db_timezone = self.connection.timezone_name
++
++        # Only convert if the timezones are different
++        if db_timezone and db_timezone != tzname:
++            return "'%s'" % db_timezone
++        return 'NULL'
+ 
+     def datetime_cast_date_sql(self, field_name, tzname):
+         return "django_datetime_cast_date(%s, %s)" % (
+diff --git a/test_timezone_issue.py b/test_timezone_issue.py
+new file mode 100644
+index 0000000000..d9a23a00b4
+--- /dev/null
++++ b/test_timezone_issue.py
+@@ -0,0 +1,147 @@
++import os
++import datetime
++import pytz
++from django.conf import settings
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    USE_TZ=True,
++    TIME_ZONE='Europe/Paris',
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.dummy',
++            'TIME_ZONE': 'Europe/Paris',  # Different timezone for the database
++        },
++    },
++)
++
++# Import Django components after settings are configured
++import django
++django.setup()
++
++from django.utils import timezone
++
++print(f"Global TIME_ZONE: {settings.TIME_ZONE}")
++
++# Create a mock connection class
++class MockConnection:
++    def __init__(self, timezone_name):
++        self.timezone = pytz.timezone(timezone_name)
++        self.timezone_name = timezone_name
++
++# Test the MySQL backend
++print("\n=== Testing MySQL Backend ===")
++from django.db.backends.mysql.operations import DatabaseOperations
++
++test_cases = [
++    {
++        'db_timezone': 'Europe/Paris',
++        'app_timezone': 'Europe/Paris',
++        'expected': "my_datetime_field"  # No conversion needed when timezones match
++    },
++    {
++        'db_timezone': 'UTC',
++        'app_timezone': 'Europe/Paris',
++        'expected': "CONVERT_TZ(my_datetime_field, 'UTC', 'Europe/Paris')"
++    },
++    {
++        'db_timezone': 'Europe/Paris',
++        'app_timezone': 'UTC',
++        'expected': "CONVERT_TZ(my_datetime_field, 'Europe/Paris', 'UTC')"
++    }
++]
++
++print("\nTesting _convert_field_to_tz method:")
++for case in test_cases:
++    mock_connection = MockConnection(case['db_timezone'])
++    mysql_ops = DatabaseOperations(mock_connection)
++
++    field_name = "my_datetime_field"
++    tzname = case['app_timezone']
++    converted_field = mysql_ops._convert_field_to_tz(field_name, tzname)
++
++    print(f"\nDatabase TIME_ZONE: {case['db_timezone']}")
++    print(f"Application TIME_ZONE: {case['app_timezone']}")
++    print(f"Expected: {case['expected']}")
++    print(f"Actual: {converted_field}")
++    print(f"Test {'PASSED' if converted_field == case['expected'] else 'FAILED'}")
++
++# Test the Oracle backend
++print("\n=== Testing Oracle Backend ===")
++from django.db.backends.oracle.operations import DatabaseOperations as OracleOperations
++
++oracle_test_cases = [
++    {
++        'db_timezone': 'Europe/Paris',
++        'app_timezone': 'Europe/Paris',
++        'expected': "my_datetime_field"  # No conversion needed when timezones match
++    },
++    {
++        'db_timezone': 'UTC',
++        'app_timezone': 'Europe/Paris',
++        'expected': "CAST((FROM_TZ(my_datetime_field, 'UTC') AT TIME ZONE 'Europe/Paris') AS TIMESTAMP)"
++    },
++    {
++        'db_timezone': 'Europe/Paris',
++        'app_timezone': 'UTC',
++        'expected': "CAST((FROM_TZ(my_datetime_field, 'Europe/Paris') AT TIME ZONE 'UTC') AS TIMESTAMP)"
++    }
++]
++
++print("\nTesting _convert_field_to_tz method:")
++for case in oracle_test_cases:
++    mock_connection = MockConnection(case['db_timezone'])
++    oracle_ops = OracleOperations(mock_connection)
++
++    field_name = "my_datetime_field"
++    tzname = case['app_timezone']
++    converted_field = oracle_ops._convert_field_to_tz(field_name, tzname)
++
++    print(f"\nDatabase TIME_ZONE: {case['db_timezone']}")
++    print(f"Application TIME_ZONE: {case['app_timezone']}")
++    print(f"Expected: {case['expected']}")
++    print(f"Actual: {converted_field}")
++    print(f"Test {'PASSED' if converted_field == case['expected'] else 'FAILED'}")
++
++# Test the SQLite backend
++print("\n=== Testing SQLite Backend ===")
++from django.db.backends.sqlite3.operations import DatabaseOperations as SQLiteOperations
++
++sqlite_test_cases = [
++    {
++        'db_timezone': 'Europe/Paris',
++        'app_timezone': 'Europe/Paris',
++        'expected': "django_datetime_cast_date(my_datetime_field, NULL)"  # No conversion needed when timezones match
++    },
++    {
++        'db_timezone': 'UTC',
++        'app_timezone': 'Europe/Paris',
++        'expected': "django_datetime_cast_date(my_datetime_field, 'UTC')"
++    },
++    {
++        'db_timezone': 'Europe/Paris',
++        'app_timezone': 'UTC',
++        'expected': "django_datetime_cast_date(my_datetime_field, 'Europe/Paris')"
++    }
++]
++
++print("\nTesting _convert_tzname_to_sql method:")
++for case in sqlite_test_cases:
++    mock_connection = MockConnection(case['db_timezone'])
++    sqlite_ops = SQLiteOperations(mock_connection)
++
++    field_name = "my_datetime_field"
++    tzname = case['app_timezone']
++    converted_field = sqlite_ops.datetime_cast_date_sql(field_name, tzname)
++
++    expected_sql = case['expected']
++    actual_sql = converted_field
++
++    print(f"\nDatabase TIME_ZONE: {case['db_timezone']}")
++    print(f"Application TIME_ZONE: {case['app_timezone']}")
++    print(f"Expected SQL: {expected_sql}")
++    print(f"Actual SQL: {actual_sql}")
++    print(f"Test {'PASSED' if actual_sql == expected_sql else 'FAILED'}")
++
++print("\nFix verification complete. All tests should pass if the fix is correct.")
+\ No newline at end of file

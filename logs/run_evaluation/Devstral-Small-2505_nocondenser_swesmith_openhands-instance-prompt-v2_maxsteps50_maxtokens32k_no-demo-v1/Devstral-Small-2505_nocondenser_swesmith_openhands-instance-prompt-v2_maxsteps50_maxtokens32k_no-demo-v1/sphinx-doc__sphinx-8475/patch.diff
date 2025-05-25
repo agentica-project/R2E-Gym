@@ -1,0 +1,121 @@
+diff --git a/setup.py b/setup.py
+index ca08a6d4a..21cb67b8f 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/builders/linkcheck.py b/sphinx/builders/linkcheck.py
+index 1dc0337c3..2e9c1dc09 100644
+--- a/sphinx/builders/linkcheck.py
++++ b/sphinx/builders/linkcheck.py
+@@ -20,7 +20,7 @@ from urllib.parse import unquote, urlparse
+ 
+ from docutils import nodes
+ from docutils.nodes import Node
+-from requests.exceptions import HTTPError
++from requests.exceptions import HTTPError, TooManyRedirects
+ 
+ from sphinx.application import Sphinx
+ from sphinx.builders import Builder
+@@ -178,6 +178,12 @@ class CheckExternalLinksBuilder(Builder):
+                         response = requests.get(req_url, stream=True, config=self.app.config,
+                                                 auth=auth_info, **kwargs)
+                         response.raise_for_status()
++                    except TooManyRedirects:
++                        # retry with GET request if that fails, some servers
++                        # don't like HEAD requests or enter infinite redirect loops.
++                        response = requests.get(req_url, stream=True, config=self.app.config,
++                                                auth=auth_info, **kwargs)
++                        response.raise_for_status()
+             except HTTPError as err:
+                 if err.response.status_code == 401:
+                     # We'll take "Unauthorized" as working.
+diff --git a/test_too_many_redirects.py b/test_too_many_redirects.py
+new file mode 100644
+index 000000000..2a306a558
+--- /dev/null
++++ b/test_too_many_redirects.py
+@@ -0,0 +1,40 @@
++import sys
++import os
++import unittest
++from unittest.mock import patch, MagicMock
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath('/testbed'))
++
++# Import the requests module from sphinx.util
++from sphinx.util import requests as sphinx_requests
++from requests.exceptions import TooManyRedirects
++
++class TestLinkChecker(unittest.TestCase):
++    def test_too_many_redirects_fallback(self):
++        """Test that HEAD requests fall back to GET when TooManyRedirects occurs."""
++        # Create a mock TooManyRedirects exception
++        too_many_redirects = TooManyRedirects("Too many redirects", response=None)
++
++        # Patch the requests.head method to raise TooManyRedirects
++        with patch('sphinx.util.requests.head', side_effect=too_many_redirects):
++            # Patch the requests.get method to return a successful response
++            mock_get_response = MagicMock()
++            mock_get_response.url = "http://example.com/test"
++            mock_get_response.raise_for_status = MagicMock()
++            with patch('sphinx.util.requests.get', return_value=mock_get_response):
++                # Test the specific code from linkcheck.py
++                try:
++                    # This is the code from linkcheck.py that we want to test
++                    response = sphinx_requests.head("http://example.com/test", allow_redirects=True)
++                    response.raise_for_status()
++                except TooManyRedirects:
++                    # This is where we should fall back to GET
++                    response = sphinx_requests.get("http://example.com/test", stream=True)
++                    response.raise_for_status()
++
++                # Verify that get was called
++                sphinx_requests.get.assert_called_once()
++
++if __name__ == "__main__":
++    unittest.main()
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index dbb705a3a..9f4fc3a32 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

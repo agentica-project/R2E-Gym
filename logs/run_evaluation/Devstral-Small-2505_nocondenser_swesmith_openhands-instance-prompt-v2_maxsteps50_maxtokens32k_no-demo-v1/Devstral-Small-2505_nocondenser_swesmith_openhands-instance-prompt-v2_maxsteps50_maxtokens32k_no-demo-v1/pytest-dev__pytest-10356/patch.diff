@@ -1,0 +1,99 @@
+diff --git a/repro_issue.py b/repro_issue.py
+new file mode 100644
+index 000000000..d37833836
+--- /dev/null
++++ b/repro_issue.py
+@@ -0,0 +1,37 @@
++import itertools
++import pytest
++
++class BaseMeta(type):
++    @property
++    def pytestmark(self):
++        return (
++            getattr(self, "_pytestmark", []) +
++            list(itertools.chain.from_iterable(getattr(x, "_pytestmark", []) for x in self.__mro__))
++        )
++
++    @pytestmark.setter
++    def pytestmark(self, value):
++        self._pytestmark = value
++
++class Base(object):
++    # Without this metaclass, foo and bar markers override each other, and test_dings
++    # will only have one marker
++    # With the metaclass, test_dings will have both
++    __metaclass__ = BaseMeta
++
++@pytest.mark.foo
++class Foo(Base):
++    pass
++
++@pytest.mark.bar
++class Bar(Base):
++    pass
++
++class TestDings(Foo, Bar):
++    def test_dings(self):
++        # This test should have both markers, foo and bar.
++        # In practice markers are resolved using MRO (so foo wins), unless the
++        # metaclass is applied
++        print("Markers:", [mark.name for mark in self.pytestmark])
++        assert any(mark.name == "foo" for mark in self.pytestmark), "Missing 'foo' marker"
++        assert any(mark.name == "bar" for mark in self.pytestmark), "Missing 'bar' marker"
+\ No newline at end of file
+diff --git a/src/_pytest/mark/structures.py b/src/_pytest/mark/structures.py
+index 800a25c92..08a6bd471 100644
+--- a/src/_pytest/mark/structures.py
++++ b/src/_pytest/mark/structures.py
+@@ -356,11 +356,45 @@ class MarkDecorator:
+ 
+ 
+ def get_unpacked_marks(obj: object) -> Iterable[Mark]:
+-    """Obtain the unpacked marks that are stored on an object."""
+-    mark_list = getattr(obj, "pytestmark", [])
+-    if not isinstance(mark_list, list):
+-        mark_list = [mark_list]
+-    return normalize_mark_list(mark_list)
++    """Obtain the unpacked marks that are stored on an object.
++
++    For classes, this includes marks from all base classes in the MRO.
++    For instances, this includes marks from the class and its base classes.
++    """
++    # For classes, collect marks from all base classes in the MRO
++    if inspect.isclass(obj):
++        # Use a dict to collect marks, with mark names as keys
++        marks_by_name = {}
++        for base in obj.__mro__:
++            base_marks = getattr(base, "pytestmark", [])
++            if not isinstance(base_marks, list):
++                base_marks = [base_marks]
++            for mark in normalize_mark_list(base_marks):
++                # Use the mark name as the key for deduplication
++                marks_by_name[mark.name] = mark
++        return list(marks_by_name.values())
++    else:
++        # For instances, collect marks from the instance and its class hierarchy
++        if hasattr(obj, '__class__') and inspect.isclass(obj.__class__):
++            # Get marks from the class hierarchy
++            class_marks = get_unpacked_marks(obj.__class__)
++            # Get marks from the instance
++            instance_marks = getattr(obj, "pytestmark", [])
++            if not isinstance(instance_marks, list):
++                instance_marks = [instance_marks]
++            # Combine class marks with instance marks, with instance marks taking precedence
++            marks_by_name = {}
++            for mark in class_marks:
++                marks_by_name[mark.name] = mark
++            for mark in normalize_mark_list(instance_marks):
++                marks_by_name[mark.name] = mark
++            return list(marks_by_name.values())
++        else:
++            # For other objects, use the original behavior
++            mark_list = getattr(obj, "pytestmark", [])
++            if not isinstance(mark_list, list):
++                mark_list = [mark_list]
++            return normalize_mark_list(mark_list)
+ 
+ 
+ def normalize_mark_list(

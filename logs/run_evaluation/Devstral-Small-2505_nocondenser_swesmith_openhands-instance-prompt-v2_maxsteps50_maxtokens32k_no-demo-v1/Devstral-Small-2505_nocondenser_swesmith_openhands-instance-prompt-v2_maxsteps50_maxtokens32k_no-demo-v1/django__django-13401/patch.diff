@@ -1,0 +1,220 @@
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index 28374272f4..adcac9bfaf 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -516,17 +516,23 @@ class Field(RegisterLookupMixin):
+     def __eq__(self, other):
+         # Needed for @total_ordering
+         if isinstance(other, Field):
+-            return self.creation_counter == other.creation_counter
++            return (self.creation_counter == other.creation_counter and
++                    self.model == other.model)
+         return NotImplemented
+ 
+     def __lt__(self, other):
+         # This is needed because bisect does not take a comparison function.
+         if isinstance(other, Field):
+-            return self.creation_counter < other.creation_counter
++            if self.creation_counter != other.creation_counter:
++                return self.creation_counter < other.creation_counter
++            # If creation counters are equal, use model identity as a tie-breaker
++            return id(self.model) < id(other.model) if self.model is not None and other.model is not None else False
+         return NotImplemented
+ 
+     def __hash__(self):
+-        return hash(self.creation_counter)
++        # Include both creation_counter and model in the hash
++        # Use id(self.model) to avoid issues with unhashable model objects
++        return hash((self.creation_counter, id(self.model) if self.model is not None else None))
+ 
+     def __deepcopy__(self, memodict):
+         # We don't have to deepcopy very much here, since most things are not
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..c7a7771491
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,37 @@
++import os
++import sys
++import django
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Create a simple test case that doesn't require a full Django setup
++from django.db.models.fields import IntegerField
++
++# Create two fields with the same creation_counter
++field1 = IntegerField()
++field2 = IntegerField()
++
++# Manually set the creation_counter to the same value
++field1.creation_counter = 10
++field2.creation_counter = 10
++
++# Manually set different models
++class ModelA:
++    pass
++
++class ModelB:
++    pass
++
++field1.model = ModelA
++field2.model = ModelB
++
++# Test equality
++print("Fields are equal:", field1 == field2)
++print("Fields have same hash:", hash(field1) == hash(field2))
++print("Set length:", len({field1, field2}))
++
++# Test ordering
++fields = [field1, field2]
++fields.sort()
++print("Sorted fields are same objects:", fields[0] is fields[1])
+\ No newline at end of file
+diff --git a/test_app/__init__.py b/test_app/__init__.py
+new file mode 100644
+index 0000000000..c7d51a7967
+--- /dev/null
++++ b/test_app/__init__.py
+@@ -0,0 +1,6 @@
++from django.apps import AppConfig
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
++
++default_app_config = 'test_app.TestAppConfig'
+\ No newline at end of file
+diff --git a/test_app/apps.py b/test_app/apps.py
+new file mode 100644
+index 0000000000..ae6f331d8b
+--- /dev/null
++++ b/test_app/apps.py
+@@ -0,0 +1,4 @@
++from django.apps import AppConfig
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
+\ No newline at end of file
+diff --git a/test_field_comparison.py b/test_field_comparison.py
+new file mode 100644
+index 0000000000..1f8245b4ba
+--- /dev/null
++++ b/test_field_comparison.py
+@@ -0,0 +1,114 @@
++import sys
++import unittest
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++from django.db.models.fields import IntegerField
++
++class TestFieldComparison(unittest.TestCase):
++    def test_field_equality_with_different_models(self):
++        """Test that fields with the same creation_counter but different models compare unequal."""
++        field1 = IntegerField()
++        field2 = IntegerField()
++
++        # Set the same creation_counter
++        field1.creation_counter = 10
++        field2.creation_counter = 10
++
++        # Set different models
++        class ModelA:
++            pass
++
++        class ModelB:
++            pass
++
++        field1.model = ModelA
++        field2.model = ModelB
++
++        # Fields should not be equal
++        self.assertNotEqual(field1, field2)
++
++        # Fields should have different hash values
++        self.assertNotEqual(hash(field1), hash(field2))
++
++        # Both fields should be in the set
++        field_set = {field1, field2}
++        self.assertEqual(len(field_set), 2)
++
++    def test_field_ordering(self):
++        """Test that field ordering works correctly with different models."""
++        field1 = IntegerField()
++        field2 = IntegerField()
++
++        # Set the same creation_counter
++        field1.creation_counter = 10
++        field2.creation_counter = 10
++
++        # Set different models
++        class ModelA:
++            pass
++
++        class ModelB:
++            pass
++
++        field1.model = ModelA
++        field2.model = ModelB
++
++        # Ordering should be stable and deterministic
++        fields = [field1, field2]
++        sorted_fields = sorted(fields)
++        # The order should be consistent, but either field could come first
++        # We just need to verify that the order is deterministic
++        self.assertEqual(sorted(sorted_fields), sorted_fields)
++
++    def test_abstract_model_field_comparison(self):
++        """Test that fields from different models inheriting from the same abstract model compare unequal."""
++        from django.db import models
++
++        # Create a simple model structure similar to the issue description
++        class A(models.Model):
++            class Meta:
++                abstract = True
++            myfield = IntegerField()
++
++        class B(A):
++            class Meta:
++                app_label = 'test_app'
++
++        class C(A):
++            class Meta:
++                app_label = 'test_app'
++
++        # Get the fields from both models
++        b_field = B._meta.get_field('myfield')
++        c_field = C._meta.get_field('myfield')
++
++        # Fields should not be equal
++        self.assertNotEqual(b_field, c_field)
++
++        # Fields should have different hash values
++        self.assertNotEqual(hash(b_field), hash(c_field))
++
++        # Both fields should be in the set
++        field_set = {b_field, c_field}
++        self.assertEqual(len(field_set), 2)
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file

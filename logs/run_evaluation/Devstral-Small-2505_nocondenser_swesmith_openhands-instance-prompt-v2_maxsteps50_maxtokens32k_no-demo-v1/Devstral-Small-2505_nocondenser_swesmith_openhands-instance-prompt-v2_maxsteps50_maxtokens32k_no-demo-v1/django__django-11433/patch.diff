@@ -1,0 +1,192 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 5edbbd376f..87390cf274 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -393,7 +393,17 @@ class BaseModelForm(BaseForm):
+                 exclude.append(name)
+ 
+         try:
++            # First construct the instance with default values
+             self.instance = construct_instance(self, self.instance, opts.fields, opts.exclude)
++
++            # Then allow cleaned_data to overwrite any field values, including those with defaults
++            for name, value in self.cleaned_data.items():
++                if name not in exclude and hasattr(self.instance, name):
++                    # Skip AutoField/PrimaryKey fields that aren't in fields/cleaned_data
++                    if not opts.get_field(name).editable and name not in getattr(opts, 'fields', []):
++                        continue
++                    setattr(self.instance, name, value)
++
+         except ValidationError as e:
+             self._update_errors(e)
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100755
+index 0000000000..7d101879d9
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,53 @@
++#!/usr/bin/env python
++"""
++This script demonstrates the issue with model form default values not being
++overwritten by cleaned_data.
++"""
++import sys
++import os
++
++# Add the Django project to the Python path
++sys.path.insert(0, '/testbed')
++
++# Let's directly examine the construct_instance function to understand the issue
++def examine_construct_instance():
++    print("Examining the construct_instance function to understand the issue")
++
++    # Let's look at the relevant part of the construct_instance function
++    print("\nRelevant part of construct_instance function in django/forms/models.py:")
++    print("""
++    for f in opts.fields:
++        if not f.editable or isinstance(f, models.AutoField) \\
++                or f.name not in cleaned_data:
++            continue
++        if fields is not None and f.name not in fields:
++            continue
++        if exclude and f.name in exclude:
++            continue
++        # Leave defaults for fields that aren't in POST data, except for
++        # checkbox inputs because they don't appear in POST data if not checked.
++        if (f.has_default() and
++                form[f.name].field.widget.value_omitted_from_data(form.data, form.files, form.add_prefix(f.name))):
++            continue
++        # Defer saving file-type fields until after the other fields, so a
++        # callable upload_to can use the values from other fields.
++        if isinstance(f, models.FileField):
++            file_field_list.append(f)
++        else:
++            f.save_form_data(instance, cleaned_data[f.name])
++    """)
++
++    print("\nIssue explanation:")
++    print("1. When a field has a default value on the model and isn't included in the form data,")
++    print("   it's skipped in the construct_instance function because of the condition:")
++    print("   'if (f.has_default() and form[f.name].field.widget.value_omitted_from_data(...))'")
++    print("2. This means the field's value from cleaned_data is never set on the instance.")
++    print("3. Even if we modify the field in cleaned_data later, it won't be applied to the instance.")
++    print("4. The default value from the model is used instead.")
++
++    print("\nTo fix this issue, we need to modify the construct_instance function to:")
++    print("1. Check if the field is in cleaned_data before applying the default value check")
++    print("2. If the field is in cleaned_data, use that value regardless of default values")
++
++if __name__ == '__main__':
++    examine_construct_instance()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..9c517eddf1
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python
++"""
++This script verifies that the fix for the issue works correctly.
++"""
++import sys
++import os
++
++# Add the Django project to the Python path
++sys.path.insert(0, '/testbed')
++
++# Import the construct_instance function directly
++from django.forms.models import construct_instance
++
++# Create a simple class to simulate a Django model field
++class MockField:
++    def __init__(self, name, has_default=False, default_value=None, editable=True):
++        self.name = name
++        self._has_default = has_default
++        self.default_value = default_value
++        self._editable = editable
++
++    def has_default(self):
++        return self._has_default
++
++    def save_form_data(self, instance, value):
++        setattr(instance, self.name, value)
++
++    @property
++    def editable(self):
++        return self._editable
++
++# Create a simple class to simulate a Django model
++class MockModel:
++    def __init__(self):
++        self._meta = type('Meta', (), {
++            'fields': [
++                MockField('name'),
++                MockField('status', has_default=True, default_value='active')
++            ]
++        })
++        self.name = None
++        self.status = 'active'  # Default value
++
++# Create a simple class to simulate a Django form
++class MockForm:
++    def __init__(self, cleaned_data, data=None):
++        self.cleaned_data = cleaned_data
++        self.instance = MockModel()
++        self.data = data or {}
++
++    def __getitem__(self, name):
++        # This mimics the behavior of form[name] in Django forms
++        class MockFieldWrapper:
++            def __init__(self, field_name):
++                self.field = type('obj', (object,), {
++                    'widget': type('widget', (object,), {
++                        'value_omitted_from_data': lambda data, files, prefix: \
++                            prefix + field_name not in (data or {})
++                    })
++                })
++        return MockFieldWrapper(name)
++
++# Test the fix
++def test_fix():
++    print("Testing the fix for default values being overwritten by cleaned_data")
++
++    # Create a form with only the name field
++    data = {'name': 'Test Name'}
++    cleaned_data = {'name': 'Test Name'}
++
++    # Create a mock form
++    form = MockForm(cleaned_data, data)
++
++    try:
++        # Construct the instance (this is what happens in ModelForm._post_clean)
++        instance = construct_instance(form, form.instance, None, None)
++
++        print("Status on instance:", instance.status)
++        print("Expected: 'active' (the default value)")
++
++        # Now try to modify the status field in cleaned_data
++        cleaned_data['status'] = 'inactive'
++        form.cleaned_data = cleaned_data
++
++        # Construct the instance again
++        instance = construct_instance(form, form.instance, None, None)
++
++        print("Status on instance after setting in cleaned_data:", instance.status)
++        print("Expected: 'inactive' (from cleaned_data)")
++
++        # With the fix, the status field on the instance should be 'inactive'
++        # even though it has a default value of 'active'
++
++        if instance.status == 'inactive':
++            print("\nFIX VERIFIED: cleaned_data successfully overwrites default values!")
++        else:
++            print("\nFIX FAILED: cleaned_data does not overwrite default values.")
++
++    except Exception as e:
++        print("Error during testing:", str(e))
++
++if __name__ == '__main__':
++    test_fix()
+\ No newline at end of file

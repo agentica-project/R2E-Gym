@@ -1,0 +1,166 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 85cd8311a7..8ecd0081a5 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1224,7 +1224,7 @@ class QuerySet:
+             return True
+         if self.query.extra_order_by or self.query.order_by:
+             return True
+-        elif self.query.default_ordering and self.query.get_meta().ordering:
++        elif self.query.default_ordering and self.query.get_meta().ordering and not self.query.group_by:
+             return True
+         else:
+             return False
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..2e4f269991
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import os
++import sys
++import django
++from django.db import models
++from django.db.models import Count
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.auth_tests.settings')
++django.setup()
++
++# Define a model with default ordering
++class Foo(models.Model):
++    uuid = models.CharField(max_length=100, primary_key=True)
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['name']
++
++    def __str__(self):
++        return self.name
++
++# Create the tables
++from django.db import connection
++cursor = connection.cursor()
++cursor.execute('''
++    CREATE TABLE IF NOT EXISTS foo_foo (
++        uuid varchar(100) PRIMARY KEY,
++        name varchar(100)
++    )
++''')
++# Add some test data
++cursor.execute("INSERT INTO foo_foo (uuid, name) VALUES ('1', 'Alice')")
++cursor.execute("INSERT INTO foo_foo (uuid, name) VALUES ('2', 'Bob')")
++cursor.execute("INSERT INTO foo_foo (uuid, name) VALUES ('3', 'Charlie')")
++connection.commit()
++
++# Test the issue
++qs = Foo.objects.all()
++print("Regular query:")
++print(f"qs.ordered = {qs.ordered}")
++print(f"qs.query.default_ordering = {qs.query.default_ordering}")
++print("SQL:", qs.query.sql_with_params())
++
++print("\nAnnotated query:")
++qs2 = Foo.objects.annotate(Count("pk")).all()
++print(f"qs2.ordered = {qs2.ordered}")
++print(f"qs2.query.default_ordering = {qs2.query.default_ordering}")
++print("SQL:", qs2.query.sql_with_params())
+\ No newline at end of file
+diff --git a/test_app/__init__.py b/test_app/__init__.py
+new file mode 100644
+index 0000000000..86bef6a5bd
+--- /dev/null
++++ b/test_app/__init__.py
+@@ -0,0 +1 @@
++default_app_config = 'test_app.apps.TestAppConfig'
+\ No newline at end of file
+diff --git a/test_app/apps.py b/test_app/apps.py
+new file mode 100644
+index 0000000000..ae6f331d8b
+--- /dev/null
++++ b/test_app/apps.py
+@@ -0,0 +1,4 @@
++from django.apps import AppConfig
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
+\ No newline at end of file
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..7bbbd9c3d7
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,13 @@
++from django.db import models
++from django.db.models import Count
++
++class Foo(models.Model):
++    uuid = models.CharField(max_length=100, primary_key=True)
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        ordering = ['name']
++        app_label = 'test_app'
++
++    def __str__(self):
++        return self.name
+\ No newline at end of file
+diff --git a/test_ordered_property.py b/test_ordered_property.py
+new file mode 100644
+index 0000000000..af0e0ff7c0
+--- /dev/null
++++ b/test_ordered_property.py
+@@ -0,0 +1,52 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'test_app',
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Import our model
++from test_app.models import Foo
++from django.db.models import Count
++
++# Create tables
++from django.db import connection
++cursor = connection.cursor()
++cursor.execute('''
++    CREATE TABLE IF NOT EXISTS test_app_foo (
++        uuid varchar(100) PRIMARY KEY,
++        name varchar(100)
++    )
++''')
++# Add some test data
++cursor.execute("INSERT INTO test_app_foo (uuid, name) VALUES ('1', 'Alice')")
++cursor.execute("INSERT INTO test_app_foo (uuid, name) VALUES ('2', 'Bob')")
++cursor.execute("INSERT INTO test_app_foo (uuid, name) VALUES ('3', 'Charlie')")
++connection.commit()
++
++# Test the issue
++qs = Foo.objects.all()
++print("Regular query:")
++print(f"qs.ordered = {qs.ordered}")
++print(f"qs.query.default_ordering = {qs.query.default_ordering}")
++print("SQL:", qs.query.sql_with_params())
++
++print("\nAnnotated query:")
++qs2 = Foo.objects.annotate(Count("pk")).all()
++print(f"qs2.ordered = {qs2.ordered}")
++print(f"qs2.query.default_ordering = {qs2.query.default_ordering}")
++print("SQL:", qs2.query.sql_with_params())
+\ No newline at end of file

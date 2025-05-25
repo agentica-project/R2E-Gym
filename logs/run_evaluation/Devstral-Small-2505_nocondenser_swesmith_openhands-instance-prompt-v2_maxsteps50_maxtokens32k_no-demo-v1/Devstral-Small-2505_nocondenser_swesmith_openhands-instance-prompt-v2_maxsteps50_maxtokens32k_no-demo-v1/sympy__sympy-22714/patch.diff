@@ -1,0 +1,168 @@
+diff --git a/debug_imaginary.py b/debug_imaginary.py
+new file mode 100644
+index 0000000000..699b9827b0
+--- /dev/null
++++ b/debug_imaginary.py
+@@ -0,0 +1,24 @@
++import sympy as sp
++
++# Test with actual imaginary numbers
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(1, I)')
++        print("Success with imaginary number (unexpected):", result)
++
++        # Let's check if I is actually considered a number
++        i_expr = result.args[1]  # Get the second coordinate (should be I)
++        print(f"Is I a number? {i_expr.is_number}")
++        print(f"I expression: {i_expr}")
++        print(f"Imaginary part of I: {sp.im(i_expr)}")
++except Exception as e:
++    print("Failed with imaginary number (expected):", str(e))
++
++# Let's try with a different approach
++try:
++    with sp.evaluate(False):
++        # Create a point with a complex number
++        result = sp.Point2D(1, sp.I)
++        print("Success with complex point (unexpected):", result)
++except Exception as e:
++    print("Failed with complex point (expected):", str(e))
+\ No newline at end of file
+diff --git a/debug_imaginary2.py b/debug_imaginary2.py
+new file mode 100644
+index 0000000000..1cde2ff1cd
+--- /dev/null
++++ b/debug_imaginary2.py
+@@ -0,0 +1,27 @@
++import sympy as sp
++
++# Let's check what im(I) returns
++print(f"im(I): {sp.im(sp.I)}")
++print(f"Type of im(I): {type(sp.im(sp.I))}")
++print(f"im(I) == 0: {sp.im(sp.I) == 0}")
++
++# Let's check if we can evaluate the imaginary part
++try:
++    with sp.evaluate(True):
++        print(f"im(I) with evaluate=True: {sp.im(sp.I)}")
++except Exception as e:
++    print(f"Error with evaluate=True: {e}")
++
++# Let's try a different approach
++try:
++    with sp.evaluate(False):
++        # Create a point with a complex number
++        result = sp.Point2D(1, sp.I)
++        print("Success with complex point:", result)
++
++        # Check if the imaginary part is non-zero
++        i_expr = result.args[1]
++        print(f"Is imaginary part non-zero? {sp.im(i_expr) != 0}")
++        print(f"Is imaginary part non-zero with evaluate? {sp.simplify(sp.im(i_expr)) != 0}")
++except Exception as e:
++    print("Failed with complex point:", str(e))
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..0d54405d26
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,56 @@
++import sympy as sp
++
++print("=== Basic Tests ===")
++# This should work but currently fails
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(Integer(1),Integer(2))')
++        print("Success with context manager:", result)
++except Exception as e:
++    print("Failed with context manager:", str(e))
++
++# These work fine
++try:
++    result = sp.S('Point2D(Integer(1),Integer(2))')
++    print("Success without context manager:", result)
++except Exception as e:
++    print("Failed without context manager:", str(e))
++
++try:
++    result = sp.S('Point2D(Integer(1),Integer(2))', evaluate=False)
++    print("Success with explicit evaluate=False:", result)
++except Exception as e:
++    print("Failed with explicit evaluate=False:", str(e))
++
++print("\n=== Edge Cases ===")
++# Test with floats
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(0.5, 0.25)')
++        print("Success with floats and context manager:", result)
++except Exception as e:
++    print("Failed with floats and context manager:", str(e))
++
++# Test with mixed types
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(Integer(1), 0.25)')
++        print("Success with mixed types and context manager:", result)
++except Exception as e:
++    print("Failed with mixed types and context manager:", str(e))
++
++# Test with actual imaginary numbers (should still fail even with evaluate=False)
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point2D(1, I)')
++        print("Success with imaginary number (unexpected):", result)
++except Exception as e:
++    print("Failed with imaginary number (expected):", str(e))
++
++# Test with 3D point
++try:
++    with sp.evaluate(False):
++        result = sp.S('Point3D(Integer(1), Integer(2), Integer(3))')
++        print("Success with 3D point and context manager:", result)
++except Exception as e:
++    print("Failed with 3D point and context manager:", str(e))
+\ No newline at end of file
+diff --git a/sympy/geometry/point.py b/sympy/geometry/point.py
+index 73c20334d0..109b074978 100644
+--- a/sympy/geometry/point.py
++++ b/sympy/geometry/point.py
+@@ -19,7 +19,7 @@
+ 
+ import warnings
+ 
+-from sympy.core import S, sympify, Expr
++from sympy.core import S, sympify, Expr, Symbol, I
+ from sympy.core.add import Add
+ from sympy.core.containers import Tuple
+ from sympy.core.numbers import Float
+@@ -152,10 +152,22 @@ def __new__(cls, *args, **kwargs):
+                         'warn' or 'ignore'.'''))
+         if any(coords[dim:]):
+             raise ValueError('Nonzero coordinates cannot be removed.')
+-        if any(a.is_number and im(a) for a in coords):
+-            raise ValueError('Imaginary coordinates are not permitted.')
+-        if not all(isinstance(a, Expr) for a in coords):
+-            raise TypeError('Coordinates must be valid SymPy expressions.')
++        # Always check for imaginary components, regardless of evaluate flag
++        for a in coords:
++            # Check if it's the imaginary unit I
++            if a == I:
++                raise ValueError('Imaginary coordinates are not permitted.')
++
++            # Check if it's a complex number with non-zero imaginary part
++            if hasattr(a, 'as_real_imag'):
++                real, imag = a.as_real_imag()
++                if imag != 0:
++                    raise ValueError('Imaginary coordinates are not permitted.')
++
++        if evaluate:
++            # Additional checks when evaluating
++            if not all(isinstance(a, Expr) for a in coords):
++                raise TypeError('Coordinates must be valid SymPy expressions.')
+ 
+         # pad with zeros appropriately
+         coords = coords[:dim] + (S.Zero,)*(dim - len(coords))

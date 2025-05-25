@@ -1,0 +1,373 @@
+diff --git a/analyze_coefficients.py b/analyze_coefficients.py
+new file mode 100644
+index 00000000..d581a02d
+--- /dev/null
++++ b/analyze_coefficients.py
+@@ -0,0 +1,54 @@
++import numpy as np
++
++def analyze_coefficients():
++    # Polynomial coefficients from the issue
++    coeffs = np.array([
++        [2.33333335e-43, 1.62499999e-43, 2.79166678e-43],
++        [-1.15316667e-30, 1.49518518e-31, 9.08833333e-31],
++        [-2.50272583e-18, -1.23851062e-18, -2.99098229e-18],
++        [5.83965193e-06, -1.53321770e-07, -4.84640242e-06],
++        [4.44739216e06, 1.45053974e06, 5.29960857e06],
++    ])
++
++    # Expected values from the issue
++    expected_values = np.array([
++        [4447392.16      , 1450539.74      , 5299608.57      ],
++        [4505537.25588366, 1448882.82238152, 5250846.359196  ],
++        [4563174.92026797, 1446979.12250014, 5201491.44401733],
++        [4620298.31815291, 1444829.59596699, 5151549.377964  ],
++        [4676900.67053846, 1442435.23739315, 5101025.78153601],
++        [4732975.25442459, 1439797.08038974, 5049926.34223336]
++    ])
++
++    # X values (seconds)
++    x = np.array([0, 10, 20, 30, 40, 50])
++
++    # Try different ways of evaluating the polynomial
++    print("Analyzing coefficients...")
++
++    # Method 1: Direct evaluation with numpy.polyval
++    print("\nMethod 1: Direct evaluation with numpy.polyval")
++    for i in range(coeffs.shape[1]):
++        print(f"Axis {i}:")
++        for deg in range(coeffs.shape[0]):
++            c = coeffs[deg, i]
++            print(f"  Degree {coeffs.shape[0]-deg-1}: {c}")
++
++    # Method 2: Using Horner's method (like xarray.polyval)
++    print("\nMethod 2: Using Horner's method")
++    for i in range(coeffs.shape[1]):
++        print(f"Axis {i}:")
++        for deg in range(coeffs.shape[0]):
++            c = coeffs[deg, i]
++            print(f"  Degree {coeffs.shape[0]-deg-1}: {c}")
++
++    # Check the scale of the coefficients
++    print("\nCoefficient scales:")
++    for i in range(coeffs.shape[1]):
++        print(f"Axis {i}:")
++        for deg in range(coeffs.shape[0]):
++            c = coeffs[deg, i]
++            print(f"  Degree {coeffs.shape[0]-deg-1}: {c}, log10(abs(c)) = {np.log10(abs(c))}")
++
++if __name__ == "__main__":
++    analyze_coefficients()
+\ No newline at end of file
+diff --git a/numpy_polyval_test.py b/numpy_polyval_test.py
+new file mode 100644
+index 00000000..b83bcbb9
+--- /dev/null
++++ b/numpy_polyval_test.py
+@@ -0,0 +1,69 @@
++import numpy as np
++
++def test_numpy_polyval():
++    # Create test data as described in the issue
++    values = np.array(
++        [
++            "2021-04-01T05:25:19.000000000",
++            "2021-04-01T05:25:29.000000000",
++            "2021-04-01T05:25:39.000000000",
++            "2021-04-01T05:25:49.000000000",
++            "2021-04-01T05:25:59.000000000",
++            "2021-04-01T05:26:09.000000000",
++        ],
++        dtype="datetime64[ns]",
++    )
++
++    # Create timedelta coordinates
++    timedeltas = values - values[0]
++    print("Timedeltas:", timedeltas)
++
++    # Convert timedeltas to seconds for polynomial evaluation
++    x = timedeltas.astype('timedelta64[s]').astype(float)
++    print("X values (seconds):", x)
++
++    polyfit_coefficients = np.array([
++        [2.33333335e-43, 1.62499999e-43, 2.79166678e-43],
++        [-1.15316667e-30, 1.49518518e-31, 9.08833333e-31],
++        [-2.50272583e-18, -1.23851062e-18, -2.99098229e-18],
++        [5.83965193e-06, -1.53321770e-07, -4.84640242e-06],
++        [4.44739216e06, 1.45053974e06, 5.29960857e06],
++    ])
++
++    # Expected values from the issue description
++    expected_values = np.array([
++        [4447392.16      , 1450539.74      , 5299608.57      ],
++        [4505537.25588366, 1448882.82238152, 5250846.359196  ],
++        [4563174.92026797, 1446979.12250014, 5201491.44401733],
++        [4620298.31815291, 1444829.59596699, 5151549.377964  ],
++        [4676900.67053846, 1442435.23739315, 5101025.78153601],
++        [4732975.25442459, 1439797.08038974, 5049926.34223336]
++    ])
++
++    # Try using numpy's polyval directly
++    results = []
++    for i in range(polyfit_coefficients.shape[1]):
++        # For each axis, evaluate the polynomial
++        coeffs = polyfit_coefficients[:, i][::-1]  # Reverse to match numpy's polyval order
++        result = np.polyval(coeffs, x)
++        results.append(result)
++
++    results = np.array(results).T  # Transpose to match expected shape
++    print("Results shape:", results.shape)
++    print("Results:")
++    print(results)
++
++    # Check if the result is close to expected values
++    if results.shape == (6, 3):
++        # Check if the values are close to expected
++        max_diff = np.max(np.abs(results - expected_values))
++        print(f"Maximum difference from expected values: {max_diff}")
++        if max_diff < 1e-10:
++            print("Test PASSED: Results match expected values")
++        else:
++            print("Test FAILED: Results differ from expected values")
++    else:
++        print("Test FAILED: Result shape doesn't match expected shape")
++
++if __name__ == "__main__":
++    test_numpy_polyval()
+\ No newline at end of file
+diff --git a/reproduce_polyval_issue.py b/reproduce_polyval_issue.py
+new file mode 100644
+index 00000000..3639ed83
+--- /dev/null
++++ b/reproduce_polyval_issue.py
+@@ -0,0 +1,79 @@
++import xarray as xr
++import numpy as np
++
++def test_polyval_timedelta_coords():
++    # Create test data as described in the issue
++    values = np.array(
++        [
++            "2021-04-01T05:25:19.000000000",
++            "2021-04-01T05:25:29.000000000",
++            "2021-04-01T05:25:39.000000000",
++            "2021-04-01T05:25:49.000000000",
++            "2021-04-01T05:25:59.000000000",
++            "2021-04-01T05:26:09.000000000",
++        ],
++        dtype="datetime64[ns]",
++    )
++
++    # Create timedelta coordinates
++    timedeltas = values - values[0]
++    print("Timedeltas:", timedeltas)
++
++    # Create a DataArray with the original datetime values
++    datetime_da = xr.DataArray(values, name="azimuth_time")
++
++    # Create a DataArray with the timedelta coordinates
++    azimuth_time = xr.DataArray(
++        values, name="azimuth_time", coords={"azimuth_time": timedeltas}
++    )
++
++    polyfit_coefficients = xr.DataArray(
++        [
++            [2.33333335e-43, 1.62499999e-43, 2.79166678e-43],
++            [-1.15316667e-30, 1.49518518e-31, 9.08833333e-31],
++            [-2.50272583e-18, -1.23851062e-18, -2.99098229e-18],
++            [5.83965193e-06, -1.53321770e-07, -4.84640242e-06],
++            [4.44739216e06, 1.45053974e06, 5.29960857e06],
++        ],
++        dims=("degree", "axis"),
++        coords={"axis": [0, 1, 2], "degree": [4, 3, 2, 1, 0]},
++    )
++
++    # Test with datetime coordinates (should work)
++    print("\nTesting with datetime coordinates:")
++    datetime_result = xr.polyval(datetime_da, polyfit_coefficients)
++    print("Datetime result shape:", datetime_result.shape)
++    print("Datetime result values:")
++    print(datetime_result)
++
++    # Test with timedelta coordinates (currently broken)
++    print("\nTesting with timedelta coordinates:")
++    timedelta_result = xr.polyval(azimuth_time, polyfit_coefficients)
++    print("Timedelta result shape:", timedelta_result.shape)
++    print("Timedelta result values:")
++    print(timedelta_result)
++
++    # Expected values from the issue description
++    expected_values = np.array([
++        [4447392.16      , 1450539.74      , 5299608.57      ],
++        [4505537.25588366, 1448882.82238152, 5250846.359196  ],
++        [4563174.92026797, 1446979.12250014, 5201491.44401733],
++        [4620298.31815291, 1444829.59596699, 5151549.377964  ],
++        [4676900.67053846, 1442435.23739315, 5101025.78153601],
++        [4732975.25442459, 1439797.08038974, 5049926.34223336]
++    ])
++
++    # Check if the result is close to expected values
++    if timedelta_result.shape == (6, 3):
++        # Check if the values are close to expected
++        max_diff = np.max(np.abs(timedelta_result.values - expected_values))
++        print(f"Maximum difference from expected values: {max_diff}")
++        if max_diff < 1e-10:
++            print("Test PASSED: Results match expected values")
++        else:
++            print("Test FAILED: Results differ from expected values")
++    else:
++        print("Test FAILED: Result shape doesn't match expected shape")
++
++if __name__ == "__main__":
++    test_polyval_timedelta_coords()
+\ No newline at end of file
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 823cbe02..2b8e8655 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1934,10 +1934,12 @@ def _ensure_numeric(data: T_Xarray) -> T_Xarray:
+ 
+     def to_floatable(x: DataArray) -> DataArray:
+         if x.dtype.kind in "mM":
++            # For timedelta64, use None as offset to let datetime_to_numeric handle it properly
++            offset = None if x.dtype.kind == "m" else np.datetime64("1970-01-01")
+             return x.copy(
+                 data=datetime_to_numeric(
+                     x.data,
+-                    offset=np.datetime64("1970-01-01"),
++                    offset=offset,
+                     datetime_unit="ns",
+                 ),
+             )
+@@ -2019,7 +2021,7 @@ def unify_chunks(*objects: T_Xarray) -> tuple[T_Xarray, ...]:
+ 
+     Returns
+     -------
+-    unified (DataArray or Dataset) – Tuple of objects with the same type as
++    unified (DataArray or Dataset) â€“ Tuple of objects with the same type as
+     *objects with consistent chunk sizes for all dask-array variables
+ 
+     See Also
+diff --git a/xarray/core/duck_array_ops.py b/xarray/core/duck_array_ops.py
+index 253a68b7..9566c1af 100644
+--- a/xarray/core/duck_array_ops.py
++++ b/xarray/core/duck_array_ops.py
+@@ -428,11 +428,6 @@ def datetime_to_numeric(array, offset=None, datetime_unit=None, dtype=float):
+         else:
+             offset = min(array)
+ 
+-    # Compute timedelta object.
+-    # For np.datetime64, this can silently yield garbage due to overflow.
+-    # One option is to enforce 1970-01-01 as the universal offset.
+-    array = array - offset
+-
+     # Scalar is converted to 0d-array
+     if not hasattr(array, "dtype"):
+         array = np.array(array)
+@@ -441,8 +436,20 @@ def datetime_to_numeric(array, offset=None, datetime_unit=None, dtype=float):
+     if array.dtype.kind in "O":
+         return py_timedelta_to_float(array, datetime_unit or "ns").astype(dtype)
+ 
+-    # Convert np.NaT to np.nan
+-    elif array.dtype.kind in "mM":
++    # Handle timedelta64 arrays differently for polynomial evaluation
++    elif array.dtype.kind == "m":
++        # For timedelta64, we want to preserve the actual values for polynomial evaluation
++        # Convert to specified timedelta units if requested
++        if datetime_unit:
++            array = array / np.timedelta64(1, datetime_unit)
++        return np.where(isnull(array), np.nan, array.astype(dtype))
++
++    # Handle datetime64 arrays
++    elif array.dtype.kind == "M":
++        # Compute timedelta object.
++        # For np.datetime64, this can silently yield garbage due to overflow.
++        # One option is to enforce 1970-01-01 as the universal offset.
++        array = array - offset
+ 
+         # Convert to specified timedelta units.
+         if datetime_unit:
+diff --git a/xarray_polyval_test.py b/xarray_polyval_test.py
+new file mode 100644
+index 00000000..5943d2ca
+--- /dev/null
++++ b/xarray_polyval_test.py
+@@ -0,0 +1,77 @@
++import xarray as xr
++import numpy as np
++
++def test_xarray_polyval():
++    # Create test data as described in the issue
++    values = np.array(
++        [
++            "2021-04-01T05:25:19.000000000",
++            "2021-04-01T05:25:29.000000000",
++            "2021-04-01T05:25:39.000000000",
++            "2021-04-01T05:25:49.000000000",
++            "2021-04-01T05:25:59.000000000",
++            "2021-04-01T05:26:09.000000000",
++        ],
++        dtype="datetime64[ns]",
++    )
++
++    # Create timedelta coordinates
++    timedeltas = values - values[0]
++    print("Timedeltas:", timedeltas)
++
++    # Convert timedeltas to seconds for polynomial evaluation
++    x_seconds = timedeltas.astype('timedelta64[s]').astype(float)
++    print("X values (seconds):", x_seconds)
++
++    # Create a DataArray with the numeric values
++    x_da = xr.DataArray(x_seconds, dims="azimuth_time", coords={"azimuth_time": timedeltas})
++
++    polyfit_coefficients = xr.DataArray(
++        [
++            [2.33333335e-43, 1.62499999e-43, 2.79166678e-43],
++            [-1.15316667e-30, 1.49518518e-31, 9.08833333e-31],
++            [-2.50272583e-18, -1.23851062e-18, -2.99098229e-18],
++            [5.83965193e-06, -1.53321770e-07, -4.84640242e-06],
++            [4.44739216e06, 1.45053974e06, 5.29960857e06],
++        ],
++        dims=("degree", "axis"),
++        coords={"axis": [0, 1, 2], "degree": [4, 3, 2, 1, 0]},
++    )
++
++    # Expected values from the issue description
++    expected_values = np.array([
++        [4447392.16      , 1450539.74      , 5299608.57      ],
++        [4505537.25588366, 1448882.82238152, 5250846.359196  ],
++        [4563174.92026797, 1446979.12250014, 5201491.44401733],
++        [4620298.31815291, 1444829.59596699, 5151549.377964  ],
++        [4676900.67053846, 1442435.23739315, 5101025.78153601],
++        [4732975.25442459, 1439797.08038974, 5049926.34223336]
++    ])
++
++    # Test with numeric coordinates
++    print("\nTesting with numeric coordinates:")
++    numeric_result = xr.polyval(x_da, polyfit_coefficients)
++    print("Numeric result shape:", numeric_result.shape)
++    print("Numeric result values:")
++    print(numeric_result)
++
++    # Transpose the result to match the expected shape
++    transposed_result = numeric_result.transpose("azimuth_time", "axis")
++    print("\nTransposed result shape:", transposed_result.shape)
++    print("Transposed result values:")
++    print(transposed_result)
++
++    # Check if the transposed result is close to expected values
++    if transposed_result.shape == (6, 3):
++        # Check if the values are close to expected
++        max_diff = np.max(np.abs(transposed_result.values - expected_values))
++        print(f"Maximum difference from expected values: {max_diff}")
++        if max_diff < 1e-10:
++            print("Test PASSED: Results match expected values")
++        else:
++            print("Test FAILED: Results differ from expected values")
++    else:
++        print("Test FAILED: Result shape doesn't match expected shape")
++
++if __name__ == "__main__":
++    test_xarray_polyval()
+\ No newline at end of file

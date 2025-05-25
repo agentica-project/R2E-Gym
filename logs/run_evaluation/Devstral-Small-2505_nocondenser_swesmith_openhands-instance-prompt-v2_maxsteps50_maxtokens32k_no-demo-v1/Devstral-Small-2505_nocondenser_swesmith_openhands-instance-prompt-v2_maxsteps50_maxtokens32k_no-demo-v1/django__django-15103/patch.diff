@@ -1,0 +1,111 @@
+diff --git a/django/utils/html.py b/django/utils/html.py
+index da1b5675ec..c02d0131a5 100644
+--- a/django/utils/html.py
++++ b/django/utils/html.py
+@@ -61,7 +61,7 @@ _json_script_escapes = {
+ }
+ 
+ 
+-def json_script(value, element_id):
++def json_script(value, element_id=None):
+     """
+     Escape all the HTML/XML special characters with their unicode escapes, so
+     value is safe to be output anywhere except for inside a tag attribute. Wrap
+@@ -71,7 +71,7 @@ def json_script(value, element_id):
+     json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)
+     return format_html(
+         '<script id="{}" type="application/json">{}</script>',
+-        element_id, mark_safe(json_str)
++        element_id if element_id is not None else '', mark_safe(json_str)
+     )
+ 
+ 
+@@ -312,7 +312,7 @@ class Urlizer:
+     def trim_url(self, x, *, limit):
+         if limit is None or len(x) <= limit:
+             return x
+-        return '%s…' % x[:max(0, limit - 1)]
++        return '%sâ€¦' % x[:max(0, limit - 1)]
+ 
+     def trim_punctuation(self, word):
+         """
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..6b97fc4fca
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,16 @@
++import sys
++import os
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++from django.utils.html import json_script
++
++try:
++    # Try to call json_script without an element_id
++    result = json_script({"test": "data"})
++    print("SUCCESS: json_script worked without element_id")
++    print(f"Result: {result}")
++except TypeError as e:
++    print(f"ERROR: {e}")
++    print("The element_id parameter is required, which is the issue we need to fix.")
+\ No newline at end of file
+diff --git a/run_tests.py b/run_tests.py
+new file mode 100644
+index 0000000000..353690acfc
+--- /dev/null
++++ b/run_tests.py
+@@ -0,0 +1,13 @@
++import sys
++import os
++import unittest
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++from tests.utils_tests.test_html import TestUtilsHtml
++
++if __name__ == '__main__':
++    suite = unittest.TestLoader().loadTestsFromTestCase(TestUtilsHtml)
++    result = unittest.TextTestRunner(verbosity=2).run(suite)
++    sys.exit(0 if result.wasSuccessful() else 1)
+\ No newline at end of file
+diff --git a/test_json_script.py b/test_json_script.py
+new file mode 100644
+index 0000000000..c93f4534ee
+--- /dev/null
++++ b/test_json_script.py
+@@ -0,0 +1,30 @@
++import sys
++import os
++import unittest
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++from django.utils.html import json_script
++
++class JsonScriptTests(unittest.TestCase):
++    def test_with_element_id(self):
++        """Test that json_script works with an element_id."""
++        result = json_script({"test": "data"}, "test_id")
++        expected = '<script id="test_id" type="application/json">{"test": "data"}</script>'
++        self.assertEqual(result, expected)
++
++    def test_without_element_id(self):
++        """Test that json_script works without an element_id."""
++        result = json_script({"test": "data"})
++        expected = '<script id="" type="application/json">{"test": "data"}</script>'
++        self.assertEqual(result, expected)
++
++    def test_with_html_special_chars(self):
++        """Test that HTML special characters are properly escaped."""
++        result = json_script({"html": "<b>&</b>"}, "test_id")
++        expected = '<script id="test_id" type="application/json">{"html": "\\u003Cb\\u003E\\u0026\\u003C/b\\u003E"}</script>'
++        self.assertEqual(result, expected)
++
++if __name__ == '__main__':
++    unittest.main(verbosity=2)
+\ No newline at end of file

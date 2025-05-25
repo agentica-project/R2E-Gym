@@ -1,0 +1,68 @@
+diff --git a/sympy/core/basic.py b/sympy/core/basic.py
+index db4e971848..77b84754b3 100644
+--- a/sympy/core/basic.py
++++ b/sympy/core/basic.py
+@@ -313,7 +313,7 @@ def __eq__(self, other):
+             try:
+                 other = _sympify(other)
+             except SympifyError:
+-                return False    # sympy != other
++                return NotImplemented    # sympy != other, delegate to other's __eq__
+ 
+             if type(self) != type(other):
+                 return False
+@@ -329,7 +329,10 @@ def __ne__(self, other):
+ 
+            but faster
+         """
+-        return not self.__eq__(other)
++        eq_result = self.__eq__(other)
++        if eq_result is NotImplemented:
++            return NotImplemented
++        return not eq_result
+ 
+     def dummy_eq(self, other, symbol=None):
+         """
+diff --git a/test_comparison_issue.py b/test_comparison_issue.py
+new file mode 100644
+index 0000000000..9f2ffa2550
+--- /dev/null
++++ b/test_comparison_issue.py
+@@ -0,0 +1,36 @@
++from sympy import Symbol
++from sympy.core.basic import Basic
++
++class Foo:
++    def __eq__(self, other):
++        if isinstance(other, Basic):
++            # For testing, we'll return True for Basic objects to demonstrate asymmetry
++            print("  Called Foo.__eq__")
++            return True
++        print("  Called Foo.__eq__ with non-Basic object")
++        return NotImplemented
++
++    def __ne__(self, other):
++        if isinstance(other, Basic):
++            return not self.__eq__(other)
++        return NotImplemented
++
++# Create instances
++f = Foo()
++s = Symbol('x')
++
++print("Testing f == s:")
++print("f == s:", f == s)  # Should call Foo.__eq__ and return True
++
++print("\nTesting s == f:")
++print("s == f:", s == f)  # Should call Basic.__eq__ and currently returns False
++
++print("\nTesting f != s:")
++print("f != s:", f != s)  # Should call Foo.__ne__ and return False
++
++print("\nTesting s != f:")
++print("s != f:", s != f)  # Should call Basic.__ne__ and currently returns True
++
++print("\nThe issue is that s == f returns False instead of NotImplemented")
++print("If Basic.__eq__ returned NotImplemented, then s == f would delegate to Foo.__eq__")
++print("and return True, maintaining symmetry in the equality relation.")
+\ No newline at end of file

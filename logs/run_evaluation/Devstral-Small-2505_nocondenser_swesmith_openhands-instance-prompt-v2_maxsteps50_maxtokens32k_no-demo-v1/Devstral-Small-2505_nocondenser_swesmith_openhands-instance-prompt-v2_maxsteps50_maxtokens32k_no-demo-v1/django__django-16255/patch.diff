@@ -1,0 +1,144 @@
+diff --git a/django/contrib/sitemaps/__init__.py b/django/contrib/sitemaps/__init__.py
+index 27756d9d96..b40ad806ed 100644
+--- a/django/contrib/sitemaps/__init__.py
++++ b/django/contrib/sitemaps/__init__.py
+@@ -168,7 +168,7 @@ class Sitemap:
+         if callable(self.lastmod):
+             try:
+                 return max([self.lastmod(item) for item in self.items()])
+-            except TypeError:
++            except (TypeError, ValueError):
+                 return None
+         else:
+             return self.lastmod
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..c0192a4316
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,21 @@
++from django.contrib.sitemaps import Sitemap
++
++class EmptySitemapWithCallableLastmod(Sitemap):
++    """A sitemap with no items but with a callable lastmod method."""
++
++    def items(self):
++        return []
++
++    def lastmod(self, item):
++        # This will never be called because items() returns an empty list
++        return "2023-01-01"
++
++# Create an instance of the sitemap
++sitemap = EmptySitemapWithCallableLastmod()
++
++# Try to get the latest lastmod
++try:
++    lastmod = sitemap.get_latest_lastmod()
++    print(f"Successfully got lastmod: {lastmod}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..6b5d0ba0bb
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,65 @@
++from django.contrib.sitemaps import Sitemap
++from datetime import date
++
++# Test case 1: Empty sitemap with callable lastmod
++class EmptySitemapWithCallableLastmod(Sitemap):
++    def items(self):
++        return []
++
++    def lastmod(self, item):
++        return "2023-01-01"
++
++# Test case 2: Sitemap with items and callable lastmod
++class NormalSitemapWithCallableLastmod(Sitemap):
++    def items(self):
++        return [object(), object()]
++
++    def lastmod(self, item):
++        return "2023-01-01"
++
++# Test case 3: Sitemap with non-callable lastmod
++class SitemapWithNonCallableLastmod(Sitemap):
++    lastmod = date.today()
++
++    def items(self):
++        return []
++
++# Test case 4: Sitemap with items and non-callable lastmod
++class SitemapWithItemsAndNonCallableLastmod(Sitemap):
++    lastmod = date.today()
++
++    def items(self):
++        return [object()]
++
++# Run tests
++print("Test 1: Empty sitemap with callable lastmod")
++sitemap1 = EmptySitemapWithCallableLastmod()
++try:
++    lastmod = sitemap1.get_latest_lastmod()
++    print(f"Result: {lastmod}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTest 2: Sitemap with items and callable lastmod")
++sitemap2 = NormalSitemapWithCallableLastmod()
++try:
++    lastmod = sitemap2.get_latest_lastmod()
++    print(f"Result: {lastmod}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTest 3: Sitemap with non-callable lastmod")
++sitemap3 = SitemapWithNonCallableLastmod()
++try:
++    lastmod = sitemap3.get_latest_lastmod()
++    print(f"Result: {lastmod}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++print("\nTest 4: Sitemap with items and non-callable lastmod")
++sitemap4 = SitemapWithItemsAndNonCallableLastmod()
++try:
++    lastmod = sitemap4.get_latest_lastmod()
++    print(f"Result: {lastmod}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file
+diff --git a/verify_genericsitemap.py b/verify_genericsitemap.py
+new file mode 100644
+index 0000000000..13fef79777
+--- /dev/null
++++ b/verify_genericsitemap.py
+@@ -0,0 +1,24 @@
++from django.contrib.sitemaps import Sitemap
++
++# Test case: Empty sitemap with callable lastmod using the same pattern as GenericSitemap
++class EmptyGenericLikeSitemap(Sitemap):
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        self.date_field = None
++
++    def items(self):
++        return []
++
++    def lastmod(self, item):
++        if self.date_field is not None:
++            return getattr(item, self.date_field)
++        return None
++
++# Run test
++print("Test: Empty Generic-like Sitemap with callable lastmod")
++sitemap = EmptyGenericLikeSitemap()
++try:
++    lastmod = sitemap.get_latest_lastmod()
++    print(f"Result: {lastmod}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file

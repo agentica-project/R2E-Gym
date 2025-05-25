@@ -1,0 +1,181 @@
+diff --git a/django/utils/autoreload.py b/django/utils/autoreload.py
+index b6af5f5491..3ae5726785 100644
+--- a/django/utils/autoreload.py
++++ b/django/utils/autoreload.py
+@@ -220,10 +220,15 @@ def get_child_arguments():
+     py_script = Path(sys.argv[0])
+ 
+     args = [sys.executable] + ['-W%s' % o for o in sys.warnoptions]
++    # When started with -m, sys.argv[0] will be '-m' and the module name will be sys.argv[1]
++    if len(sys.argv) > 1 and sys.argv[0] == '-m':
++        module_name = sys.argv[1]
++        args += ['-m', module_name]
++        args += sys.argv[2:]
+     # __spec__ is set when the server was started with the `-m` option,
+     # see https://docs.python.org/3/reference/import.html#main-spec
+     # __spec__ may not exist, e.g. when running in a Conda env.
+-    if getattr(__main__, '__spec__', None) is not None and __main__.__spec__.parent:
++    elif getattr(__main__, '__spec__', None) is not None and __main__.__spec__.parent:
+         args += ['-m', __main__.__spec__.parent]
+         args += sys.argv[1:]
+     elif not py_script.exists():
+diff --git a/test_autoreload_comprehensive.py b/test_autoreload_comprehensive.py
+new file mode 100644
+index 0000000000..ced2a352ae
+--- /dev/null
++++ b/test_autoreload_comprehensive.py
+@@ -0,0 +1,74 @@
++import sys
++import os
++from django.utils.autoreload import get_child_arguments
++
++def test_case(name, argv, expected):
++    print(f"\nTesting: {name}")
++    print(f"  argv: {argv}")
++    print(f"  expected: {expected}")
++
++    # Save original argv
++    original_argv = sys.argv[:]
++    try:
++        # Set up test environment
++        sys.argv = argv[:]
++
++        # Get actual result
++        actual = get_child_arguments()
++        print(f"  actual: {actual}")
++
++        # Check if result matches expected
++        if actual == expected:
++            print("  ✓ PASS")
++        else:
++            print("  ✗ FAIL")
++            print(f"  Expected: {expected}")
++            print(f"  Actual: {actual}")
++    finally:
++        # Restore original argv
++        sys.argv = original_argv
++
++# Test cases
++test_cases = [
++    # Case 1: Django module with -m
++    {
++        "name": "Django module with -m",
++        "argv": ["-m", "django", "runserver"],
++        "expected": [sys.executable, "-m", "django", "runserver"]
++    },
++    # Case 2: Non-Django module with -m
++    {
++        "name": "Non-Django module with -m",
++        "argv": ["-m", "utils_tests.test_module", "runserver"],
++        "expected": [sys.executable, "-m", "utils_tests.test_module", "runserver"]
++    },
++    # Case 3: Submodule with -m
++    {
++        "name": "Submodule with -m",
++        "argv": ["-m", "utils_tests.test_module.submodule", "runserver"],
++        "expected": [sys.executable, "-m", "utils_tests.test_module.submodule", "runserver"]
++    },
++    # Case 4: Regular script
++    {
++        "name": "Regular script",
++        "argv": ["manage.py", "runserver"],
++        "expected": [sys.executable, "manage.py", "runserver"]
++    },
++    # Case 5: Non-existent script
++    {
++        "name": "Non-existent script",
++        "argv": ["nonexistent.py", "runserver"],
++        "expected": None  # Should raise RuntimeError
++    }
++]
++
++# Run all test cases
++for case in test_cases:
++    try:
++        test_case(
++            case["name"],
++            case["argv"],
++            case["expected"]
++        )
++    except Exception as e:
++        print(f"\nError in test case {case['name']}: {e}")
+\ No newline at end of file
+diff --git a/test_submodule_autoreload.py b/test_submodule_autoreload.py
+new file mode 100644
+index 0000000000..d3bed29749
+--- /dev/null
++++ b/test_submodule_autoreload.py
+@@ -0,0 +1,72 @@
++import sys
++import os
++from pathlib import Path
++import tempfile
++import shutil
++from importlib import import_module
++
++# Create a temporary module structure
++temp_dir = tempfile.mkdtemp()
++try:
++    # Create a package structure: foo/bar/baz.py
++    foo_dir = os.path.join(temp_dir, 'foo')
++    os.makedirs(foo_dir)
++
++    # Create __init__.py files
++    with open(os.path.join(foo_dir, '__init__.py'), 'w') as f:
++        f.write('')
++
++    bar_dir = os.path.join(foo_dir, 'bar')
++    os.makedirs(bar_dir)
++
++    with open(os.path.join(bar_dir, '__init__.py'), 'w') as f:
++        f.write('')
++
++    # Create baz.py
++    with open(os.path.join(bar_dir, 'baz.py'), 'w') as f:
++        f.write('''
++import sys
++import os
++import time
++
++def runserver():
++    print("Running server...")
++    while True:
++        print("Server running...")
++        time.sleep(1)
++''')
++
++    # Add the temp directory to sys.path
++    sys.path.insert(0, temp_dir)
++
++    # Import the module
++    module = import_module('foo.bar.baz')
++
++    # Test the autoreload module
++    from django.utils import autoreload
++
++    # Mock sys.argv and __main__
++    sys.argv = ['-m', 'foo.bar.baz', 'runserver']
++
++    # Create a mock __main__ module with __spec__
++    import types
++    main_module = types.ModuleType('__main__')
++    main_module.__file__ = os.path.join(bar_dir, 'baz.py')
++    main_module.__spec__ = types.SimpleNamespace()
++    main_module.__spec__.parent = 'foo.bar.baz'
++    sys.modules['__main__'] = main_module
++
++    # Get the child arguments
++    args = autoreload.get_child_arguments()
++    print(f"Child arguments: {args}")
++
++    # Check if the arguments are correct
++    expected_args = [sys.executable, '-m', 'foo.bar.baz', 'runserver']
++    if args == expected_args:
++        print("SUCCESS: Arguments are correct")
++    else:
++        print(f"FAILURE: Expected {expected_args}, got {args}")
++
++finally:
++    # Clean up
++    shutil.rmtree(temp_dir)
+\ No newline at end of file

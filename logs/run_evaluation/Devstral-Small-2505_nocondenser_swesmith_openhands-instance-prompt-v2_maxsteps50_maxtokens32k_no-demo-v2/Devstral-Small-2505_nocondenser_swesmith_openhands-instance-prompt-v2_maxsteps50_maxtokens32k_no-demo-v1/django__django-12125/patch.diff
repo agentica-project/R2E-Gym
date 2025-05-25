@@ -1,0 +1,416 @@
+diff --git a/django/db/models/fields/__init__.py b/django/db/models/fields/__init__.py
+index aa21a151bc..0c88b28a9a 100644
+--- a/django/db/models/fields/__init__.py
++++ b/django/db/models/fields/__init__.py
+@@ -3,6 +3,7 @@ import copy
+ import datetime
+ import decimal
+ import operator
++import sys
+ import uuid
+ import warnings
+ from base64 import b64decode, b64encode
+@@ -497,6 +498,26 @@ class Field(RegisterLookupMixin):
+             path = path.replace("django.db.models.fields.proxy", "django.db.models")
+         elif path.startswith("django.db.models.fields"):
+             path = path.replace("django.db.models.fields", "django.db.models")
++
++        # Handle inner classes - check if the class is defined within another class
++        # by looking at the module namespace
++        if hasattr(self.__class__, '__module__') and self.__class__.__module__:
++            try:
++                module = sys.modules[self.__class__.__module__]
++                # Check if the class is in the module's namespace but not at the top level
++                if hasattr(module, self.__class__.__name__) and self.__class__ != getattr(module, self.__class__.__name__):
++                    # This is an inner class, so we need to find its parent class
++                    for parent_name in dir(module):
++                        parent = getattr(module, parent_name)
++                        if isinstance(parent, type) and hasattr(parent, self.__class__.__name__):
++                            parent_class = getattr(parent, self.__class__.__name__)
++                            if parent_class is self.__class__:
++                                # Found the parent class, update the path
++                                path = "%s.%s.%s" % (self.__class__.__module__, parent_name, self.__class__.__name__)
++                                break
++            except (AttributeError, KeyError, ImportError):
++                # If we can't determine the parent class, just use the original path
++                pass
+         # Return basic info - other fields should override this.
+         return (self.name, path, [], keywords)
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..a36064f72f
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,151 @@
++import os
++import sys
++import django
++from django.db import models
++from django.core.management import call_command
++import io
++import contextlib
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++django.setup()
++
++# Create a test model with an inner class field
++@contextlib.contextmanager
++def capture_output():
++    new_out, new_err = io.StringIO(), io.StringIO()
++    old_out, old_err = sys.stdout, sys.stderr
++    try:
++        sys.stdout, sys.stderr = new_out, new_err
++        yield sys.stdout, sys.stderr
++    finally:
++        sys.stdout, sys.stderr = old_out, old_err
++
++# Create a simple model with an inner class field
++with open('/testbed/test_app/models.py', 'w') as f:
++    f.write("""
++from django.db import models
++
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++""")
++
++# Create an empty __init__.py file
++with open('/testbed/test_app/__init__.py', 'w') as f:
++    f.write("")
++
++# Create an empty apps.py file
++with open('/testbed/test_app/apps.py', 'w') as f:
++    f.write("""
++from django.apps import AppConfig
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
++""")
++
++# Create a management module
++os.makedirs('/testbed/test_app/management', exist_ok=True)
++os.makedirs('/testbed/test_app/management/commands', exist_ok=True)
++with open('/testbed/test_app/management/__init__.py', 'w') as f:
++    f.write("")
++with open('/testbed/test_app/management/commands/__init__.py', 'w') as f:
++    f.write("")
++
++# Create migrations directory
++os.makedirs('/testbed/test_app/migrations', exist_ok=True)
++with open('/testbed/test_app/migrations/__init__.py', 'w') as f:
++    f.write("")
++
++# Create an empty admin.py
++with open('/testbed/test_app/admin.py', 'w') as f:
++    f.write("")
++
++# Create an empty tests.py
++with open('/testbed/test_app/tests.py', 'w') as f:
++    f.write("")
++
++# Create an empty views.py
++with open('/testbed/test_app/views.py', 'w') as f:
++    f.write("")
++
++# Create an empty urls.py
++with open('/testbed/test_app/urls.py', 'w') as f:
++    f.write("")
++
++# Create an empty apps.py
++with open('/testbed/test_app/apps.py', 'w') as f:
++    f.write("""
++from django.apps import AppConfig
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
++""")
++
++# Create an empty models.py
++with open('/testbed/test_app/models.py', 'w') as f:
++    f.write("""
++from django.db import models
++
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++""")
++
++# Create an empty __init__.py
++with open('/testbed/test_app/__init__.py', 'w') as f:
++    f.write("from .apps import TestAppConfig")
++
++# Create a settings file
++with open('/testbed/settings.py', 'w') as f:
++    f.write("""
++import os
++import django
++
++BASE_DIR = os.path.dirname(os.path.abspath(__file__))
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++    'test_app',
++]
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++SECRET_KEY = 'this-is-a-very-secret-key-for-testing'
++""")
++
++# Run makemigrations and capture the output
++print("Running makemigrations...")
++with capture_output() as (out, err):
++    call_command('makemigrations', 'test_app', verbosity=2)
++
++output = out.getvalue()
++print("Output:")
++print(output)
++
++# Check if the migration file was created
++migration_files = [f for f in os.listdir('/testbed/test_app/migrations') if f.endswith('.py') and f.startswith('000')]
++if migration_files:
++    migration_file = migration_files[0]
++    with open(f'/testbed/test_app/migrations/{migration_file}') as f:
++        migration_content = f.read()
++        print(f"\nMigration content ({migration_file}):")
++        print(migration_content)
++
++        # Check if the inner class is referenced correctly
++        if "test_app.models.Inner" in migration_content:
++            print("\nISSUE CONFIRMED: Inner class is referenced as 'test_app.models.Inner' instead of 'test_app.models.Outer.Inner'")
++        else:
++            print("\nInner class reference not found in migration or referenced correctly")
+\ No newline at end of file
+diff --git a/settings.py b/settings.py
+new file mode 100644
+index 0000000000..e291236224
+--- /dev/null
++++ b/settings.py
+@@ -0,0 +1,19 @@
++import os
++import django
++
++BASE_DIR = os.path.dirname(os.path.abspath(__file__))
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++    'test_app',
++]
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++SECRET_KEY = 'this-is-a-very-secret-key-for-testing'
+\ No newline at end of file
+diff --git a/test_app/__init__.py b/test_app/__init__.py
+new file mode 100644
+index 0000000000..ae6f331d8b
+--- /dev/null
++++ b/test_app/__init__.py
+@@ -0,0 +1,4 @@
++from django.apps import AppConfig
++
++class TestAppConfig(AppConfig):
++    name = 'test_app'
+\ No newline at end of file
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..8167832e62
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,29 @@
++from django.db import models
++import enum
++from django.utils.deconstruct import deconstructible
++
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++
++    class Meta:
++        app_label = 'test_app'
++
++# Test with an inner Enum class as described in the issue
++class Thing(models.Model):
++    @deconstructible
++    class State(enum.Enum):
++        ON = 'on'
++        OFF = 'off'
++
++    state = models.CharField(
++        max_length=10,
++        choices=[(s.value, s.name) for s in State],
++        default=State.ON.value,
++    )
++
++    class Meta:
++        app_label = 'test_app'
+\ No newline at end of file
+diff --git a/test_inner_field.py b/test_inner_field.py
+new file mode 100644
+index 0000000000..cf38c167e8
+--- /dev/null
++++ b/test_inner_field.py
+@@ -0,0 +1,30 @@
++import os
++import sys
++import django
++from django.db import models
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++django.setup()
++
++# Define a model with an inner class field
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++
++# Get the deconstructed field information
++field = A._meta.get_field('field')
++name, path, args, kwargs = field.deconstruct()
++
++print(f"Field name: {name}")
++print(f"Field path: {path}")
++print(f"Field args: {args}")
++print(f"Field kwargs: {kwargs}")
++
++# Check if the path is correct
++if path.endswith('Inner'):
++    correct_path = path.replace('Inner', 'Outer.Inner')
++    print(f"\nISSUE CONFIRMED: Inner class is referenced as '{path}' instead of '{correct_path}')
+\ No newline at end of file
+diff --git a/test_inner_field_simple.py b/test_inner_field_simple.py
+new file mode 100644
+index 0000000000..5b66f7c942
+--- /dev/null
++++ b/test_inner_field_simple.py
+@@ -0,0 +1,31 @@
++import os
++import sys
++import django
++from django.db import models
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
++django.setup()
++
++# Define a model with an inner class field
++class Outer(object):
++    class Inner(models.CharField):
++        pass
++
++class A(models.Model):
++    field = Outer.Inner(max_length=20)
++
++# Get the deconstructed field information
++field = A._meta.get_field('field')
++name, path, args, kwargs = field.deconstruct()
++
++print(f"Field name: {name}")
++print(f"Field path: {path}")
++print(f"Field args: {args}")
++print(f"Field kwargs: {kwargs}")
++
++# Check if the path is correct
++if path.endswith('Inner'):
++    print("\nISSUE CONFIRMED: Inner class is referenced incorrectly")
++else:
++    print("\nNo issue detected")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..617ef3cc42
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,64 @@
++import os
++import sys
++import django
++from django.apps import apps
++
++# Set up Django
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
++django.setup()
++
++# Import the models
++from test_app.models import A, Thing
++
++# Test case 1: Regular inner class
++print("=== Test Case 1: Regular Inner Class ===")
++field1 = A._meta.get_field('field')
++name1, path1, args1, kwargs1 = field1.deconstruct()
++
++print(f"Field name: {name1}")
++print(f"Field path: {path1}")
++print(f"Field args: {args1}")
++print(f"Field kwargs: {kwargs1}")
++
++# Check if the path is correct
++if path1.endswith('Outer.Inner'):
++    print("\nTest Case 1 PASSED: Inner class is referenced correctly as 'Outer.Inner'")
++else:
++    print(f"\nTest Case 1 FAILED: Inner class is not referenced correctly. Got: {path1}")
++
++# Test case 2: Inner Enum class in a Django model
++print("\n=== Test Case 2: Inner Enum Class in Django Model ===")
++field2 = Thing._meta.get_field('state')
++name2, path2, args2, kwargs2 = field2.deconstruct()
++
++print(f"Field name: {name2}")
++print(f"Field path: {path2}")
++print(f"Field args: {args2}")
++print(f"Field kwargs: {kwargs2}")
++
++# Check if the default value is correctly referenced
++if 'default' in kwargs2 and kwargs2['default'] == 'on':
++    print("Default value is correctly set to 'on'")
++else:
++    print(f"Default value is not correctly set. Got: {kwargs2.get('default', 'Not found')}")
++
++# Let's also check the max_length
++if 'max_length' in kwargs2 and kwargs2['max_length'] == 10:
++    print("Max length is correctly set to 10")
++else:
++    print(f"Max length is not correctly set. Got: {kwargs2.get('max_length', 'Not found')}")
++
++# Check if the State enum is correctly referenced
++state_class = getattr(Thing, 'State', None)
++if state_class is not None:
++    print(f"State enum class exists: {state_class}")
++    print(f"State enum module: {state_class.__module__}")
++    print(f"State enum qualname: {state_class.__qualname__}")
++else:
++    print("State enum class not found")
++
++# Overall result
++if path1.endswith('Outer.Inner'):
++    print("\nOVERALL FIX VERIFIED: Test cases passed!")
++else:
++    print("\nOVERALL FIX FAILED: Test cases failed.")
+\ No newline at end of file

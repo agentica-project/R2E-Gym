@@ -1,0 +1,81 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..a5f7af463
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,26 @@
++from sklearn.datasets import make_multilabel_classification
++from sklearn.multioutput import MultiOutputClassifier
++from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
++from sklearn.model_selection import cross_val_predict
++import numpy as np
++
++# Create a dataset
++X, Y = make_multilabel_classification(n_samples=100, n_features=20, n_classes=3, n_labels=2, random_state=42)
++
++# Create a MultiOutputClassifier
++mo_lda = MultiOutputClassifier(LinearDiscriminantAnalysis())
++
++# This works fine
++print("Testing cross_val_predict with default method...")
++pred = cross_val_predict(mo_lda, X, Y, cv=5)
++print(f"Prediction shape: {pred.shape}")
++
++# This should fail with the current implementation
++print("\nTesting cross_val_predict with method='predict_proba'...")
++try:
++    pred_proba = cross_val_predict(mo_lda, X, Y, cv=5, method='predict_proba')
++    print(f"Prediction probabilities shape: {np.array(pred_proba).shape if isinstance(pred_proba, list) else pred_proba.shape}")
++    print("Success! The issue has been fixed.")
++except AttributeError as e:
++    print(f"Error: {e}")
++    print("The issue is still present.")
+\ No newline at end of file
+diff --git a/sklearn/model_selection/_validation.py b/sklearn/model_selection/_validation.py
+index 95669a212..9950cecbf 100644
+--- a/sklearn/model_selection/_validation.py
++++ b/sklearn/model_selection/_validation.py
+@@ -854,16 +854,34 @@ def _fit_and_predict(estimator, X, y, train, test, verbose, fit_params,
+     func = getattr(estimator, method)
+     predictions = func(X_test)
+     if method in ['decision_function', 'predict_proba', 'predict_log_proba']:
+-        if isinstance(predictions, list):
+-            predictions = [_enforce_prediction_order(
+-                estimator.classes_[i_label], predictions[i_label],
+-                n_classes=len(set(y[:, i_label])), method=method)
+-                for i_label in range(len(predictions))]
++        # Special handling for MultiOutputClassifier
++        if hasattr(estimator, 'estimators_') and not hasattr(estimator, 'classes_'):
++            # This is a MultiOutputClassifier or similar
++            if isinstance(predictions, list):
++                predictions = [_enforce_prediction_order(
++                    estimator.estimators_[i_label].classes_,
++                    predictions[i_label],
++                    n_classes=len(set(y[:, i_label])), method=method)
++                    for i_label in range(len(predictions))]
++            else:
++                # A 2D y array should be a binary label indicator matrix
++                n_classes = len(set(y)) if y.ndim == 1 else y.shape[1]
++                # Use the classes from the first estimator
++                classes_ = estimator.estimators_[0].classes_
++                predictions = _enforce_prediction_order(
++                    classes_, predictions, n_classes, method)
+         else:
+-            # A 2D y array should be a binary label indicator matrix
+-            n_classes = len(set(y)) if y.ndim == 1 else y.shape[1]
+-            predictions = _enforce_prediction_order(
+-                estimator.classes_, predictions, n_classes, method)
++            # Standard case
++            if isinstance(predictions, list):
++                predictions = [_enforce_prediction_order(
++                    estimator.classes_[i_label], predictions[i_label],
++                    n_classes=len(set(y[:, i_label])), method=method)
++                    for i_label in range(len(predictions))]
++            else:
++                # A 2D y array should be a binary label indicator matrix
++                n_classes = len(set(y)) if y.ndim == 1 else y.shape[1]
++                predictions = _enforce_prediction_order(
++                    estimator.classes_, predictions, n_classes, method)
+     return predictions, test
+ 
+ 

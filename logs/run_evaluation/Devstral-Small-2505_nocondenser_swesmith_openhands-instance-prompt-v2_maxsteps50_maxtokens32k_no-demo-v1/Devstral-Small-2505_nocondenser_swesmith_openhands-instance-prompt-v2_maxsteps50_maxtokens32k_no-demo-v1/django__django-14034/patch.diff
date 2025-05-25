@@ -1,0 +1,205 @@
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 65d6a9ec82..64caf1160c 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -1023,7 +1023,14 @@ class MultiValueField(Field):
+             value = self.widget.decompress(value)
+         if not value or isinstance(value, (list, tuple)):
+             if not value or not [v for v in value if v not in self.empty_values]:
+-                if self.required:
++                # Check if any of the subfields are required before returning an empty value
++                for i, field in enumerate(self.fields):
++                    if field.required and i < len(value) and value[i] in self.empty_values:
++                        errors.append(field.error_messages['incomplete'])
++                        break
++                if errors:
++                    raise ValidationError(errors)
++                elif self.required:
+                     raise ValidationError(self.error_messages['required'], code='required')
+                 else:
+                     return self.compress([])
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..4a71f23512
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,62 @@
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.forms',
++        ],
++        USE_I18N=False,
++    )
++    django.setup()
++
++from django.forms import (
++    Form,
++    CharField,
++    MultiValueField,
++    MultiWidget,
++)
++
++class MF(MultiValueField):
++    widget = MultiWidget
++    def __init__(self):
++        fields = [
++            CharField(required=False),
++            CharField(required=True),
++        ]
++        widget = self.widget(widgets=[
++            f.widget
++            for f in fields
++        ], attrs={})
++        super(MF, self).__init__(
++            fields=fields,
++            widget=widget,
++            require_all_fields=False,
++            required=False,
++        )
++    def compress(self, value):
++        return []
++
++class F(Form):
++    mf = MF()
++
++# Test case 1: Both fields empty - should return False but returns True
++f = F({
++    'mf_0': '',
++    'mf_1': '',
++})
++print("Test case 1 (both empty):")
++print(f"form.is_valid() = {f.is_valid()}")
++print(f"form.errors = {f.errors}")
++print()
++
++# Test case 2: First field has value, second field empty - should return False and does
++f = F({
++    'mf_0': 'xxx',
++    'mf_1': '',
++})
++print("Test case 2 (first field has value, second empty):")
++print(f"form.is_valid() = {f.is_valid()}")
++print(f"form.errors = {f.errors}")
+\ No newline at end of file
+diff --git a/test_multivaluefield_required.py b/test_multivaluefield_required.py
+new file mode 100644
+index 0000000000..9fb4ad97ef
+--- /dev/null
++++ b/test_multivaluefield_required.py
+@@ -0,0 +1,77 @@
++import unittest
++import django
++from django.conf import settings
++from django.forms import (
++    Form,
++    CharField,
++    MultiValueField,
++    MultiWidget,
++)
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.forms',
++        ],
++        USE_I18N=False,
++        USE_TZ=False,
++    )
++    django.setup()
++
++class MF(MultiValueField):
++    widget = MultiWidget
++    def __init__(self):
++        fields = [
++            CharField(required=False),
++            CharField(required=True),
++        ]
++        widget = self.widget(widgets=[
++            f.widget
++            for f in fields
++        ], attrs={})
++        super(MF, self).__init__(
++            fields=fields,
++            widget=widget,
++            require_all_fields=False,
++            required=False,
++        )
++    def compress(self, value):
++        return []
++
++class F(Form):
++    mf = MF()
++
++class MultiValueFieldRequiredTest(unittest.TestCase):
++
++    def test_both_fields_empty(self):
++        """Test that form.is_valid() returns False when both fields are empty."""
++        f = F({
++            'mf_0': '',
++            'mf_1': '',
++        })
++        self.assertFalse(f.is_valid())
++        self.assertIn('mf', f.errors)
++        self.assertIn('Enter a complete value.', f.errors['mf'].as_text())
++
++    def test_first_field_with_value_second_empty(self):
++        """Test that form.is_valid() returns False when first field has value but second is empty."""
++        f = F({
++            'mf_0': 'xxx',
++            'mf_1': '',
++        })
++        self.assertFalse(f.is_valid())
++        self.assertIn('mf', f.errors)
++        self.assertIn('Enter a complete value.', f.errors['mf'].as_text())
++
++    def test_both_fields_with_values(self):
++        """Test that form.is_valid() returns True when both fields have values."""
++        f = F({
++            'mf_0': 'xxx',
++            'mf_1': 'yyy',
++        })
++        self.assertTrue(f.is_valid())
++        self.assertNotIn('mf', f.errors)
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..f90b3c95b0
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,25 @@
++import django
++
++# Configure Django settings
++django.setup()
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.forms',
++    'django.contrib.admin',
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'django.contrib.sessions',
++    'django.contrib.messages',
++    'django.contrib.staticfiles',
++]
++
++SECRET_KEY = 'fake-key'
++ROOT_URLCONF = 'tests.urls'
++USE_TZ = False
+\ No newline at end of file

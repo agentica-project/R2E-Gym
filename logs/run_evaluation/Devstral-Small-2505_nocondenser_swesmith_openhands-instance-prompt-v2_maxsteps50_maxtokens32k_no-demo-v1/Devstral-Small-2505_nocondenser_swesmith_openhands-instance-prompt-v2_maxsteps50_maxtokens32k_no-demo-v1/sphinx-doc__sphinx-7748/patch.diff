@@ -1,0 +1,421 @@
+diff --git a/setup.py b/setup.py
+index 5e822fe9b..77b63df38 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index f8e4be999..3ad26e441 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -1038,37 +1038,92 @@ class DocstringSignatureMixin:
+     """
+ 
+     def _find_signature(self, encoding: str = None) -> Tuple[str, str]:
++        """
++        Find the signature in the docstring.
++
++        For overloaded methods, this will return the first signature found
++        (for backward compatibility), but all signatures will be stored in
++        self._all_signatures for use by extensions or custom documenters.
++        """
+         if encoding is not None:
+             warnings.warn("The 'encoding' argument to autodoc.%s._find_signature() is "
+                           "deprecated." % self.__class__.__name__,
+                           RemovedInSphinx40Warning, stacklevel=2)
++
+         docstrings = self.get_doc()
+         self._new_docstrings = docstrings[:]
+         result = None
++        all_signatures = []
++
+         for i, doclines in enumerate(docstrings):
+             # no lines in docstring, no match
+             if not doclines:
+                 continue
+-            # match first line of docstring against signature RE
+-            match = py_ext_sig_re.match(doclines[0])
+-            if not match:
++
++            # First, check if there are any signatures in the docstring
++            has_signatures = False
++            for line in doclines:
++                if py_ext_sig_re.match(line):
++                    has_signatures = True
++                    break
++
++            if not has_signatures:
+                 continue
+-            exmod, path, base, args, retann = match.groups()
+-            # the base name must match ours
+-            valid_names = [self.objpath[-1]]  # type: ignore
+-            if isinstance(self, ClassDocumenter):
+-                valid_names.append('__init__')
+-                if hasattr(self.object, '__mro__'):
+-                    valid_names.extend(cls.__name__ for cls in self.object.__mro__)
+-            if base not in valid_names:
++
++            # For backward compatibility, we'll use the first signature
++            # but we'll collect all of them for potential use by extensions
++            first_signature_line = None
++            for j, line in enumerate(doclines):
++                match = py_ext_sig_re.match(line)
++                if match:
++                    first_signature_line = j
++                    break
++
++            if first_signature_line is None:
+                 continue
+-            # re-prepare docstring to ignore more leading indentation
+-            tab_width = self.directive.state.document.settings.tab_width  # type: ignore
+-            self._new_docstrings[i] = prepare_docstring('\n'.join(doclines[1:]),
+-                                                        tabsize=tab_width)
+-            result = args, retann
+-            # don't look any further
+-            break
++
++            # Get the first signature (for backward compatibility)
++            match = py_ext_sig_re.match(doclines[first_signature_line])
++            if match:
++                exmod, path, base, args, retann = match.groups()
++                # the base name must match ours
++                valid_names = [self.objpath[-1]]  # type: ignore
++                if isinstance(self, ClassDocumenter):
++                    valid_names.append('__init__')
++                    if hasattr(self.object, '__mro__'):
++                        valid_names.extend(cls.__name__ for cls in self.object.__mro__)
++                if base in valid_names:
++                    result = args, retann
++
++                    # Collect all signatures for this method
++                    for j, line in enumerate(doclines):
++                        match = py_ext_sig_re.match(line)
++                        if match:
++                            exmod, path, base, args, retann = match.groups()
++                            if base in valid_names:
++                                all_signatures.append((args, retann))
++
++                    # Remove all signature lines from the docstring
++                    # Find the first non-signature line after the first signature
++                    first_content_line = None
++                    for j in range(first_signature_line, len(doclines)):
++                        if not py_ext_sig_re.match(doclines[j]):
++                            first_content_line = j
++                            break
++
++                    # If we found content lines, keep them
++                    if first_content_line is not None:
++                        tab_width = self.directive.state.document.settings.tab_width  # type: ignore
++                        self._new_docstrings[i] = prepare_docstring('\n'.join(doclines[first_content_line:]),
++                                                                   tabsize=tab_width)
++                    else:
++                        # Otherwise, remove the entire docstring
++                        self._new_docstrings[i] = []
++                    break
++
++        # Store all signatures for potential use by extensions
++        self._all_signatures = all_signatures
++
+         return result
+ 
+     def get_doc(self, encoding: str = None, ignore: int = None) -> List[List[str]]:
+@@ -1088,6 +1143,10 @@ class DocstringSignatureMixin:
+             result = self._find_signature()
+             if result is not None:
+                 self.args, self.retann = result
++
++                # If we have multiple signatures (overloaded methods), we need to handle them
++                # For now, we just use the first one (backward compatibility)
++                # But we store all of them in self._all_signatures for potential use by extensions
+         return super().format_signature(**kwargs)  # type: ignore
+ 
+ 
+diff --git a/test_all_signatures.py b/test_all_signatures.py
+new file mode 100644
+index 000000000..0b8fbadc5
+--- /dev/null
++++ b/test_all_signatures.py
+@@ -0,0 +1,58 @@
++import sys
++import os
++from sphinx.ext.autodoc import DocstringSignatureMixin
++from sphinx.application import Sphinx
++from sphinx.environment import BuildEnvironment
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Import the test class
++sys.path.insert(0, '/testbed/tests/roots/test-ext-autodoc')
++from target.overloaded import OverloadedClass
++
++# Create a mock environment
++class MockDirective:
++    def __init__(self):
++        self.state = type('State', (), {'document': type('Document', (), {'settings': type('Settings', (), {'tab_width': 8})})})
++
++# Create a documenter for the test class
++class TestDocumenter(DocstringSignatureMixin):
++    def __init__(self):
++        self.env = type('Env', (), {'app': type('App', (), {'config': type('Config', (), {'autodoc_docstring_signature': True})})})
++        self.object = OverloadedClass().overloaded_method
++        self.objpath = ['OverloadedClass', 'overloaded_method']
++        self.fullname = 'OverloadedClass.overloaded_method'
++        self.name = 'overloaded_method'
++        self.args = None
++        self.retann = None
++        self.directive = MockDirective()
++        self._new_docstrings = None
++        self._all_signatures = None
++
++    def get_doc(self):
++        docstring = OverloadedClass.overloaded_method.__doc__
++        print(f"Docstring: {docstring}")
++        # Manually create the list without indentation
++        return [["overloaded_method(a)",
++                 "overloaded_method(a, b)",
++                 "overloaded_method(a, b=1)",
++                 "",
++                 "Docstring for overloaded_method"]]
++
++# Test the documenter
++documenter = TestDocumenter()
++result = documenter._find_signature()
++
++print("Test results:")
++print(f"Primary signature (for backward compatibility): {result}")
++print(f"All signatures collected: {documenter._all_signatures}")
++print(f"Modified docstrings: {documenter._new_docstrings}")
++
++# Verify that we have all signatures
++assert len(documenter._all_signatures) == 3, f"Expected 3 signatures, got {len(documenter._all_signatures)}"
++assert documenter._all_signatures[0] == ('a', None)
++assert documenter._all_signatures[1] == ('a, b', None)
++assert documenter._all_signatures[2] == ('a, b=1', None)
++
++print("\nAll tests passed!")
+\ No newline at end of file
+diff --git a/test_find_signature.py b/test_find_signature.py
+new file mode 100644
+index 000000000..f1f08f98a
+--- /dev/null
++++ b/test_find_signature.py
+@@ -0,0 +1,103 @@
++import re
++import sys
++from typing import List, Tuple
++
++# The regular expression used in the original code
++py_ext_sig_re = re.compile(
++    r'''^ ([\w.]+::)?            # explicit module name
++          ([\w.]+\.)?            # module and/or class name(s)
++          (\w+)  \s*             # thing name
++          (?: \((.*)\)           # optional: arguments
++           (?:\s* -> \s* (.*))?  #           return annotation
++          )? $                   # and nothing more
++          ''', re.VERBOSE)
++
++def original_find_signature(docstrings: List[List[str]]) -> Tuple[str, str]:
++    """
++    Simplified version of the original _find_signature method.
++    """
++    new_docstrings = docstrings[:]
++    result = None
++
++    for i, doclines in enumerate(docstrings):
++        # no lines in docstring, no match
++        if not doclines:
++            continue
++        # match first line of docstring against signature RE
++        match = py_ext_sig_re.match(doclines[0])
++        if not match:
++            continue
++        exmod, path, base, args, retann = match.groups()
++        # For this test, we'll assume the base name matches
++        result = args, retann
++        # re-prepare docstring to ignore more leading indentation
++        new_docstrings[i] = doclines[1:]
++        # don't look any further
++        break
++
++    return result, new_docstrings
++
++def modified_find_signature(docstrings: List[List[str]]) -> Tuple[List[Tuple[str, str]], List[List[str]]]:
++    """
++    Modified version that collects all signatures.
++    """
++    new_docstrings = docstrings[:]
++    results = []
++    found_signature = False
++
++    for i, doclines in enumerate(docstrings):
++        # no lines in docstring, no match
++        if not doclines:
++            continue
++
++        # Process each line that could be a signature
++        for j, line in enumerate(doclines):
++            match = py_ext_sig_re.match(line)
++            if not match:
++                continue
++
++            exmod, path, base, args, retann = match.groups()
++            # For this test, we'll assume the base name matches
++            results.append((args, retann))
++            found_signature = True
++
++        # If we found signatures, remove them from the docstring
++        if found_signature:
++            # Find the first non-signature line
++            first_content_line = None
++            for j, line in enumerate(doclines):
++                if not py_ext_sig_re.match(line):
++                    first_content_line = j
++                    break
++
++            # If we found content lines, keep them
++            if first_content_line is not None:
++                new_docstrings[i] = doclines[first_content_line:]
++            else:
++                # Otherwise, remove the entire docstring
++                new_docstrings[i] = []
++
++    return results, new_docstrings
++
++# Test docstring with overloaded methods
++test_docstring = [
++    ["overloaded_method(a)",
++     "overloaded_method(a, b)",
++     "overloaded_method(a, b=1)",
++     "",
++     "Docstring for overloaded_method"],
++]
++
++# Test with the original implementation
++original_result, original_new_docstrings = original_find_signature(test_docstring.copy())
++print("Original implementation:")
++print(f"Extracted signature: {original_result[0]}")
++print(f"Extracted return annotation: {original_result[1]}")
++print(f"Modified docstrings: {original_new_docstrings}")
++print()
++
++# Test with the modified implementation
++modified_results, modified_new_docstrings = modified_find_signature(test_docstring.copy())
++print("Modified implementation:")
++print(f"Extracted signatures: {modified_results}")
++print(f"Modified docstrings: {modified_new_docstrings}")
+\ No newline at end of file
+diff --git a/test_overloaded.py b/test_overloaded.py
+new file mode 100644
+index 000000000..ab27265b9
+--- /dev/null
++++ b/test_overloaded.py
+@@ -0,0 +1,40 @@
++import sys
++import os
++from sphinx.ext.autodoc import DocstringSignatureMixin
++from sphinx.application import Sphinx
++from sphinx.environment import BuildEnvironment
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Import the test class
++sys.path.insert(0, '/testbed/tests/roots/test-ext-autodoc')
++from target.overloaded import OverloadedClass
++
++# Create a mock environment
++env = BuildEnvironment(None, None, None, None, None, None)
++env.app = Sphinx('/testbed', '/testbed/build', '/testbed/build', '/testbed', None)
++env.app.config = type('Config', (), {'autodoc_docstring_signature': True})
++
++# Create a documenter for the test class
++class TestDocumenter(DocstringSignatureMixin):
++    def __init__(self):
++        self.env = env
++        self.object = OverloadedClass()
++        self.objpath = ['OverloadedClass']
++        self.fullname = 'OverloadedClass'
++        self.name = 'overloaded_method'
++        self.args = None
++        self.retann = None
++        self.directive = None
++        self._new_docstrings = None
++
++    def get_doc(self):
++        return [OverloadedClass.overloaded_method.__doc__.split('\n')]
++
++# Test the documenter
++documenter = TestDocumenter()
++result = documenter._find_signature()
++print(f"Extracted signature: {result[0]}")
++print(f"Extracted return annotation: {result[1]}")
++print(f"Modified docstrings: {documenter._new_docstrings}")
+\ No newline at end of file
+diff --git a/tests/roots/test-ext-autodoc/target/overloaded.py b/tests/roots/test-ext-autodoc/target/overloaded.py
+new file mode 100644
+index 000000000..d87156b36
+--- /dev/null
++++ b/tests/roots/test-ext-autodoc/target/overloaded.py
+@@ -0,0 +1,18 @@
++class OverloadedClass:
++    """
++    OverloadedClass()
++    """
++
++    def overloaded_method(self, a):
++        """overloaded_method(a)
++        overloaded_method(a, b)
++        overloaded_method(a, b=1)
++
++        Docstring for overloaded_method
++        """
++
++    def single_method(self, a):
++        """single_method(a)
++
++        Docstring for single_method
++        """
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index d9f040544..bf39854b6 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ extras =
+ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+ commands=
+-    pytest --durations 25 {posargs}
++    pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3

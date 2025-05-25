@@ -1,0 +1,464 @@
+diff --git a/django/contrib/auth/tokens.py b/django/contrib/auth/tokens.py
+index 93e2d71af2..d7e1bf8864 100644
+--- a/django/contrib/auth/tokens.py
++++ b/django/contrib/auth/tokens.py
+@@ -4,7 +4,6 @@ from django.conf import settings
+ from django.utils.crypto import constant_time_compare, salted_hmac
+ from django.utils.http import base36_to_int, int_to_base36
+ 
+-
+ class PasswordResetTokenGenerator:
+     """
+     Strategy object used to generate and check tokens for the password
+@@ -82,9 +81,10 @@ class PasswordResetTokenGenerator:
+         after a password reset to produce a token that invalidated when it's
+         used:
+         1. The password field will change upon a password reset (even if the
+-           same password is chosen, due to password salting).
++            same password is chosen, due to password salting).
+         2. The last_login field will usually be updated very shortly after
+-           a password reset.
++            a password reset.
++        3. The email field will change if the user changes their email address.
+         Failing those things, settings.PASSWORD_RESET_TIMEOUT eventually
+         invalidates the token.
+ 
+@@ -94,7 +94,10 @@ class PasswordResetTokenGenerator:
+         # Truncate microseconds so that tokens are consistent even if the
+         # database doesn't support microseconds.
+         login_timestamp = '' if user.last_login is None else user.last_login.replace(microsecond=0, tzinfo=None)
+-        return str(user.pk) + user.password + str(login_timestamp) + str(timestamp)
++        # Include the email in the hash value to invalidate tokens when email changes
++        # Use an empty string if the user doesn't have an email address
++        email = getattr(user, 'email', '')
++        return str(user.pk) + user.password + str(login_timestamp) + str(timestamp) + email
+ 
+     def _num_seconds(self, dt):
+         return int((dt - datetime(2001, 1, 1)).total_seconds())
+@@ -103,5 +106,4 @@ class PasswordResetTokenGenerator:
+         # Used for mocking in tests
+         return datetime.now()
+ 
+-
+ default_token_generator = PasswordResetTokenGenerator()
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100755
+index 0000000000..9d152071e3
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python
++import os
++import sys
++import django
++from datetime import datetime, timedelta
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++from django.contrib.auth.models import User
++from django.contrib.auth.tokens import PasswordResetTokenGenerator
++
++class MockedPasswordResetTokenGenerator(PasswordResetTokenGenerator):
++    def __init__(self, now):
++        self._now_val = now
++        super().__init__()
++
++    def _now(self):
++        return self._now_val
++
++def main():
++    # Create a user
++    user = User.objects.create_user('testuser', 'oldemail@example.com', 'testpassword')
++
++    # Generate a token before changing email
++    token_generator = PasswordResetTokenGenerator()
++    token = token_generator.make_token(user)
++
++    print(f"User created with email: {user.email}")
++    print(f"Token generated: {token}")
++
++    # Change the user's email
++    user.email = 'newemail@example.com'
++    user.save()
++
++    print(f"Email changed to: {user.email}")
++
++    # Check if the token is still valid (it should be invalid, but currently it's valid)
++    now = datetime.now()
++    mocked_generator = MockedPasswordResetTokenGenerator(now)
++    is_valid = mocked_generator.check_token(user, token)
++
++    print(f"Is token still valid? (Should be False, but is {is_valid})")
++
++    # This demonstrates the issue: the token is still valid after changing email
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..9e8148d614
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,49 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        SECRET_KEY='fake-key',
++        PASSWORD_RESET_TIMEOUT=600,  # 10 minutes
++        INSTALLED_APPS=[
++            'django.contrib.auth',
++        ],
++    )
++    django.setup()
++
++from django.contrib.auth.tokens import PasswordResetTokenGenerator
++
++class User:
++    def __init__(self, pk, password, email, last_login=None):
++        self.pk = pk
++        self.password = password
++        self.email = email
++        self.last_login = last_login
++
++def main():
++    # Create a user
++    user1 = User(pk=1, password="raw_password", email="oldemail@example.com")
++
++    # Generate a token
++    token_generator = PasswordResetTokenGenerator()
++    token = token_generator.make_token(user1)
++
++    print(f"User created with email: {user1.email}")
++    print(f"Token generated: {token}")
++
++    # Change the user's email
++    user2 = User(pk=1, password="raw_password", email="newemail@example.com")
++
++    # Check if the token is still valid (it should be invalid, but currently it's valid)
++    is_valid = token_generator.check_token(user2, token)
++
++    print(f"Email changed to: {user2.email}")
++    print(f"Is token still valid? (Should be False, but is {is_valid})")
++
++    # This demonstrates the issue: the token is still valid after changing email
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/simple_verify.py b/simple_verify.py
+new file mode 100644
+index 0000000000..be9623dace
+--- /dev/null
++++ b/simple_verify.py
+@@ -0,0 +1,54 @@
++#!/usr/bin/env python
++"""
++Simple verification script for the password reset token fix.
++"""
++from django.contrib.auth.tokens import PasswordResetTokenGenerator
++
++class User:
++    def __init__(self, pk, password, email, last_login=None):
++        self.pk = pk
++        self.password = password
++        self.email = email
++        self.last_login = last_login
++
++def main():
++    # Create a user with an initial email
++    user1 = User(pk=1, password="raw_password", email="oldemail@example.com")
++
++    # Create a timestamp (simplified for this example)
++    timestamp = 1234567890
++
++    # Generate the hash value for the initial user
++    generator = PasswordResetTokenGenerator()
++    hash_value1 = generator._make_hash_value(user1, timestamp)
++
++    print(f"User created with email: {user1.email}")
++    print(f"Hash value generated: {hash_value1}")
++
++    # Change the user's email
++    user2 = User(pk=1, password="raw_password", email="newemail@example.com")
++
++    # Generate the hash value for the user with the new email
++    hash_value2 = generator._make_hash_value(user2, timestamp)
++
++    print(f"Email changed to: {user2.email}")
++    print(f"New hash value generated: {hash_value2}")
++
++    # Compare the hash values
++    if hash_value1 != hash_value2:
++        print("SUCCESS: Hash values are different when email changes")
++        print("This means tokens will be invalidated when email changes")
++        return 0
++    else:
++        print("FAILURE: Hash values are the same even though email changed")
++        print("This means tokens would still be valid after email changes")
++        return 1
++
++if __name__ == "__main__":
++    import os
++    import django
++    # Set up minimal Django settings
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++    django.setup()
++    import sys
++    sys.exit(main())
+\ No newline at end of file
+diff --git a/test_hash_value.py b/test_hash_value.py
+new file mode 100644
+index 0000000000..ad35dfbe76
+--- /dev/null
++++ b/test_hash_value.py
+@@ -0,0 +1,67 @@
++#!/usr/bin/env python
++"""
++This script demonstrates the issue with password reset tokens not being invalidated
++when a user changes their email address.
++"""
++
++class User:
++    def __init__(self, pk, password, email, last_login=None):
++        self.pk = pk
++        self.password = password
++        self.email = email
++        self.last_login = last_login
++
++class PasswordResetTokenGenerator:
++    def _make_hash_value(self, user, timestamp):
++        """
++        Hash the user's primary key and some user state that's sure to change
++        after a password reset to produce a token that invalidated when it's
++        used:
++        1. The password field will change upon a password reset (even if the
++           same password is chosen, due to password salting).
++        2. The last_login field will usually be updated very shortly after
++           a password reset.
++        3. The email field will change if the user changes their email address.
++        Failing those things, settings.PASSWORD_RESET_TIMEOUT eventually
++        invalidates the token.
++
++        Running this data through salted_hmac() prevents password cracking
++        attempts using the reset token, provided the secret isn't compromised.
++        """
++        # Truncate microseconds so that tokens are consistent even if the
++        # database doesn't support microseconds.
++        login_timestamp = '' if user.last_login is None else user.last_login.replace(microsecond=0, tzinfo=None)
++        # Include the email in the hash value to invalidate tokens when email changes
++        return str(user.pk) + user.password + str(login_timestamp) + str(timestamp) + user.email
++
++def main():
++    # Create a user with an initial email
++    user1 = User(pk=1, password="raw_password", email="oldemail@example.com")
++
++    # Create a timestamp (simplified for this example)
++    timestamp = 1234567890
++
++    # Generate the hash value for the initial user
++    generator = PasswordResetTokenGenerator()
++    hash_value1 = generator._make_hash_value(user1, timestamp)
++
++    print(f"User created with email: {user1.email}")
++    print(f"Hash value generated: {hash_value1}")
++
++    # Change the user's email
++    user2 = User(pk=1, password="raw_password", email="newemail@example.com")
++
++    # Generate the hash value for the user with the new email
++    hash_value2 = generator._make_hash_value(user2, timestamp)
++
++    print(f"Email changed to: {user2.email}")
++    print(f"New hash value generated: {hash_value2}")
++
++    # Compare the hash values
++    print(f"Hash values are {'the same' if hash_value1 == hash_value2 else 'different'}")
++
++    # This demonstrates the issue: the hash values are the same even though the email has changed
++    # The fix would be to include the email in the hash value
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/tests/auth_tests/test_email_change_token.py b/tests/auth_tests/test_email_change_token.py
+new file mode 100644
+index 0000000000..fa448c5b55
+--- /dev/null
++++ b/tests/auth_tests/test_email_change_token.py
+@@ -0,0 +1,86 @@
++"""
++Test that password reset tokens are invalidated when a user changes their email address.
++"""
++from datetime import datetime, timedelta
++
++from django.contrib.auth.models import User
++from django.contrib.auth.tokens import PasswordResetTokenGenerator
++from django.test import TestCase
++
++class MockedPasswordResetTokenGenerator(PasswordResetTokenGenerator):
++    def __init__(self, now):
++        self._now_val = now
++        super().__init__()
++
++    def _now(self):
++        return self._now_val
++
++class PasswordResetTokenEmailChangeTest(TestCase):
++    """
++    Test that password reset tokens are invalidated when a user changes their email address.
++    """
++
++    def test_token_invalidated_by_email_change(self):
++        """
++        A password reset token should be invalidated when the user changes their email address.
++        """
++        # Create a user
++        user = User.objects.create_user('testuser', 'oldemail@example.com', 'testpassword')
++
++        # Generate a token before changing email
++        token_generator = PasswordResetTokenGenerator()
++        token = token_generator.make_token(user)
++
++        self.assertIsNotNone(token, "Token should be generated")
++        self.assertTrue(token_generator.check_token(user, token), "Token should be valid initially")
++
++        # Change the user's email
++        user.email = 'newemail@example.com'
++        user.save()
++
++        # The token should now be invalid
++        self.assertFalse(token_generator.check_token(user, token),
++                         "Token should be invalid after email change")
++
++    def test_token_valid_for_same_email(self):
++        """
++        A password reset token should remain valid if the user's email doesn't change.
++        """
++        # Create a user
++        user = User.objects.create_user('testuser', 'email@example.com', 'testpassword')
++
++        # Generate a token
++        token_generator = PasswordResetTokenGenerator()
++        token = token_generator.make_token(user)
++
++        # Reload the user from the database to ensure we're not using a cached instance
++        user = User.objects.get(pk=user.pk)
++
++        # The token should still be valid
++        self.assertTrue(token_generator.check_token(user, token),
++                        "Token should remain valid if email doesn't change")
++
++    def test_token_invalidated_by_email_change_with_timeout(self):
++        """
++        A password reset token should be invalidated when the user changes their email address,
++        even when considering the timeout period.
++        """
++        # Create a user
++        user = User.objects.create_user('testuser', 'oldemail@example.com', 'testpassword')
++
++        # Generate a token
++        now = datetime.now()
++        token_generator = MockedPasswordResetTokenGenerator(now)
++        token = token_generator.make_token(user)
++
++        # Change the user's email
++        user.email = 'newemail@example.com'
++        user.save()
++
++        # Check token validity within timeout period
++        future = now + timedelta(seconds=1)  # Within timeout
++        future_generator = MockedPasswordResetTokenGenerator(future)
++
++        # The token should be invalid regardless of being within the timeout period
++        self.assertFalse(future_generator.check_token(user, token),
++                         "Token should be invalid after email change, even within timeout")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..02f4603df6
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,74 @@
++#!/usr/bin/env python
++"""
++Verify that the fix for the password reset token issue works correctly.
++"""
++import os
++import sys
++import django
++from datetime import datetime
++from django import conf
++
++# Configure Django settings
++if not hasattr(conf.settings, 'configured') or not conf.settings.configured:
++    conf.settings.configure(
++        SECRET_KEY='fake-key',
++        PASSWORD_RESET_TIMEOUT=600,  # 10 minutes
++        INSTALLED_APPS=[
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++    )
++    django.setup()
++
++from django.contrib.auth.models import User
++from django.contrib.auth.tokens import PasswordResetTokenGenerator
++
++def main():
++    # Create a test database
++    from django.db import connection
++    cursor = connection.cursor()
++    cursor.execute("CREATE TABLE auth_user (" +
++                   "id INTEGER PRIMARY KEY, " +
++                   "password VARCHAR(128), " +
++                   "email VARCHAR(254), " +
++                   "last_login TIMESTAMP)")
++
++    # Create a user
++    user = User.objects.create_user('testuser', 'oldemail@example.com', 'testpassword')
++
++    # Generate a token before changing email
++    token_generator = PasswordResetTokenGenerator()
++    token = token_generator.make_token(user)
++
++    print(f"User created with email: {user.email}")
++    print(f"Token generated: {token}")
++
++    # Verify the token is valid
++    is_valid_before = token_generator.check_token(user, token)
++    print(f"Is token valid before email change? {is_valid_before}")
++    assert is_valid_before, "Token should be valid before email change"
++
++    # Change the user's email
++    user.email = 'newemail@example.com'
++    user.save()
++
++    print(f"Email changed to: {user.email}")
++
++    # Verify the token is now invalid
++    is_valid_after = token_generator.check_token(user, token)
++    print(f"Is token valid after email change? {is_valid_after}")
++
++    if not is_valid_after:
++        print("SUCCESS: Token is correctly invalidated when email changes")
++        return 0
++    else:
++        print("FAILURE: Token is still valid after email change")
++        return 1
++
++if __name__ == "__main__":
++    sys.exit(main())
+\ No newline at end of file

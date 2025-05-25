@@ -1,0 +1,230 @@
+diff --git a/django/core/management/__init__.py b/django/core/management/__init__.py
+index 5f2e64761e..705e119d12 100644
+--- a/django/core/management/__init__.py
++++ b/django/core/management/__init__.py
+@@ -132,9 +132,14 @@ def call_command(command_name, *args, **options):
+     parser_actions = list(get_actions(parser))
+     # Any required arguments which are passed in via **options must be passed
+     # to parse_args().
++    # Also include arguments that are part of a required mutually exclusive group.
+     parse_args += [
+         '{}={}'.format(min(opt.option_strings), arg_options[opt.dest])
+-        for opt in parser_actions if opt.required and opt.dest in options
++        for opt in parser_actions
++        if (opt.required or any(
++            opt in g._group_actions and g.required
++            for g in parser._mutually_exclusive_groups
++        )) and opt.dest in options
+     ]
+     defaults = parser.parse_args(args=parse_args)
+     defaults = dict(defaults._get_kwargs(), **arg_options)
+diff --git a/myapp/__init__.py b/myapp/__init__.py
+new file mode 100644
+index 0000000000..2d4d1e6632
+--- /dev/null
++++ b/myapp/__init__.py
+@@ -0,0 +1,6 @@
++from django.apps import AppConfig
++
++class MyAppConfig(AppConfig):
++    name = 'myapp'
++
++default_app_config = 'myapp.MyAppConfig'
+\ No newline at end of file
+diff --git a/myapp/management/__init__.py b/myapp/management/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/myapp/management/commands/__init__.py b/myapp/management/commands/__init__.py
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/myapp/management/commands/test_command.py b/myapp/management/commands/test_command.py
+new file mode 100644
+index 0000000000..5ed85c9082
+--- /dev/null
++++ b/myapp/management/commands/test_command.py
+@@ -0,0 +1,14 @@
++from django.core.management.base import BaseCommand
++
++class Command(BaseCommand):
++    help = 'Test command for mutually exclusive groups'
++
++    def add_arguments(self, parser):
++        shop = parser.add_mutually_exclusive_group(required=True)
++        shop.add_argument('--shop-id', nargs='?', type=int, default=None, dest='shop_id')
++        shop.add_argument('--shop', nargs='?', type=str, default=None, dest='shop_name')
++
++    def handle(self, *args, **options):
++        self.stdout.write(f"shop_id: {options.get('shop_id')}")
++        self.stdout.write(f"shop_name: {options.get('shop_name')}")
++        return None
+\ No newline at end of file
+diff --git a/test_command.py b/test_command.py
+new file mode 100644
+index 0000000000..4f3dc8be9e
+--- /dev/null
++++ b/test_command.py
+@@ -0,0 +1,31 @@
++import sys
++from django.core.management.base import BaseCommand, CommandError
++from django.core.management import call_command
++
++class Command(BaseCommand):
++    help = 'Test command for mutually exclusive groups'
++
++    def add_arguments(self, parser):
++        shop = parser.add_mutually_exclusive_group(required=True)
++        shop.add_argument('--shop-id', nargs='?', type=int, default=None, dest='shop_id')
++        shop.add_argument('--shop', nargs='?', type=str, default=None, dest='shop_name')
++
++    def handle(self, *args, **options):
++        self.stdout.write(f"shop_id: {options.get('shop_id')}")
++        self.stdout.write(f"shop_name: {options.get('shop_name')}")
++
++# Test the command
++if __name__ == "__main__":
++    try:
++        # This should work
++        print("Testing with command line format:")
++        call_command('test_command', '--shop-id=1')
++    except Exception as e:
++        print(f"Error: {e}")
++
++    try:
++        # This should fail with the current implementation
++        print("\nTesting with kwargs format:")
++        call_command('test_command', shop_id=1)
++    except Exception as e:
++        print(f"Error: {e}")
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..804d62ad25
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,52 @@
++import sys
++import os
++import django
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++from django.core.management import call_command
++
++def test_command_with_kwargs():
++    """Test calling the command with kwargs."""
++    try:
++        result = call_command('test_command', shop_id=1)
++        print("Success: Command executed with shop_id=1")
++        return True
++    except Exception as e:
++        print(f"Error: {e}")
++        return False
++
++def test_command_with_args():
++    """Test calling the command with args."""
++    try:
++        result = call_command('test_command', '--shop-id=1')
++        print("Success: Command executed with --shop-id=1")
++        return True
++    except Exception as e:
++        print(f"Error: {e}")
++        return False
++
++def test_command_with_shop_name():
++    """Test calling the command with shop_name."""
++    try:
++        result = call_command('test_command', shop_name='test-shop')
++        print("Success: Command executed with shop_name='test-shop'")
++        return True
++    except Exception as e:
++        print(f"Error: {e}")
++        return False
++
++if __name__ == "__main__":
++    print("Testing command with args format:")
++    test_command_with_args()
++
++    print("\nTesting command with kwargs format (shop_id):")
++    test_command_with_kwargs()
++
++    print("\nTesting command with kwargs format (shop_name):")
++    test_command_with_shop_name()
+\ No newline at end of file
+diff --git a/test_issue.py b/test_issue.py
+new file mode 100644
+index 0000000000..d8d793970a
+--- /dev/null
++++ b/test_issue.py
+@@ -0,0 +1,30 @@
++import sys
++import os
++import django
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Set up Django
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++from django.core.management import call_command
++
++# Test the command
++if __name__ == "__main__":
++    try:
++        # This should work
++        print("Testing with command line format:")
++        result = call_command('test_command', '--shop-id=1')
++        print("Success!")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    try:
++        # This should fail with the current implementation
++        print("\nTesting with kwargs format:")
++        result = call_command('test_command', shop_id=1)
++        print("Success!")
++    except Exception as e:
++        print(f"Error: {e}")
+\ No newline at end of file
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..0d7c78f27b
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,29 @@
++import os
++import sys
++
++BASE_DIR = os.path.dirname(os.path.abspath(__file__))
++
++SECRET_KEY = 'dummy'
++
++INSTALLED_APPS = [
++    'myapp',
++]
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
++    }
++}
++
++ROOT_URLCONF = 'django.urls'
++
++MIDDLEWARE = []
++
++TEMPLATES = []
++
++AUTH_PASSWORD_VALIDATORS = []
++
++TIME_ZONE = 'UTC'
++
++USE_TZ = True
+\ No newline at end of file

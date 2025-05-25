@@ -1,0 +1,116 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..c64113013
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,42 @@
++import numpy as np
++from sklearn.mixture import GaussianMixture
++from sklearn.utils.testing import assert_array_equal
++
++# Set random seed for reproducibility
++np.random.seed(42)
++
++# Test different n_init values
++for n_init in [1, 2, 5, 10]:
++    print(f"\nTesting with n_init={n_init}:")
++    # Test with different random states
++    for random_state in [None, 42, 100]:
++        print(f"  Random state: {random_state}")
++        # Create random data
++        X = np.random.randn(500, 3)
++
++        # Create model
++        gm = GaussianMixture(n_components=3, n_init=n_init, random_state=random_state)
++
++        # Test consistency
++        c1 = gm.fit_predict(X)
++        c2 = gm.predict(X)
++        are_equal = np.array_equal(c1, c2)
++        print(f"  Results are equal: {are_equal}")
++
++        if not are_equal:
++            differing_elements = np.sum(c1 != c2)
++            total_elements = c1.size
++            print(f"  Number of differing elements: {differing_elements} out of {total_elements}")
++            print(f"  Percentage differing: {differing_elements/total_elements*100:.2f}%")
++
++# Test with different covariance types
++print("\nTesting different covariance types with n_init=5:")
++covariance_types = ['full', 'tied', 'diag', 'spherical']
++for cov_type in covariance_types:
++    print(f"  Covariance type: {cov_type}")
++    X = np.random.randn(500, 3)
++    gm = GaussianMixture(n_components=3, n_init=5, covariance_type=cov_type)
++    c1 = gm.fit_predict(X)
++    c2 = gm.predict(X)
++    are_equal = np.array_equal(c1, c2)
++    print(f"  Results are equal: {are_equal}")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..ee3742cd3
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,32 @@
++import numpy as np
++from sklearn.mixture import GaussianMixture
++from sklearn.utils.testing import assert_array_equal
++
++# Set random seed for reproducibility
++np.random.seed(42)
++
++# Create random data
++X = np.random.randn(1000, 5)
++
++# Test with default n_init (1)
++print("Testing with default n_init (1):")
++gm = GaussianMixture(n_components=5)
++c1 = gm.fit_predict(X)
++c2 = gm.predict(X)
++are_equal = np.array_equal(c1, c2)
++print(f"Results are equal: {are_equal}")
++
++# Test with n_init=5
++print("\nTesting with n_init=5:")
++gm = GaussianMixture(n_components=5, n_init=5)
++c1 = gm.fit_predict(X)
++c2 = gm.predict(X)
++are_equal = np.array_equal(c1, c2)
++print(f"Results are equal: {are_equal}")
++
++# Print number of differing elements
++if not are_equal:
++    differing_elements = np.sum(c1 != c2)
++    total_elements = c1.size
++    print(f"Number of differing elements: {differing_elements} out of {total_elements}")
++    print(f"Percentage differing: {differing_elements/total_elements*100:.2f}%")
+\ No newline at end of file
+diff --git a/sklearn/mixture/base.py b/sklearn/mixture/base.py
+index bd34333c0..8920bef18 100644
+--- a/sklearn/mixture/base.py
++++ b/sklearn/mixture/base.py
+@@ -257,11 +257,6 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
+                 best_params = self._get_parameters()
+                 best_n_iter = n_iter
+ 
+-        # Always do a final e-step to guarantee that the labels returned by
+-        # fit_predict(X) are always consistent with fit(X).predict(X)
+-        # for any value of max_iter and tol (and any random_state).
+-        _, log_resp = self._e_step(X)
+-
+         if not self.converged_:
+             warnings.warn('Initialization %d did not converge. '
+                           'Try different init parameters, '
+@@ -273,6 +268,11 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
+         self.n_iter_ = best_n_iter
+         self.lower_bound_ = max_lower_bound
+ 
++        # Always do a final e-step to guarantee that the labels returned by
++        # fit_predict(X) are always consistent with fit(X).predict(X)
++        # for any value of max_iter and tol (and any random_state).
++        _, log_resp = self._e_step(X)
++
+         return log_resp.argmax(axis=1)
+ 
+     def _e_step(self, X):

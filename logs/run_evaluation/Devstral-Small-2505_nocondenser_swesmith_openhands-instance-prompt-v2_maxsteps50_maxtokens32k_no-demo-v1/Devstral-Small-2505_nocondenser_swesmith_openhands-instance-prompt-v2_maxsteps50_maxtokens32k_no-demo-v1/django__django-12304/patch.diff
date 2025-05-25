@@ -1,0 +1,134 @@
+diff --git a/django/db/models/enums.py b/django/db/models/enums.py
+index f48143ddaf..337eef9b4e 100644
+--- a/django/db/models/enums.py
++++ b/django/db/models/enums.py
+@@ -61,6 +61,9 @@ class ChoicesMeta(enum.EnumMeta):
+ class Choices(enum.Enum, metaclass=ChoicesMeta):
+     """Class for creating enumerated choices."""
+ 
++    # Prevent Django from automatically calling this class in templates
++    do_not_call_in_templates = True
++
+     def __str__(self):
+         """
+         Use value when cast to str, so that Choices set as model instance
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..79a60b3f9b
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,77 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        TEMPLATE_DEBUG=True,
++        TEMPLATES=[
++            {
++                'BACKEND': 'django.template.backends.django.DjangoTemplates',
++                'DIRS': [],
++                'APP_DIRS': True,
++                'OPTIONS': {
++                    'context_processors': [],
++                },
++            },
++        ],
++    )
++    django.setup()
++
++from django.db import models
++from django.template import Context, Template
++from django.utils.translation import gettext_lazy as _
++
++class YearInSchool(models.TextChoices):
++    FRESHMAN = 'FR', _('Freshman')
++    SOPHOMORE = 'SO', _('Sophomore')
++    JUNIOR = 'JR', _('Junior')
++    SENIOR = 'SR', _('Senior')
++    GRADUATE = 'GR', _('Graduate')
++
++class Student:
++    def __init__(self, year_in_school):
++        self.year_in_school = year_in_school
++
++def main():
++    student = Student(YearInSchool.FRESHMAN)
++    print(f"student.year_in_school: {student.year_in_school}")
++    print(f"YearInSchool.FRESHMAN: {YearInSchool.FRESHMAN}")
++    print(f"Type of student.year_in_school: {type(student.year_in_school)}")
++    print(f"Type of YearInSchool.FRESHMAN: {type(YearInSchool.FRESHMAN)}")
++    print(f"student.year_in_school == YearInSchool.FRESHMAN: {student.year_in_school == YearInSchool.FRESHMAN}")
++
++    # Let's try a simpler template first to see what's happening
++    t1 = Template('{{ student.year_in_school }}')
++    c = Context({'student': student})
++    rendered1 = t1.render(c)
++    print(f"Simple template output: {rendered1}")
++
++    # Let's try a template that just accesses the enum
++    t2 = Template('{{ YearInSchool.FRESHMAN }}')
++    rendered2 = t2.render(c)
++    print(f"Enum access template output: {rendered2}")
++
++    # Now try the comparison
++    t3 = Template('{% if student.year_in_school == YearInSchool.FRESHMAN %}Yes{% else %}No{% endif %}')
++    rendered3 = t3.render(c)
++    print(f"Comparison template output: {rendered3}")
++
++    # Let's try a different comparison approach
++    t4 = Template('{% if student.year_in_school.value == YearInSchool.FRESHMAN.value %}Yes{% else %}No{% endif %}')
++    rendered4 = t4.render(c)
++    print(f"Value comparison template output: {rendered4}")
++
++    # Let's try a different approach with a custom variable
++    c_with_enum = Context({'student': student, 'YearInSchool': YearInSchool})
++    t5 = Template('{% if student.year_in_school == YearInSchool.FRESHMAN %}Yes{% else %}No{% endif %}')
++    rendered5 = t5.render(c_with_enum)
++    print(f"Template with explicit enum variable: {rendered5}")
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/tests/template_enums_test.py b/tests/template_enums_test.py
+new file mode 100644
+index 0000000000..f6f60735c3
+--- /dev/null
++++ b/tests/template_enums_test.py
+@@ -0,0 +1,29 @@
++from django.db import models
++from django.template import Context, Template, Engine
++from django.test import SimpleTestCase
++from django.utils.translation import gettext_lazy as _
++
++class YearInSchool(models.TextChoices):
++    FRESHMAN = 'FR', _('Freshman')
++    SOPHOMORE = 'SO', _('Sophomore')
++    JUNIOR = 'JR', _('Junior')
++    SENIOR = 'SR', _('Senior')
++    GRADUATE = 'GR', _('Graduate')
++
++class Student:
++    def __init__(self, year_in_school):
++        self.year_in_school = year_in_school
++
++class TemplateEnumTest(SimpleTestCase):
++    def test_enum_in_template(self):
++        """Test that enumeration types can be used in templates."""
++        student = Student(YearInSchool.FRESHMAN)
++
++        # This should work but currently fails because YearInSchool is callable
++        t = Template('{% if student.year_in_school == YearInSchool.FRESHMAN %}Yes{% else %}No{% endif %}')
++        c = Context({'student': student})
++
++        # This will fail because YearInSchool is callable and Django will try to call it
++        # with no arguments, which fails because the required value argument is missing
++        rendered = t.render(c)
++        self.assertEqual(rendered, 'Yes')
+\ No newline at end of file

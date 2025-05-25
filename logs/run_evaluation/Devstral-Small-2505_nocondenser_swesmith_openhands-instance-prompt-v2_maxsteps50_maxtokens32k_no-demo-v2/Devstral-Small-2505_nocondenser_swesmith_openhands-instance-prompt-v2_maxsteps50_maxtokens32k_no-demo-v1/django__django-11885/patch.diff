@@ -1,0 +1,796 @@
+diff --git a/django/db/models/deletion.py b/django/db/models/deletion.py
+index ae82d26340..71d24792a0 100644
+--- a/django/db/models/deletion.py
++++ b/django/db/models/deletion.py
+@@ -3,7 +3,7 @@ from itertools import chain
+ from operator import attrgetter
+ 
+ from django.db import IntegrityError, connections, transaction
+-from django.db.models import signals, sql
++from django.db.models import signals, sql, models
+ 
+ 
+ class ProtectedError(IntegrityError):
+@@ -78,6 +78,9 @@ class Collector:
+         # parent.
+         self.dependencies = {}  # {model: {models}}
+ 
++        # Stores combined fast delete queries by model
++        self.combined_fast_deletes = {}  # {model: (queryset, [(field, values)])}
++
+     def add(self, objs, source=None, nullable=False, reverse_dependency=False):
+         """
+         Add 'objs' to the collection of objects to be deleted.  If the call is
+@@ -191,8 +194,93 @@ class Collector:
+         If 'keep_parents' is True, data of parent model's will be not deleted.
+         """
+         if self.can_fast_delete(objs):
+-            self.fast_deletes.append(objs)
++            # Check if we can combine this fast delete with existing ones
++            # Get the model from the queryset
++            if hasattr(objs, 'model'):
++                model = objs.model
++            elif hasattr(objs, '_raw_delete') and hasattr(objs, 'query'):
++                # For QuerySet objects
++                model = objs.query.model
++            else:
++                # Fallback for other types
++                model = type(objs[0]).__class__ if objs else None
++            if model in self.combined_fast_deletes:
++                # Add to existing combined query
++                existing_qs, conditions = self.combined_fast_deletes[model]
++
++                # Get the field and values from the current query
++                current_qs = objs.query
++                # Extract field names and values from the query
++                field_names = []
++                field_values = []
++
++                # Handle different query types
++                if hasattr(current_qs.where, 'children'):
++                    for child in current_qs.where.children:
++                        field_name = child.lhs.name
++                        field_value = child.rhs
++                        field_names.append(field_name)
++                        field_values.append(field_value)
++
++                        # Add the condition to the existing query
++                        existing_qs.query.where.add(
++                            models.Q(**{f"{field_name}__in": field_value}),
++                            models.Q.OR
++                        )
++                elif hasattr(current_qs.where, 'add'):
++                    # For Q objects
++                    for condition in current_qs.where.lookup_kwargs:
++                        field_name = condition[0].split('__')[0]
++                        field_value = condition[1]
++                        field_names.append(field_name)
++                        field_values.append(field_value)
++
++                        # Add the condition to the existing query
++                        existing_qs.query.where.add(
++                            models.Q(**{f"{field_name}__in": field_value}),
++                            models.Q.OR
++                        )
++            else:
++                # Check if we can combine with any existing fast deletes
++                combined_qs = None
++                fields_values = []
++
++                # Check all existing fast deletes for this model
++                for existing_qs in self.fast_deletes:
++                    if (hasattr(existing_qs, 'model') and
++                        existing_qs.model == model and
++                        hasattr(existing_qs, 'query')):
++
++                        # Get the field and values from the current query
++                        current_qs = objs.query
++                        # Extract field names and values from the query
++                        for child in current_qs.where.children:
++                            field_name = child.lhs.name
++                            field_value = child.rhs
++                            fields_values.append((field_name, field_value))
++
++                            # Add the condition to the existing query
++                            existing_qs.query.where.add(
++                                models.Q(**{f"{field_name}__in": field_value}),
++                                models.Q.OR
++                            )
++
++                        # Remove the existing query from fast_deletes
++                        self.fast_deletes.remove(existing_qs)
++
++                        # Use this as the combined query
++                        combined_qs = existing_qs
++                        break
++
++                if combined_qs is not None:
++                    # Store the combined query
++                    self.combined_fast_deletes[model] = (combined_qs, fields_values)
++                else:
++                    # No existing query to combine with, just add to fast_deletes
++                    self.fast_deletes.append(objs)
++
+             return
++
+         new_objs = self.add(objs, source, nullable,
+                             reverse_dependency=reverse_dependency)
+         if not new_objs:
+@@ -314,6 +402,11 @@ class Collector:
+                 count = qs._raw_delete(using=self.using)
+                 deleted_counter[qs.model._meta.label] += count
+ 
++            # combined fast deletes
++            for model, (qs, fields_values) in self.combined_fast_deletes.items():
++                count = qs._raw_delete(using=self.using)
++                deleted_counter[model._meta.label] += count
++
+             # update fields
+             for model, instances_for_fieldvalues in self.field_updates.items():
+                 for (field, value), instances in instances_for_fieldvalues.items():
+diff --git a/django/db/models/deletion_new.py b/django/db/models/deletion_new.py
+new file mode 100644
+index 0000000000..616487c39e
+--- /dev/null
++++ b/django/db/models/deletion_new.py
+@@ -0,0 +1,464 @@
++from collections import Counter
++from itertools import chain
++from operator import attrgetter
++
++from django.db import IntegrityError, connections, transaction
++from django.db.models import signals, sql, models
++
++class ProtectedError(IntegrityError):
++    def __init__(self, msg, protected_objects):
++        self.protected_objects = protected_objects
++        super().__init__(msg, protected_objects)
++
++def CASCADE(collector, field, sub_objs, using):
++    collector.collect(sub_objs, source=field.remote_field.model,
++                      source_attr=field.name, nullable=field.null)
++    if field.null and not connections[using].features.can_defer_constraint_checks:
++        collector.add_field_update(field, None, sub_objs)
++
++def PROTECT(collector, field, sub_objs, using):
++    if sub_objs:
++        raise ProtectedError(
++            'Cannot delete some instances of model "%s" because they are '
++            'referenced through a protective foreign key: %s.' % (
++                field.model._meta.object_name,
++                ', '.join(['%s(%s)' % (sub_objs.model._meta.object_name, obj)
++                           for obj in sub_objs[:5]]),
++            ),
++            sub_objs[:5],
++        )
++
++def SET(value):
++    def setter(collector, field, sub_objs, using):
++        collector.add_field_update(field, value, sub_objs)
++    return setter
++
++def SET_NULL(collector, field, sub_objs, using):
++    collector.add_field_update(field, None, sub_objs)
++
++def SET_DEFAULT(collector, field, sub_objs, using):
++    collector.add_field_update(field, field.get_default(), sub_objs)
++
++def DO_NOTHING(collector, field, sub_objs, using):
++    pass
++
++def get_candidate_relations_to_delete(opts):
++    # The candidate relations are the ones that come from N-1 and 1-1 relations.
++    # N-N  (i.e., many-to-many) relations aren't candidates for deletion.
++    return (
++        f for f in opts.get_fields(include_hidden=True)
++        if f.auto_created and not f.concrete and (f.one_to_one or f.one_to_many)
++    )
++
++class Collector:
++    def __init__(self, using):
++        self.using = using
++        # Initially, {model: {instances}}, later values become lists.
++        self.data = {}
++        self.field_updates = {}  # {model: {(field, value): {instances}}}
++        # fast_deletes is a list of queryset-likes that can be deleted without
++        # fetching the objects into memory.
++        self.fast_deletes = []
++
++        # Tracks deletion-order dependency for databases without transactions
++        # or ability to defer constraint checks. Only concrete model classes
++        # should be included, as the dependencies exist only between actual
++        # database tables; proxy models are represented here by their concrete
++        # parent.
++        self.dependencies = {}  # {model: {models}}
++
++        # Stores combined fast delete queries by model
++        self.combined_fast_deletes = {}  # {model: (queryset, [(field, values)])}
++
++    def add(self, objs, source=None, nullable=False, reverse_dependency=False):
++        """
++        Add 'objs' to the collection of objects to be deleted.  If the call is
++        the result of a cascade, 'source' should be the model that caused it
++        and 'nullable' should be set to True, if the relation can be null.
++        If 'reverse_dependency' is True, 'source' will be deleted before the
++        current model, rather than after. (Needed for cascading to parent
++        models, the one case in which the cascade follows the forwards
++        direction of an FK rather than the reverse direction.)
++        """
++        if not objs:
++            return []
++
++        model = objs[0].__class__
++        if model in self.data:
++            self.data[model].extend(objs)
++        else:
++            self.data[model] = list(objs)
++
++        new_objs = []
++        if source is not None:
++            if reverse_dependency:
++                if model not in self.dependencies:
++                    self.dependencies[model] = set()
++                self.dependencies[model].add(source)
++            else:
++                if source not in self.dependencies:
++                    self.dependencies[source] = set()
++                self.dependencies[source].add(model)
++
++            if nullable:
++                new_objs = objs
++
++        return new_objs
++
++    def add_field_update(self, field, value, objs):
++        """
++        Add 'objs' to the collection of objects to be updated. 'field' is the
++        field that will be updated to 'value'.
++        """
++        model = objs[0].__class__
++        if model not in self.field_updates:
++            self.field_updates[model] = {}
++        if (field, value) not in self.field_updates[model]:
++            self.field_updates[model][field, value] = []
++        self.field_updates[model][field, value].extend(objs)
++
++    def _has_signal_listeners(self, model):
++        return (
++            signals.pre_delete.has_listeners(model) or
++            signals.post_delete.has_listeners(model)
++        )
++
++    def can_fast_delete(self, objs, from_field=None):
++        """
++        Determine if the objects in the given queryset-like or single object
++        can be fast-deleted. This can be done if there are no cascades, no
++        parents and no signal listeners for the object class.
++
++        The 'from_field' tells where we are coming from - we need this to
++        determine if the objects are in fact to be deleted. Allow also
++        skipping parent -> child -> parent chain preventing fast delete of
++        the child.
++        """
++        if from_field and from_field.remote_field.on_delete is not CASCADE:
++            return False
++        if hasattr(objs, '_meta'):
++            model = type(objs)
++        elif hasattr(objs, 'model') and hasattr(objs, '_raw_delete'):
++            model = objs.model
++        else:
++            return False
++        if self._has_signal_listeners(model):
++            return False
++        # The use of from_field comes from the need to avoid cascade back to
++        # parent when parent delete is cascading to child.
++        opts = model._meta
++        return (
++            all(link == from_field for link in opts.concrete_model._meta.parents.values()) and
++            # Foreign keys pointing to this model.
++            all(
++                related.field.remote_field.on_delete is DO_NOTHING
++                for related in get_candidate_relations_to_delete(opts)
++            ) and (
++                # Something like generic foreign key.
++                not any(hasattr(field, 'bulk_related_objects') for field in opts.private_fields)
++            )
++        )
++
++    def get_del_batches(self, objs, field):
++        """
++        Return the objs in suitably sized batches for the used connection.
++        """
++        conn_batch_size = max(
++            connections[self.using].ops.bulk_batch_size([field.name], objs), 1)
++        if len(objs) > conn_batch_size:
++            return [objs[i:i + conn_batch_size]
++                    for i in range(0, len(objs), conn_batch_size)]
++        else:
++            return [objs]
++
++    def collect(self, objs, source=None, nullable=False, collect_related=True,
++                source_attr=None, reverse_dependency=False, keep_parents=False):
++        """
++        Add 'objs' to the collection of objects to be deleted as well as all
++        parent instances.  'objs' must be a homogeneous iterable collection of
++        model instances (e.g. a QuerySet).  If 'collect_related' is True,
++        related objects will be handled by their respective on_delete handler.
++
++        If the call is the result of a cascade, 'source' should be the model
++        that caused it and 'nullable' should be set to True, if the relation
++        can be null.
++
++        If 'reverse_dependency' is True, 'source' will be deleted before the
++        current model, rather than after. (Needed for cascading to parent
++        models, the one case in which the cascade follows the forwards
++        direction of an FK rather than the reverse direction.)
++
++        If 'keep_parents' is True, data of parent model's will be not deleted.
++        """
++        if self.can_fast_delete(objs):
++            # Check if we can combine this fast delete with existing ones
++            # Get the model from the queryset
++            if hasattr(objs, 'model'):
++                model = objs.model
++            elif hasattr(objs, '_raw_delete') and hasattr(objs, 'query'):
++                # For QuerySet objects
++                model = objs.query.model
++            else:
++                # Fallback for other types
++                model = type(objs[0]).__class__ if objs else None
++
++            if model in self.combined_fast_deletes:
++                # Add to existing combined query
++                existing_qs, conditions = self.combined_fast_deletes[model]
++
++                # Get the field and values from the current query
++                current_qs = objs.query
++
++                # Extract field names and values from the query
++                field_name = None
++                field_value = None
++
++                # Handle different query types
++                if hasattr(current_qs.where, 'children'):
++                    for child in current_qs.where.children:
++                        field_name = child.lhs.name
++                        field_value = child.rhs
++                elif hasattr(current_qs.where, 'lookup_kwargs'):
++                    # For Q objects
++                    for condition in current_qs.where.lookup_kwargs:
++                        field_name = condition[0].split('__')[0]
++                        field_value = condition[1]
++
++                if field_name and field_value:
++                    # Add the condition to the existing query
++                    from django.db.models import Q
++                    existing_qs.query.where.add(
++                        Q(**{f"{field_name}__in": field_value}),
++                        Q.OR
++                    )
++            else:
++                # Check if we can combine with any existing fast deletes
++                combined_qs = None
++                fields_values = []
++
++                # Check all existing fast deletes for this model
++                for existing_qs in self.fast_deletes:
++                    if (hasattr(existing_qs, 'model') and
++                        existing_qs.model == model and
++                        hasattr(existing_qs, 'query')):
++
++                        # Get the field and values from the current query
++                        current_qs = objs.query
++
++                        # Extract field names and values from the query
++                        field_name = None
++                        field_value = None
++
++                        if hasattr(current_qs.where, 'children'):
++                            for child in current_qs.where.children:
++                                field_name = child.lhs.name
++                                field_value = child.rhs
++                                fields_values.append((field_name, field_value))
++
++                                # Add the condition to the existing query
++                                from django.db.models import Q
++                                existing_qs.query.where.add(
++                                    Q(**{f"{field_name}__in": field_value}),
++                                    Q.OR
++                                )
++
++                        # Remove the existing query from fast_deletes
++                        self.fast_deletes.remove(existing_qs)
++
++                        # Use this as the combined query
++                        combined_qs = existing_qs
++                        break
++
++                if combined_qs is not None:
++                    # Store the combined query
++                    self.combined_fast_deletes[model] = (combined_qs, fields_values)
++                else:
++                    # No existing query to combine with, just add to fast_deletes
++                    self.fast_deletes.append(objs)
++
++            return
++
++        new_objs = self.add(objs, source, nullable,
++                            reverse_dependency=reverse_dependency)
++        if not new_objs:
++            return
++
++        model = new_objs[0].__class__
++
++        if not keep_parents:
++            # Recursively collect concrete model's parent models, but not their
++            # related objects. These will be found by meta.get_fields()
++            concrete_model = model._meta.concrete_model
++            for ptr in concrete_model._meta.parents.values():
++                if ptr:
++                    parent_objs = [getattr(obj, ptr.name) for obj in new_objs]
++                    self.collect(parent_objs, source=model,
++                                 source_attr=ptr.remote_field.related_name,
++                                 collect_related=False,
++                                 reverse_dependency=True)
++        if collect_related:
++            if keep_parents:
++                parents = set(model._meta.get_parent_list())
++            for related in get_candidate_relations_to_delete(model._meta):
++                # Preserve parent reverse relationships if keep_parents=True.
++                if keep_parents and related.model in parents:
++                    continue
++                field = related.field
++                if field.remote_field.on_delete == DO_NOTHING:
++                    continue
++                batches = self.get_del_batches(new_objs, field)
++                for batch in batches:
++                    sub_objs = self.related_objects(related, batch)
++                    if self.can_fast_delete(sub_objs, from_field=field):
++                        self.fast_deletes.append(sub_objs)
++                    else:
++                        related_model = related.related_model
++                        # Non-referenced fields can be deferred if no signal
++                        # receivers are connected for the related model as
++                        # they'll never be exposed to the user. Skip field
++                        # deferring when some relationships are select_related
++                        # as interactions between both features are hard to
++                        # get right. This should only happen in the rare
++                        # cases where .related_objects is overridden anyway.
++                        if not (sub_objs.query.select_related or self._has_signal_listeners(related_model)):
++                            referenced_fields = set(chain.from_iterable(
++                                (rf.attname for rf in rel.field.foreign_related_fields)
++                                for rel in get_candidate_relations_to_delete(related_model._meta)
++                            ))
++                            sub_objs = sub_objs.only(*tuple(referenced_fields))
++                        if sub_objs:
++                            field.remote_field.on_delete(self, field, sub_objs, self.using)
++            for field in model._meta.private_fields:
++                if hasattr(field, 'bulk_related_objects'):
++                    # It's something like generic foreign key.
++                    sub_objs = field.bulk_related_objects(new_objs, self.using)
++                    self.collect(sub_objs, source=model, nullable=True)
++
++    def related_objects(self, related, objs):
++        """
++        Get a QuerySet of objects related to `objs` via the relation `related`.
++        """
++        return related.related_model._base_manager.using(self.using).filter(
++            **{"%s__in" % related.field.name: objs}
++        )
++
++    def instances_with_model(self):
++        for model, instances in self.data.items():
++            for obj in instances:
++                yield model, obj
++
++    def sort(self):
++        """
++        Sort the instance collections by their dependency graph.
++        """
++        # Get all models that have dependencies
++        models = set()
++        for model in self.dependencies:
++            models.update(self.dependencies[model])
++            models.add(model)
++
++        # Get all models that are in the data
++        models.update(self.data)
++
++        # Sort the models by their dependencies
++        sorted_models = []
++        while models:
++            # Find models that have no dependencies
++            independent = [model for model in models
++                           if model not in self.dependencies or
++                           not (self.dependencies[model] & models)]
++            # If we can't find any, we have a circular dependency
++            if not independent:
++                raise RuntimeError("Circular dependency found in deletion order")
++
++            # Add them to the sorted list
++            sorted_models.extend(independent)
++
++            # Remove them from the set of models
++            models.difference_update(independent)
++
++            # Remove their dependencies from the set of models
++            for model in independent:
++                if model in self.dependencies:
++                    models.difference_update(self.dependencies[model])
++
++        # Reverse the list to get the correct order
++        sorted_models.reverse()
++
++        # Sort the data by the sorted models
++        self.data = {model: self.data[model] for model in sorted_models}
++
++    def delete(self):
++        # sort instance collections
++        for model, instances in self.data.items():
++            self.data[model] = sorted(instances, key=attrgetter("pk"))
++
++        # if possible, bring the models in an order suitable for databases that
++        # don't support transactions or cannot defer constraint checks until the
++        # end of a transaction.
++        self.sort()
++        # number of objects deleted for each model label
++        deleted_counter = Counter()
++
++        # Optimize for the case with a single obj and no dependencies
++        if len(self.data) == 1:
++            instances = list(self.data.values())[0]
++            if len(instances) == 1:
++                instance = instances[0]
++                if self.can_fast_delete(instance):
++                    with transaction.mark_for_rollback_on_error():
++                        count = sql.DeleteQuery(model).delete_batch([instance.pk], self.using)
++                    setattr(instance, model._meta.pk.attname, None)
++                    return count, {model._meta.label: count}
++
++        with transaction.atomic(using=self.using, savepoint=False):
++            # send pre_delete signals
++            for model, obj in self.instances_with_model():
++                if not model._meta.auto_created:
++                    signals.pre_delete.send(
++                        sender=model, instance=obj, using=self.using
++                    )
++
++            # fast deletes
++            for qs in self.fast_deletes:
++                count = qs._raw_delete(using=self.using)
++                deleted_counter[qs.model._meta.label] += count
++
++            # combined fast deletes
++            for model, (qs, fields_values) in self.combined_fast_deletes.items():
++                count = qs._raw_delete(using=self.using)
++                deleted_counter[model._meta.label] += count
++
++            # update fields
++            for model, instances_for_fieldvalues in self.field_updates.items():
++                for (field, value), instances in instances_for_fieldvalues.items():
++                    query = sql.UpdateQuery(model)
++                    query.update_batch([obj.pk for obj in instances],
++                                       {field.name: value}, self.using)
++
++            # reverse instance collections
++            for instances in self.data.values():
++                instances.reverse()
++
++            # delete instances
++            for model, instances in self.data.items():
++                query = sql.DeleteQuery(model)
++                pk_list = [obj.pk for obj in instances]
++                count = query.delete_batch(pk_list, self.using)
++                deleted_counter[model._meta.label] += count
++
++                if not model._meta.auto_created:
++                    for obj in instances:
++                        signals.post_delete.send(
++                            sender=model, instance=obj, using=self.using
++                        )
++
++        # update collected instances
++        for instances_for_fieldvalues in self.field_updates.values():
++            for (field, value), instances in instances_for_fieldvalues.items():
++                for obj in instances:
++                    setattr(obj, field.attname, value)
++        for model, instances in self.data.items():
++            for instance in instances:
++                setattr(instance, model._meta.pk.attname, None)
++        return sum(deleted_counter.values()), dict(deleted_counter)
+\ No newline at end of file
+diff --git a/test_delete_optimization.py b/test_delete_optimization.py
+new file mode 100644
+index 0000000000..d09e726772
+--- /dev/null
++++ b/test_delete_optimization.py
+@@ -0,0 +1,93 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.apps import apps
++
++# Set up Django
++if not settings.configured:
++    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++    settings.configure(
++        SECRET_KEY='fake-key',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'test_delete_optimization',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a simple app config
++class TestAppConfig(apps.AppConfig):
++    name = 'test_delete_optimization'
++    verbose_name = "Test App"
++
++# Register the app config
++apps.register_config(TestAppConfig)
++
++# Define models similar to the example in the issue description
++class User(models.Model):
++    name = models.CharField(max_length=100)
++    app_label = 'test_delete_optimization'
++    class Meta:
++        app_label = 'test_delete_optimization'
++
++class Entry(models.Model):
++    created_by = models.ForeignKey(User, on_delete=models.CASCADE)
++    updated_by = models.ForeignKey(User, on_delete=models.CASCADE)
++    content = models.TextField()
++    app_label = 'test_delete_optimization'
++    class Meta:
++        app_label = 'test_delete_optimization'
++
++class Person(models.Model):
++    name = models.CharField(max_length=100)
++    friends = models.ManyToManyField('self', symmetrical=False)
++    app_label = 'test_delete_optimization'
++    class Meta:
++        app_label = 'test_delete_optimization'
++
++# Create the tables
++from django.core.management import call_command
++call_command('makemigrations', interactive=False, verbosity=0)
++call_command('migrate', verbosity=0)
++
++# Create some test data
++user = User.objects.create(name="Test User")
++person = Person.objects.create(name="Test Person")
++person.friends.add(person)  # Self-reference
++Entry.objects.create(created_by=user, updated_by=user, content="Test content")
++
++# Function to count queries
++def count_queries(func):
++    def wrapper(*args, **kwargs):
++        start_count = len(connection.queries)
++        result = func(*args, **kwargs)
++        end_count = len(connection.queries)
++        print(f"Number of queries executed: {end_count - start_count}")
++        for i, query in enumerate(connection.queries[start_count:end_count], 1):
++            print(f"Query {i}: {query['sql']}")
++        return result
++    return wrapper
++
++# Test deletion
++@count_queries
++def test_user_deletion():
++    user.delete()
++
++@count_queries
++def test_person_deletion():
++    person.delete()
++
++if __name__ == "__main__":
++    print("Testing user deletion:")
++    test_user_deletion()
++
++    print("\nTesting person deletion:")
++    test_person_deletion()
+\ No newline at end of file
+diff --git a/test_fast_delete.py b/test_fast_delete.py
+new file mode 100644
+index 0000000000..93e3e82d28
+--- /dev/null
++++ b/test_fast_delete.py
+@@ -0,0 +1,88 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection
++from django.db.models.deletion import CASCADE
++
++# Set up Django
++if not settings.configured:
++    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "django.conf.global_settings")
++    settings.configure(
++        SECRET_KEY='fake-key',
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a simple model to test the deletion logic
++class User(models.Model):
++    name = models.CharField(max_length=100)
++
++class Entry(models.Model):
++    created_by = models.ForeignKey(User, on_delete=CASCADE)
++    updated_by = models.ForeignKey(User, on_delete=CASCADE)
++    content = models.TextField()
++
++# Create the tables in memory
++from django.db import connection
++cursor = connection.cursor()
++cursor.execute("""
++CREATE TABLE test_user (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    name VARCHAR(100)
++)
++""")
++cursor.execute("""
++CREATE TABLE test_entry (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    created_by_id INTEGER,
++    updated_by_id INTEGER,
++    content TEXT,
++    FOREIGN KEY (created_by_id) REFERENCES test_user(id),
++    FOREIGN KEY (updated_by_id) REFERENCES test_user(id)
++)
++""")
++connection.commit()
++
++# Insert test data
++cursor.execute("INSERT INTO test_user (name) VALUES ('Test User')")
++user_id = cursor.lastrowid
++cursor.execute("INSERT INTO test_entry (created_by_id, updated_by_id, content) VALUES (%s, %s, 'Test content')", [user_id, user_id])
++connection.commit()
++
++# Now let's test the deletion logic directly
++from django.db.models.deletion import Collector
++
++# Create a collector instance
++collector = Collector(using='default')
++
++# Create a User instance to delete
++user = User(id=user_id)
++
++# Collect related objects
++collector.collect([user])
++
++# Print the fast deletes that would be executed
++print("Fast deletes that would be executed:")
++for qs in collector.fast_deletes:
++    print(f"Model: {qs.model.__name__}")
++    print(f"Query: {qs.query}")
++
++# Print the data that would be deleted
++print("\nData that would be deleted:")
++for model, instances in collector.data.items():
++    print(f"Model: {model.__name__}")
++    for instance in instances:
++        print(f"  Instance: {instance}")
++
++# Count the number of queries that would be executed
++print(f"\nNumber of fast delete queries: {len(collector.fast_deletes)}")
++print(f"Number of regular delete queries: {len(collector.data)}")
+\ No newline at end of file

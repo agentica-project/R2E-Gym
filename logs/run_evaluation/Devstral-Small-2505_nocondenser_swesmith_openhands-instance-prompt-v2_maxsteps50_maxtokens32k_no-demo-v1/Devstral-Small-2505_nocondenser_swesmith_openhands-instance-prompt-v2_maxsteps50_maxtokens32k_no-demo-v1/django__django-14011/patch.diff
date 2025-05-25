@@ -1,0 +1,277 @@
+diff --git a/django/test/testcases.py b/django/test/testcases.py
+index 92f566b7b0..69725a8cdb 100644
+--- a/django/test/testcases.py
++++ b/django/test/testcases.py
+@@ -4,6 +4,7 @@ import json
+ import logging
+ import posixpath
+ import sys
++import time
+ import threading
+ import unittest
+ import warnings
+@@ -30,7 +31,7 @@ from django.core.handlers.wsgi import WSGIHandler, get_path_info
+ from django.core.management import call_command
+ from django.core.management.color import no_style
+ from django.core.management.sql import emit_post_migrate_signal
+-from django.core.servers.basehttp import ThreadedWSGIServer, WSGIRequestHandler
++from django.core.servers.basehttp import ThreadedWSGIServer, WSGIRequestHandler, WSGIServer
+ from django.db import DEFAULT_DB_ALIAS, connection, connections, transaction
+ from django.forms.fields import CharField
+ from django.http import QueryDict
+@@ -1524,6 +1525,15 @@ class LiveServerThread(threading.Thread):
+         if hasattr(self, 'httpd'):
+             # Stop the WSGI server
+             self.httpd.shutdown()
++
++            # For ThreadedWSGIServer, we need to wait for all worker threads to finish
++            # before closing the database connections
++            if isinstance(self.httpd, ThreadedWSGIServer):
++                # Wait for all worker threads to finish
++                self.httpd.process_request_thread = lambda *args, **kwargs: None
++                # Give the threads time to finish
++                time.sleep(0.1)
++
+             self.httpd.server_close()
+         self.join()
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..f158dd279b
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,45 @@
++import os
++import sys
++import signal
++import time
++from django.test import LiveServerTestCase
++from django.db import connections, DEFAULT_DB_ALIAS
++from django.conf import settings
++from django.core.management import call_command
++
++class TestLiveServerThreaded(LiveServerTestCase):
++    """Test case to reproduce the database connection issue with LiveServerTestCase."""
++
++    def test_something(self):
++        # Just a simple test that does nothing
++        pass
++
++def run_test():
++    """Run the test and check if it completes without errors."""
++    from django.test.runner import DiscoverRunner
++
++    runner = DiscoverRunner()
++    runner.setup_test_environment()
++    suite = runner.build_suite(['reproduce_issue'])
++    result = runner.run_suite(suite)
++    return result.wasSuccessful()
++
++def main():
++    """Main function to run the test multiple times."""
++    # Set up Django settings
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.project_template.test_settings')
++
++    # Run the test multiple times to increase chance of hitting the race condition
++    for i in range(5):
++        print(f"Running test iteration {i+1}/5")
++        success = run_test()
++        if not success:
++            print(f"Test failed on iteration {i+1}")
++            sys.exit(1)
++        # Add a small delay between runs to increase chance of race condition
++        time.sleep(0.1)
++
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/test_liveserver_multithread.py b/test_liveserver_multithread.py
+new file mode 100644
+index 0000000000..be9109b8d1
+--- /dev/null
++++ b/test_liveserver_multithread.py
+@@ -0,0 +1,82 @@
++import os
++import sys
++import time
++import threading
++from django.db import connections, DEFAULT_DB_ALIAS
++from django.test.testcases import LiveServerThread
++from django.core.handlers.wsgi import WSGIHandler
++from django.core.servers.basehttp import WSGIServer, ThreadedWSGIServer
++from django.test.testcases import QuietWSGIRequestHandler
++
++def _StaticFilesHandler(application):
++    return application
++
++def run_server_thread():
++    """Run a single server thread and return whether connections were properly closed."""
++    # Create a server thread
++    thread = LiveServerThread(
++        'localhost',
++        _StaticFilesHandler,
++        connections_override=None,
++        port=0
++    )
++
++    # Start the thread
++    thread.daemon = True
++    thread.start()
++
++    # Wait for the server to be ready
++    thread.is_ready.wait()
++
++    # Terminate the thread
++    thread.terminate()
++
++    # Check if database connections are properly closed
++    conn = connections[DEFAULT_DB_ALIAS]
++    return conn.connection is None
++
++def test_multiple_threads():
++    """Test multiple server threads running concurrently."""
++    # Run multiple server threads concurrently
++    threads = []
++    results = []
++
++    for i in range(5):
++        # Create a thread that runs a server thread
++        t = threading.Thread(target=lambda i=i: results.append(run_server_thread()))
++        threads.append(t)
++        t.start()
++
++    # Wait for all threads to complete
++    for t in threads:
++        t.join()
++
++    # Check if all connections were properly closed
++    all_closed = all(results)
++
++    if not all_closed:
++        print("FAILURE: Some database connections were not properly closed")
++        # Print which iterations failed
++        for i, result in enumerate(results):
++            if not result:
++                print(f"  - Connection not closed in iteration {i+1}")
++        return False
++
++    return True
++
++def main():
++    """Main function to run the test."""
++    # Set up Django settings
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.project_template.test_settings')
++
++    # Run the test
++    result = test_multiple_threads()
++
++    if result:
++        print("SUCCESS: All database connections were properly closed")
++    else:
++        print("FAILURE: Some database connections were not properly closed")
++        sys.exit(1)
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/test_liveserver_thread.py b/test_liveserver_thread.py
+new file mode 100644
+index 0000000000..fef294a211
+--- /dev/null
++++ b/test_liveserver_thread.py
+@@ -0,0 +1,68 @@
++import os
++import sys
++import time
++from django.db import connections, DEFAULT_DB_ALIAS
++from django.test.testcases import LiveServerThread
++from django.core.handlers.wsgi import WSGIHandler
++from django.core.servers.basehttp import WSGIServer
++from django.test.testcases import QuietWSGIRequestHandler
++
++def _StaticFilesHandler(application):
++    return application
++
++def test_liveserver_thread():
++    """Test the LiveServerThread class directly."""
++    # Run the test multiple times to increase chance of hitting the race condition
++    for i in range(10):
++        print(f"\nIteration {i+1}/10")
++
++        # Create a server thread
++        thread = LiveServerThread(
++            'localhost',
++            _StaticFilesHandler,
++            connections_override=None,
++            port=0
++        )
++
++        # Start the thread
++        thread.daemon = True
++        thread.start()
++
++        # Wait for the server to be ready
++        thread.is_ready.wait()
++
++        # Check if the server is running
++        print(f"Server started on port {thread.port}")
++
++        # Terminate the thread
++        thread.terminate()
++
++        # Check if database connections are properly closed
++        conn = connections[DEFAULT_DB_ALIAS]
++        print(f"Connection status: {conn.connection is not None}")
++
++        if conn.connection is not None:
++            print(f"FAILURE: Database connections were not properly closed on iteration {i+1}")
++            return False
++
++        # Add a small delay between iterations to increase chance of race condition
++        time.sleep(0.1)
++
++    return True
++
++def main():
++    """Main function to run the test."""
++    # Set up Django settings
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'tests.project_template.test_settings')
++
++    # Run the test
++    result = test_liveserver_thread()
++
++    if result:
++        print("SUCCESS: Database connections were properly closed")
++    else:
++        print("FAILURE: Database connections were not properly closed")
++        sys.exit(1)
++
++if __name__ == "__main__":
++    main()
+\ No newline at end of file
+diff --git a/tests/servers/test_liveserver_connection_issue.py b/tests/servers/test_liveserver_connection_issue.py
+new file mode 100644
+index 0000000000..f63dfaf6f5
+--- /dev/null
++++ b/tests/servers/test_liveserver_connection_issue.py
+@@ -0,0 +1,17 @@
++from django.test import LiveServerTestCase
++from django.db import connections, DEFAULT_DB_ALIAS
++
++class LiveServerConnectionTest(LiveServerTestCase):
++    """Test case to reproduce the database connection issue with LiveServerTestCase."""
++
++    def test_database_connection(self):
++        """Test that checks if database connections are properly closed."""
++        # Get the default database connection
++        conn = connections[DEFAULT_DB_ALIAS]
++
++        # Check if the connection is open
++        self.assertIsNotNone(conn.connection)
++
++        # The connection should be properly closed when the test finishes
++        # If we hit the race condition, we'll see the error when destroy_test_db() is called
++        pass
+\ No newline at end of file

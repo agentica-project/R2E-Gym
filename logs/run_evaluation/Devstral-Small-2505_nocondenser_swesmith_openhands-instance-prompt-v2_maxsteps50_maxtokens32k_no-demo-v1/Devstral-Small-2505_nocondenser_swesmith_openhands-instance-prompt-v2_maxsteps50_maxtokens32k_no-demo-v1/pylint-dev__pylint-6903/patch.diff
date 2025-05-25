@@ -1,0 +1,214 @@
+diff --git a/pylint/lint/run.py b/pylint/lint/run.py
+index a7e5d5574..092860ffa 100644
+--- a/pylint/lint/run.py
++++ b/pylint/lint/run.py
+@@ -58,6 +58,10 @@ def _query_cpu() -> int | None:
+             cpu_shares = int(file.read().rstrip())
+         # For AWS, gives correct value * 1024.
+         avail_cpu = int(cpu_shares / 1024)
++
++    # Ensure we never return 0 as that would cause multiprocessing.Pool to fail
++    if avail_cpu == 0:
++        return 1
+     return avail_cpu
+ 
+ 
+@@ -75,8 +79,17 @@ def _cpu_count() -> int:
+         cpu_count = multiprocessing.cpu_count()
+     else:
+         cpu_count = 1
++
++    # Ensure we have a valid cpu_count
++    if cpu_count is None or cpu_count <= 0:
++        cpu_count = 1
++
+     if cpu_share is not None:
+-        return min(cpu_share, cpu_count)
++        # Ensure we never return 0
++        result = min(cpu_share, cpu_count)
++        if result <= 0:
++            result = 1
++        return result
+     return cpu_count
+ 
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..f0107d0cc
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,58 @@
++#!/usr/bin/env python3
++"""
++Script to reproduce the issue with pylint --jobs=0 in Kubernetes.
++"""
++
++import os
++import sys
++import unittest.mock as mock
++from pathlib import Path
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath('/testbed'))
++
++# Import the functions
++from pylint.lint.run import _query_cpu, _cpu_count
++
++# Create a function to test with mocked filesystem
++def test_with_mocked_filesystem():
++    with mock.patch('pathlib.Path.is_file') as mock_is_file:
++        # Make all the CPU files "exist"
++        mock_is_file.return_value = True
++
++        # Mock the file contents
++        mock_file_opens = [
++            mock.mock_open(read_data='-1\n'),  # cpu.cfs_quota_us
++            mock.mock_open(read_data='100000\n'),  # cpu.cfs_period_us
++            mock.mock_open(read_data='2\n'),  # cpu.shares
++        ]
++
++        # Create a mock open function that returns different file contents
++        # based on the file path
++        def mock_open_wrapper(*args, **kwargs):
++            if "cpu.cfs_quota_us" in args[0]:
++                return mock_file_opens[0]()
++            elif "cpu.cfs_period_us" in args[0]:
++                return mock_file_opens[1]()
++            elif "cpu.shares" in args[0]:
++                return mock_file_opens[2]()
++            return mock.mock_open()()
++
++        with mock.patch('builtins.open', mock_open_wrapper):
++            # Call _query_cpu directly to see what it returns
++            result = _query_cpu()
++            print(f"Result from _query_cpu with mocked files: {result}")
++
++            # If result is 0, we've reproduced the issue
++            if result == 0:
++                print("Issue reproduced: _query_cpu returns 0")
++            else:
++                print(f"No issue: _query_cpu returns {result}")
++
++            # Test _cpu_count with the mocked _query_cpu result
++            with mock.patch('pylint.lint.run._query_cpu', return_value=result):
++                cpu_count_result = _cpu_count()
++                print(f"Result from _cpu_count with mocked _query_cpu: {cpu_count_result}")
++
++if __name__ == "__main__":
++    test_with_mocked_filesystem()
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 000000000..eaadb2fe8
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,108 @@
++#!/usr/bin/env python3
++"""
++Comprehensive test script to verify the fix for the pylint --jobs=0 issue.
++"""
++
++import os
++import sys
++import unittest.mock as mock
++from pathlib import Path
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, os.path.abspath('/testbed'))
++
++# Import the functions
++from pylint.lint.run import _query_cpu, _cpu_count
++
++def test_query_cpu_with_kubernetes_values():
++    """Test _query_cpu with Kubernetes cgroup values."""
++    with mock.patch('pathlib.Path.is_file') as mock_is_file:
++        # Make all the CPU files "exist"
++        mock_is_file.return_value = True
++
++        # Mock the file contents
++        mock_file_opens = [
++            mock.mock_open(read_data='-1\n'),  # cpu.cfs_quota_us
++            mock.mock_open(read_data='100000\n'),  # cpu.cfs_period_us
++            mock.mock_open(read_data='2\n'),  # cpu.shares
++        ]
++
++        # Create a mock open function that returns different file contents
++        # based on the file path
++        def mock_open_wrapper(*args, **kwargs):
++            if "cpu.cfs_quota_us" in args[0]:
++                return mock_file_opens[0]()
++            elif "cpu.cfs_period_us" in args[0]:
++                return mock_file_opens[1]()
++            elif "cpu.shares" in args[0]:
++                return mock_file_opens[2]()
++            return mock.mock_open()()
++
++        with mock.patch('builtins.open', mock_open_wrapper):
++            # Call _query_cpu directly to see what it returns
++            result = _query_cpu()
++            print(f"Result from _query_cpu with Kubernetes values: {result}")
++
++            # With our fix, result should be 1, not 0
++            assert result == 1, f"Expected 1, got {result}"
++
++def test_cpu_count_with_mocked_query_cpu():
++    """Test _cpu_count with mocked _query_cpu return values."""
++    # Let's directly test the logic in _cpu_count
++    # The function uses sched_getaffinity if available, otherwise multiprocessing.cpu_count()
++    # If cpu_share is not None, it returns min(cpu_share, cpu_count)
++
++    # Mock the necessary functions and values
++    with mock.patch('os.sched_getaffinity', return_value=range(4)):  # Simulate 4 CPUs
++        with mock.patch('multiprocessing.cpu_count', return_value=4):  # Simulate 4 CPUs
++
++            # Test with cpu_share = 0 (would be 0 without our fix, 1 with our fix)
++            with mock.patch('pylint.lint.run._query_cpu', return_value=0):
++                result = _cpu_count()
++                print(f"_query_cpu returns 0, _cpu_count returns {result}")
++                # With our fix, _query_cpu should return 1 when the value is 0
++                assert result == 1, f"Expected 1, got {result}"
++
++            # Test with cpu_share = 1
++            with mock.patch('pylint.lint.run._query_cpu', return_value=1):
++                result = _cpu_count()
++                print(f"_query_cpu returns 1, _cpu_count returns {result}")
++                assert result == 1, f"Expected 1, got {result}"
++
++            # Test with cpu_share = 2
++            with mock.patch('pylint.lint.run._query_cpu', return_value=2):
++                result = _cpu_count()
++                print(f"_query_cpu returns 2, _cpu_count returns {result}")
++                assert result == 2, f"Expected 2, got {result}"
++
++def test_multiprocessing_pool_with_zero():
++    """Test that multiprocessing.Pool can be created with jobs=1 (never 0)."""
++    import multiprocessing
++
++    # Mock _cpu_count to return 0 (which would happen without our fix)
++    with mock.patch('pylint.lint.run._cpu_count', return_value=0):
++        # This would fail without our fix, as _cpu_count would return 0
++        # With our fix, _cpu_count will return 1 when _query_cpu returns 0
++        result = _cpu_count()
++        print(f"_cpu_count with mock return value: {result}")
++        assert result >= 1, f"Expected at least 1, got {result}"
++
++        # Try to create a multiprocessing pool with jobs=1 (never 0)
++        try:
++            with multiprocessing.Pool(result) as pool:
++                print(f"Successfully created multiprocessing.Pool with {result} workers")
++        except ValueError as e:
++            print(f"Failed to create multiprocessing.Pool: {e}")
++            assert False, f"Failed to create multiprocessing.Pool: {e}"
++
++if __name__ == "__main__":
++    print("Testing _query_cpu with Kubernetes values...")
++    test_query_cpu_with_kubernetes_values()
++
++    print("\nTesting _cpu_count with mocked _query_cpu return values...")
++    test_cpu_count_with_mocked_query_cpu()
++
++    print("\nTesting multiprocessing.Pool creation...")
++    test_multiprocessing_pool_with_zero()
++
++    print("\nAll tests passed!")
+\ No newline at end of file

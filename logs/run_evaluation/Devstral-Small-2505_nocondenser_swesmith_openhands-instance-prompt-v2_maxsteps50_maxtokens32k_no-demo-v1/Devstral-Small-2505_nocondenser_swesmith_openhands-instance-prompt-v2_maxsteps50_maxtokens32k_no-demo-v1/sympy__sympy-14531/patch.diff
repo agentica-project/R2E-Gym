@@ -1,0 +1,113 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..93b546006c
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,31 @@
++from sympy import symbols, Eq, Limit, S, sstr, python
++
++x, y = symbols('x y')
++
++# Test case 1: Simple expression with S(1)/2
++print("Test case 1: Simple expression")
++result1 = sstr(x + S(1)/2, sympy_integers=True)
++print(f"sstr(x + S(1)/2, sympy_integers=True) = '{result1}'")
++print("Expected: 'x + S(1)/2'")
++print()
++
++# Test case 2: Eq expression with S(1)/2
++print("Test case 2: Eq expression")
++result2 = sstr(Eq(x, S(1)/2), sympy_integers=True)
++print(f"sstr(Eq(x, S(1)/2), sympy_integers=True) = '{result2}'")
++print("Expected: 'Eq(x, S(1)/2)'")
++print()
++
++# Test case 3: Limit expression with S(1)/2
++print("Test case 3: Limit expression")
++result3 = sstr(Limit(x, x, S(1)/2), sympy_integers=True)
++print(f"sstr(Limit(x, x, S(1)/2), sympy_integers=True) = '{result3}'")
++print("Expected: 'Limit(x, x, S(1)/2)'")
++print()
++
++# Test case 4: python code generation
++print("Test case 4: python code generation")
++result4 = python(Eq(x, y))
++print(f"python(Eq(x, y)) = '{result4}'")
++print("Expected to include: 'x = Symbol('x')\\ny = Symbol('y')\\ne = Eq(x, y)'")
++print()
+\ No newline at end of file
+diff --git a/sympy/printing/python.py b/sympy/printing/python.py
+index dc6d8ffe59..13ff1ec440 100644
+--- a/sympy/printing/python.py
++++ b/sympy/printing/python.py
+@@ -55,6 +55,9 @@ def python(expr, **settings):
+     result = ''
+     # Returning found symbols and functions
+     renamings = {}
++    symbol_defs = set()  # Track already defined symbols to avoid duplication
++    function_defs = set()  # Track already defined functions to avoid duplication
++
+     for symbolname in printer.symbols:
+         newsymbolname = symbolname
+         # Escape symbol names that are reserved python keywords
+@@ -66,7 +69,10 @@ def python(expr, **settings):
+                     renamings[sympy.Symbol(
+                         symbolname)] = sympy.Symbol(newsymbolname)
+                     break
+-        result += newsymbolname + ' = Symbol(\'' + symbolname + '\')\n'
++        # Add to result if not already added
++        if newsymbolname not in symbol_defs:
++            symbol_defs.add(newsymbolname)
++            result += newsymbolname + ' = Symbol(\'' + symbolname + '\')\n'
+ 
+     for functionname in printer.functions:
+         newfunctionname = functionname
+@@ -79,10 +85,14 @@ def python(expr, **settings):
+                     renamings[sympy.Function(
+                         functionname)] = sympy.Function(newfunctionname)
+                     break
+-        result += newfunctionname + ' = Function(\'' + functionname + '\')\n'
++        # Add to result if not already added
++        if newfunctionname not in function_defs:
++            function_defs.add(newfunctionname)
++            result += newfunctionname + ' = Function(\'' + functionname + '\')\n'
+ 
+     if not len(renamings) == 0:
+         exprp = expr.subs(renamings)
++
+     result += 'e = ' + printer._str(exprp)
+     return result
+ 
+diff --git a/sympy/printing/str.py b/sympy/printing/str.py
+index cc1d19fcce..805b2f3479 100644
+--- a/sympy/printing/str.py
++++ b/sympy/printing/str.py
+@@ -215,10 +215,14 @@ def _print_LatticeOp(self, expr):
+ 
+     def _print_Limit(self, expr):
+         e, z, z0, dir = expr.args
++        # Use _print directly to avoid extra parentheses
++        e_str = self._print(e)
++        z_str = self._print(z)
++        z0_str = self._print(z0)
+         if str(dir) == "+":
+-            return "Limit(%s, %s, %s)" % (e, z, z0)
++            return "Limit(%s, %s, %s)" % (e_str, z_str, z0_str)
+         else:
+-            return "Limit(%s, %s, %s, dir='%s')" % (e, z, z0, dir)
++            return "Limit(%s, %s, %s, dir='%s')" % (e_str, z_str, z0_str, dir)
+ 
+     def _print_list(self, expr):
+         return "[%s]" % self.stringify(expr, ", ")
+@@ -630,7 +634,10 @@ def _print_Relational(self, expr):
+         }
+ 
+         if expr.rel_op in charmap:
+-            return '%s(%s, %s)' % (charmap[expr.rel_op], expr.lhs, expr.rhs)
++            # Use _print directly to avoid extra parentheses
++            lhs = self._print(expr.lhs)
++            rhs = self._print(expr.rhs)
++            return '%s(%s, %s)' % (charmap[expr.rel_op], lhs, rhs)
+ 
+         return '%s %s %s' % (self.parenthesize(expr.lhs, precedence(expr)),
+                            self._relationals.get(expr.rel_op) or expr.rel_op,

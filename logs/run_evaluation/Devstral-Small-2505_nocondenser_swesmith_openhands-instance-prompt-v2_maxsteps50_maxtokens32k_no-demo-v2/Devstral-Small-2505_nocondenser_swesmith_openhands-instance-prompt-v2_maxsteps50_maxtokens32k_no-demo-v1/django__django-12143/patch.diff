@@ -1,0 +1,195 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..cebc23f717
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,97 @@
++import re
++import sys
++import os
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++from django.contrib.admin.options import ModelAdmin
++from django.db import models
++
++# Mock the necessary components
++class MockRequest:
++    def __init__(self, post_data):
++        self.POST = post_data
++
++class MockMeta:
++    def __init__(self, pk_name):
++        self.pk = MockPK(pk_name)
++
++class MockPK:
++    def __init__(self, name):
++        self.name = name
++
++class MockModel:
++    def __init__(self, pk_name):
++        self._meta = MockMeta(pk_name)
++
++class TestAdmin(ModelAdmin):
++    def __init__(self):
++        self.model = MockModel('id')
++
++def test_regex_with_various_special_chars():
++    """Test with various regex special characters to ensure the fix is comprehensive."""
++    admin = TestAdmin()
++
++    # Test cases with various special characters
++    test_cases = [
++        ("normal_prefix", "prefix"),
++        ("dot_star", ".*"),
++        ("plus_question", "+?"),
++        ("curly_braces", "{}[],"),
++        ("pipe_bar", "|"),
++        ("backslash", "\\"),
++        ("caret_dollar", "^$"),
++        ("complex_combo", ".*+?{}[\\]^$|()"),
++        ("empty_string", ""),
++        ("only_special", ".*+?[]{}()^$|\\"),
++    ]
++
++    # Create a comprehensive POST dictionary
++    post_data = {}
++    for prefix_name, prefix in test_cases:
++        post_data[f"{prefix}-1-id"] = f"value_{prefix_name}"
++        post_data[f"{prefix}-2-id"] = f"value_{prefix_name}_2"
++
++    request = MockRequest(post_data)
++
++    print("Testing regex pattern handling with various special characters:")
++    print("-" * 70)
++
++    all_passed = True
++
++    for prefix_name, prefix in test_cases:
++        try:
++            # Get the PKs using the admin method
++            pks = admin._get_edited_object_pks(request, prefix)
++
++            # Verify that both values for this prefix were found
++            expected_values = [f"value_{prefix_name}", f"value_{prefix_name}_2"]
++            expected_keys = [f"{prefix}-1-id", f"{prefix}-2-id"]
++
++            # Check if the keys exist in the POST data
++            keys_exist = all(key in request.POST for key in expected_keys)
++
++            if keys_exist and sorted(pks) == sorted(expected_values):
++                result = "PASS"
++            else:
++                result = f"FAIL - Keys exist: {keys_exist}, Expected values: {expected_values}, got: {pks}"
++                all_passed = False
++
++            # Print the pattern for debugging
++            pattern = re.compile(r'{}-\d+-{}$'.format(re.escape(prefix), admin.model._meta.pk.name))
++            print(f"{prefix_name:20} - {result:10} - Pattern: {pattern.pattern}")
++
++        except Exception as e:
++            result = f"ERROR - {str(e)}"
++            all_passed = False
++            print(f"{prefix_name:20} - {result}")
++
++    print("-" * 70)
++    if all_passed:
++        print("All test cases passed! The fix is working correctly.")
++    else:
++        print("Some test cases failed. The fix may not be comprehensive enough.")
++
++if __name__ == "__main__":
++    test_regex_with_various_special_chars()
+\ No newline at end of file
+diff --git a/django/contrib/admin/options.py b/django/contrib/admin/options.py
+index 137e6faa0f..a100f1c499 100644
+--- a/django/contrib/admin/options.py
++++ b/django/contrib/admin/options.py
+@@ -1631,7 +1631,7 @@ class ModelAdmin(BaseModelAdmin):
+ 
+     def _get_edited_object_pks(self, request, prefix):
+         """Return POST data values of list_editable primary keys."""
+-        pk_pattern = re.compile(r'{}-\d+-{}$'.format(prefix, self.model._meta.pk.name))
++        pk_pattern = re.compile(r'{}-\d+-{}$'.format(re.escape(prefix), self.model._meta.pk.name))
+         return [value for key, value in request.POST.items() if pk_pattern.match(key)]
+ 
+     def _get_list_editable_queryset(self, request, prefix):
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..bb8db5cc8a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,71 @@
++import re
++import sys
++import os
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++from django.contrib.admin.options import ModelAdmin
++from django.db import models
++
++# Mock the necessary components
++class MockRequest:
++    def __init__(self, post_data):
++        self.POST = post_data
++
++class MockMeta:
++    def __init__(self, pk_name):
++        self.pk = MockPK(pk_name)
++
++class MockPK:
++    def __init__(self, name):
++        self.name = name
++
++class MockModel:
++    def __init__(self, pk_name):
++        self._meta = MockMeta(pk_name)
++
++class TestAdmin(ModelAdmin):
++    def __init__(self):
++        self.model = MockModel('id')
++
++def test_regex_with_special_chars():
++    # Create an instance of our test admin
++    admin = TestAdmin()
++
++    # Test with a normal prefix
++    normal_prefix = "prefix"
++    pk_pattern = re.compile(r'{}-\d+-{}$'.format(normal_prefix, admin.model._meta.pk.name))
++    print(f"Normal prefix regex pattern: {pk_pattern.pattern}")
++
++    # Test with a prefix containing regex special characters
++    special_prefix = ".*+?{}[\\]^$"
++
++    # Create a test POST dictionary
++    post_data = {
++        "prefix-1-id": "1",
++        "prefix-2-id": "2",
++        ".*+?{}[\\]^$-1-id": "3",  # This should match with the fixed code
++    }
++
++    # Test matching with the normal prefix
++    request = MockRequest(post_data)
++    pks = admin._get_edited_object_pks(request, normal_prefix)
++    print(f"Normal prefix matched PKs: {pks}")
++
++    # Test matching with the special prefix - this should now work with our fix
++    try:
++        special_pks = admin._get_edited_object_pks(request, special_prefix)
++        print(f"Special prefix matched PKs: {special_pks}")
++
++        # Verify that the special prefix pattern correctly matches the key with special characters
++        expected_key = f"{special_prefix}-1-id"
++        if expected_key in request.POST and "3" in special_pks:
++            print("SUCCESS: The fix correctly handles special characters in the prefix!")
++        else:
++            print(f"FAILURE: The fix did not correctly handle special characters in the prefix. Expected to find key '{expected_key}' with value '3' in results.")
++    except Exception as e:
++        print(f"ERROR: The fix did not work: {e}")
++
++if __name__ == "__main__":
++    test_regex_with_special_chars()
+\ No newline at end of file

@@ -1,0 +1,98 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..06e406dc81
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,91 @@
++import os
++import sys
++import django
++from django.db import models, transaction
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    DEBUG=True,
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    INSTALLED_APPS=[
++        'django.contrib.contenttypes',
++    ],
++    ROOT_URLCONF='',
++)
++
++django.setup()
++
++# Define models similar to the issue description
++class Product(models.Model):
++    sku = models.CharField(primary_key=True, max_length=50)
++
++class Order(models.Model):
++    product = models.ForeignKey(Product, on_delete=models.CASCADE)
++
++def test_foreign_key_with_charfield_pk():
++    """Test that foreign key to a model with CharField primary key works correctly."""
++    print("Testing foreign key with CharField primary key...")
++
++    # Test case 1: Setting primary key before assignment
++    with transaction.atomic():
++        order = Order()
++        order.product = Product(sku="foo")
++        order.product.save()
++        order.save()
++
++        # Verify the foreign key was set correctly
++        order_from_db = Order.objects.get(id=order.id)
++        assert order_from_db.product_id == "foo", f"Expected product_id to be 'foo', got '{order_from_db.product_id}'"
++        assert Order.objects.filter(product_id="foo").exists(), "Order with correct product_id should exist"
++        assert Order.objects.filter(product=order.product).exists(), "Order with correct product reference should exist"
++        print("Test case 1 (setting primary key before assignment): PASSED")
++
++    # Test case 2: Setting primary key after assignment (the problematic case)
++    with transaction.atomic():
++        order = Order()
++        order.product = Product()
++        order.product.sku = "bar"
++        order.product.save()
++        order.save()
++
++        # Verify the foreign key was set correctly
++        order_from_db = Order.objects.get(id=order.id)
++        print(f"order_from_db.product_id: {order_from_db.product_id}")
++        print(f"order.product.id: {order.product.id}")
++        assert order_from_db.product_id == "bar", f"Expected product_id to be 'bar', got '{order_from_db.product_id}'"
++        assert Order.objects.filter(product_id="bar").exists(), "Order with correct product_id should exist"
++        assert Order.objects.filter(product=order.product).exists(), "Order with correct product reference should exist"
++        print("Test case 2 (setting primary key after assignment): PASSED")
++
++if __name__ == "__main__":
++    # Create tables
++    Product._meta.db_table = 'test_product'
++    Order._meta.db_table = 'test_order'
++    connection = django.db.connection
++    with connection.cursor() as cursor:
++        cursor.execute("""
++            CREATE TABLE test_product (
++                sku VARCHAR(50) PRIMARY KEY
++            )
++        """)
++        cursor.execute("""
++            CREATE TABLE test_order (
++                id INTEGER PRIMARY KEY AUTOINCREMENT,
++                product_id VARCHAR(50),
++                FOREIGN KEY (product_id) REFERENCES test_product(sku)
++            )
++        """)
++
++    # Run the test
++    try:
++        test_foreign_key_with_charfield_pk()
++        print("All tests PASSED!")
++    except AssertionError as e:
++        print(f"Test FAILED: {e}")
++        sys.exit(1)
+\ No newline at end of file

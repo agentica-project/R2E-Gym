@@ -1,0 +1,94 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..368a8d9a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,38 @@
++#!/usr/bin/env python
++# Script to reproduce the issue with session headers set to None
++
++import requests
++import sys
++from requests.models import PreparedRequest
++
++def main():
++    # Create a session
++    session = requests.Session()
++
++    # Print initial headers
++    print("Initial headers:", dict(session.headers))
++
++    # Set a header to a value
++    session.headers['X-Test-Header'] = 'initial-value'
++    print("After setting header:", dict(session.headers))
++
++    # Set the header to None
++    session.headers['X-Test-Header'] = None
++    print("After setting header to None:", dict(session.headers))
++
++    # Create a request to see what headers would be sent
++    # without actually making the HTTP call
++    req = session.prepare_request(requests.Request('GET', 'http://example.com'))
++
++    print("\nPrepared request headers:", req.headers)
++
++    # Check if the header is in the prepared request
++    if 'X-Test-Header' in req.headers:
++        print("\nISSUE PRESENT: Header with None value is being included in the prepared request")
++        return 1
++    else:
++        print("\nISSUE FIXED: Header with None value is not being included in the prepared request")
++        return 0
++
++if __name__ == "__main__":
++    sys.exit(main())
+\ No newline at end of file
+diff --git a/requests/sessions.py b/requests/sessions.py
+index a023e4ec..3d2e4684 100644
+--- a/requests/sessions.py
++++ b/requests/sessions.py
+@@ -57,7 +57,16 @@ def merge_setting(request_setting, session_setting, dict_class=OrderedDict):
+     # Remove keys that are set to None.
+     for (k, v) in request_setting.items():
+         if v is None:
+-            del merged_setting[k]
++            # Remove the key from merged_setting if it exists (case-insensitive)
++            try:
++                del merged_setting[k]
++            except KeyError:
++                # Key might not exist due to case sensitivity differences
++                # Try to find and delete the key by lowercased version
++                for key_to_delete in list(merged_setting.keys()):
++                    if key_to_delete.lower() == k.lower():
++                        del merged_setting[key_to_delete]
++                        break
+ 
+     return merged_setting
+ 
+@@ -154,7 +163,7 @@ class SessionRedirectMixin(object):
+ 
+             if 'Authorization' in headers:
+                 # If we get redirected to a new host, we should strip out any
+-                # authentication headers.
++                #Â authentication headers.
+                 original_parsed = urlparse(resp.request.url)
+                 redirect_parsed = urlparse(url)
+ 
+diff --git a/requests/structures.py b/requests/structures.py
+index a1759137..54ed5a0c 100644
+--- a/requests/structures.py
++++ b/requests/structures.py
+@@ -71,7 +71,12 @@ class CaseInsensitiveDict(collections.MutableMapping):
+     def __setitem__(self, key, value):
+         # Use the lowercased key for lookups, but store the actual
+         # key alongside the value.
+-        self._store[key.lower()] = (key, value)
++        if value is None:
++            # If the value is None, remove the header instead of storing None
++            if key.lower() in self._store:
++                del self._store[key.lower()]
++        else:
++            self._store[key.lower()] = (key, value)
+ 
+     def __getitem__(self, key):
+         return self._store[key.lower()][1]

@@ -1,0 +1,76 @@
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index ac0b62d0bf..f746654ace 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -14,7 +14,7 @@ __all__ = [
+ 
+ 
+ class Aggregate(Func):
+-    template = '%(function)s(%(distinct)s%(expressions)s)'
++    template = '%(function)s(%(distinct)s %(expressions)s)'
+     contains_aggregate = True
+     name = None
+     filter_template = '%s FILTER (WHERE %%(filter)s)'
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..da964f1015
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,56 @@
++import django
++import os
++import sys
++from django.conf import settings
++from django.db import models, connection
++from django.db.models import Count, Case, When, Q
++from django.db.models.expressions import Star
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        SECRET_KEY='fake-key',
++    )
++    django.setup()
++
++# Set up a simple model for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++
++    class Meta:
++        # We don't need to create an actual table
++        managed = False
++        app_label = 'reproduce_issue'
++
++# Create a query with Count, Case, and distinct=True
++def create_problematic_query():
++    # This is the problematic combination: Count with Case condition and distinct=True
++    query = TestModel.objects.annotate(
++        count_with_case=Count(
++            Case(
++                When(value__gt=0, then=Star()),
++                output_field=models.IntegerField()
++            ),
++            distinct=True
++        )
++    )
++
++    # Get the SQL query to see the issue
++    sql, params = query.query.get_compiler(using='default').as_sql(with_limits=True, with_col_aliases=False)
++    print("SQL Query:")
++    print(sql % tuple(params))
++
++if __name__ == "__main__":
++    # Create the database connection
++    connection.cursor()
++    create_problematic_query()
+\ No newline at end of file

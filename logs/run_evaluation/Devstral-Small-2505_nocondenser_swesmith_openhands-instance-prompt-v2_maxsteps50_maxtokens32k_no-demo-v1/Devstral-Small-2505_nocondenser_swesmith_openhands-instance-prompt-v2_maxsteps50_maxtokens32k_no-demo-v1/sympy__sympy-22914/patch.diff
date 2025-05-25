@@ -1,0 +1,82 @@
+diff --git a/sympy/printing/pycode.py b/sympy/printing/pycode.py
+index 3a72ab606c..72f969cf18 100644
+--- a/sympy/printing/pycode.py
++++ b/sympy/printing/pycode.py
+@@ -450,6 +450,12 @@ def _print_frac(self, expr):
+         from sympy.core.mod import Mod
+         return self._print_Mod(Mod(expr.args[0], 1))
+ 
++    def _print_Min(self, expr):
++        return "min({})".format(", ".join(self._print(arg) for arg in expr.args))
++
++    def _print_Max(self, expr):
++        return "max({})".format(", ".join(self._print(arg) for arg in expr.args))
++
+     def _print_Symbol(self, expr):
+ 
+         name = super()._print_Symbol(expr)
+diff --git a/test_issue_example.py b/test_issue_example.py
+new file mode 100644
+index 0000000000..abf257a547
+--- /dev/null
++++ b/test_issue_example.py
+@@ -0,0 +1,4 @@
++from sympy import symbols, Min, pycode
++a, b = symbols("a b")
++c = Min(a,b)
++print(pycode(c))
+\ No newline at end of file
+diff --git a/test_min_max.py b/test_min_max.py
+new file mode 100644
+index 0000000000..3958008e6b
+--- /dev/null
++++ b/test_min_max.py
+@@ -0,0 +1,10 @@
++from sympy import symbols, Min, Max, pycode
++
++a, b = symbols("a b")
++c = Min(a, b)
++d = Max(a, b)
++
++print("Min expression:")
++print(pycode(c))
++print("\nMax expression:")
++print(pycode(d))
+\ No newline at end of file
+diff --git a/test_min_max_comprehensive.py b/test_min_max_comprehensive.py
+new file mode 100644
+index 0000000000..0458c8c751
+--- /dev/null
++++ b/test_min_max_comprehensive.py
+@@ -0,0 +1,30 @@
++from sympy import symbols, Min, Max, pycode
++
++a, b, c, d = symbols("a b c d")
++
++# Test with 2 arguments
++c1 = Min(a, b)
++c2 = Max(a, b)
++
++# Test with 3 arguments
++c3 = Min(a, b, c)
++c4 = Max(a, b, c)
++
++# Test with 4 arguments
++c5 = Min(a, b, c, d)
++c6 = Max(a, b, c, d)
++
++print("Min with 2 arguments:")
++print(pycode(c1))
++print("\nMax with 2 arguments:")
++print(pycode(c2))
++
++print("\nMin with 3 arguments:")
++print(pycode(c3))
++print("\nMax with 3 arguments:")
++print(pycode(c4))
++
++print("\nMin with 4 arguments:")
++print(pycode(c5))
++print("\nMax with 4 arguments:")
++print(pycode(c6))
+\ No newline at end of file

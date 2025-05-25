@@ -1,0 +1,94 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..f4b99748a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,27 @@
++import numpy as np
++from sklearn.experimental import enable_hist_gradient_boosting
++from sklearn.ensemble import HistGradientBoostingClassifier
++
++# Create a simple dataset with string targets
++X = np.random.randn(100, 10)
++y = np.array(['x'] * 50 + ['y'] * 50, dtype=object)
++
++# Initialize the classifier with early stopping
++gbrt = HistGradientBoostingClassifier(n_iter_no_change=10)
++
++# This should now work without raising an error
++try:
++    gbrt.fit(X, y)
++    print("Test passed: Model fitted successfully with string targets and early stopping")
++
++    # Test predictions
++    predictions = gbrt.predict(X)
++    print(f"Predictions shape: {predictions.shape}")
++    print(f"Unique prediction values: {np.unique(predictions)}")
++
++    # Test accuracy
++    accuracy = np.mean(predictions == y)
++    print(f"Accuracy: {accuracy:.4f}")
++
++except Exception as e:
++    print(f"Test failed: An error occurred: {e}")
+\ No newline at end of file
+diff --git a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+index ad6a5a8ca..3170e4000 100644
+--- a/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
++++ b/sklearn/ensemble/_hist_gradient_boosting/gradient_boosting.py
+@@ -426,11 +426,15 @@ class BaseHistGradientBoosting(BaseEstimator, ABC):
+ 
+         Scores are computed on validation data or on training data.
+         """
++        if hasattr(self, 'classes_'):
++            y_small_train = self.classes_[y_small_train.astype(int)]
+         self.train_score_.append(
+             self.scorer_(self, X_binned_small_train, y_small_train)
+         )
+ 
+         if self._use_validation_data:
++            if hasattr(self, 'classes_'):
++                y_val = self.classes_[y_val.astype(int)]
+             self.validation_score_.append(
+                 self.scorer_(self, X_binned_val, y_val)
+             )
+diff --git a/test_string_targets_early_stopping.py b/test_string_targets_early_stopping.py
+new file mode 100644
+index 000000000..d27685aff
+--- /dev/null
++++ b/test_string_targets_early_stopping.py
+@@ -0,0 +1,33 @@
++import numpy as np
++import pytest
++from sklearn.experimental import enable_hist_gradient_boosting
++from sklearn.ensemble import HistGradientBoostingClassifier
++
++def test_string_targets_with_early_stopping():
++    """Test that HistGradientBoostingClassifier works with string targets when early stopping is enabled."""
++    # Create a simple dataset with string targets
++    X = np.random.randn(100, 10)
++    y = np.array(['x'] * 50 + ['y'] * 50, dtype=object)
++
++    # Initialize the classifier with early stopping
++    gbrt = HistGradientBoostingClassifier(n_iter_no_change=10)
++
++    # Fit the model
++    gbrt.fit(X, y)
++
++    # Make predictions
++    predictions = gbrt.predict(X)
++
++    # Check that predictions are strings
++    assert isinstance(predictions[0], str)
++
++    # Check that predictions match the expected classes
++    assert set(predictions) == set(['x', 'y'])
++
++    # Check that accuracy is reasonable (should be close to 1.0 for this simple dataset)
++    accuracy = np.mean(predictions == y)
++    assert accuracy > 0.5  # We should get at least 50% accuracy by chance
++
++if __name__ == "__main__":
++    test_string_targets_with_early_stopping()
++    print("All tests passed!")
+\ No newline at end of file

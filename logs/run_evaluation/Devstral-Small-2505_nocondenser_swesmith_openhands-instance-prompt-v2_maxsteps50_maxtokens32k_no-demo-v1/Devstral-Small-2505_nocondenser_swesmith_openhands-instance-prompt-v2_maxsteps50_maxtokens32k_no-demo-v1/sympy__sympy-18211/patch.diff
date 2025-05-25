@@ -1,0 +1,22 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..0134d69494
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,15 @@
++from sympy import Eq, symbols, cos, sin
++from sympy.abc import n
++
++# Create the equation from the issue description
++eq = Eq(n*cos(n) - 3*sin(n), 0)
++
++# Try to convert it to a set
++try:
++    result = eq.as_set()
++    print(f"Success! Result: {result}")
++except NotImplementedError as e:
++    print(f"Error: {e}")
++
++# Expected result should be something like:
++# ConditionSet(n, Eq(n*cos(n) - 3*sin(n), 0), Reals)
+\ No newline at end of file

@@ -1,0 +1,164 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 00000000..ec965a11
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,58 @@
++import xarray as xr
++import numpy as np
++
++def test_sum_min_count_edge_cases():
++    print("Testing sum with min_count in various scenarios...")
++
++    # Test 1: DataArray with NaN values, multiple dimensions
++    print("\nTest 1: DataArray with NaN values, multiple dimensions")
++    da = xr.DataArray([[[1., np.nan, 3.], [4., 5., 6.]], [[7., 8., 9.], [10., np.nan, 12.]]])
++    print(f"DataArray shape: {da.shape}")
++
++    try:
++        result = da.sum(["dim_0", "dim_1"], min_count=1)
++        print(f"Success! Result with min_count=1: {result}")
++    except Exception as e:
++        print(f"Error with min_count=1: {e}")
++
++    try:
++        result = da.sum(["dim_0", "dim_1"], min_count=10)
++        print(f"Success! Result with min_count=10: {result}")
++    except Exception as e:
++        print(f"Error with min_count=10: {e}")
++
++    # Test 2: DataArray with all NaN values in one dimension
++    print("\nTest 2: DataArray with all NaN values in one dimension")
++    da2 = xr.DataArray([[[1., 2., 3.], [np.nan, np.nan, np.nan]], [[4., 5., 6.], [np.nan, np.nan, np.nan]]])
++    print(f"DataArray shape: {da2.shape}")
++
++    try:
++        result = da2.sum(["dim_0", "dim_1"], min_count=1)
++        print(f"Success! Result with min_count=1: {result}")
++    except Exception as e:
++        print(f"Error with min_count=1: {e}")
++
++    # Test 3: 3D DataArray
++    print("\nTest 3: 3D DataArray")
++    da3 = xr.DataArray([[[1., 2.], [3., 4.]], [[5., 6.], [7., 8.]]])
++    print(f"DataArray shape: {da3.shape}")
++
++    try:
++        result = da3.sum(["dim_0", "dim_1", "dim_2"], min_count=1)
++        print(f"Success! Result: {result}")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    # Test 4: Single value DataArray
++    print("\nTest 4: Single value DataArray")
++    da4 = xr.DataArray(np.nan)
++    print(f"DataArray shape: {da4.shape}")
++
++    try:
++        result = da4.sum(min_count=1)
++        print(f"Success! Result: {result}")
++    except Exception as e:
++        print(f"Error: {e}")
++
++if __name__ == "__main__":
++    test_sum_min_count_edge_cases()
+\ No newline at end of file
+diff --git a/final_test.py b/final_test.py
+new file mode 100644
+index 00000000..4ddc3440
+--- /dev/null
++++ b/final_test.py
+@@ -0,0 +1,26 @@
++import xarray as xr
++import numpy as np
++
++def test_issue_description():
++    """Test the exact scenario from the issue description."""
++    print("Testing the exact scenario from the issue description...")
++
++    # Create the DataArray from the issue description
++    da = xr.DataArray([[1., 2, 3], [4, 5, 6]])
++    print(f"DataArray shape: {da.shape}")
++
++    # Try the sum operation with min_count over multiple dimensions
++    try:
++        result = da.sum(["dim_0", "dim_1"], min_count=1)
++        print(f"Success! Result: {result}")
++        print(f"Result value: {result.values.item()}")
++        # Verify the result is correct (should be 21)
++        assert result.values.item() == 21, f"Expected 21, got {result.values.item()}"
++        print("Result verification passed!")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    print("\nAll tests passed!")
++
++if __name__ == "__main__":
++    test_issue_description()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..c6150ca3
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,25 @@
++import xarray as xr
++import numpy as np
++
++def test_sum_min_count_multidim():
++    print("Creating DataArray with multiple dimensions...")
++    da = xr.DataArray([[1., 2, 3], [4, 5, 6]])
++    print(f"DataArray shape: {da.shape}")
++
++    try:
++        print("Attempting to sum with min_count over multiple dimensions...")
++        result = da.sum(["dim_0", "dim_1"], min_count=1)
++        print(f"Success! Result: {result}")
++    except Exception as e:
++        print(f"Error: {e}")
++
++    # Also test with a single dimension to ensure that still works
++    try:
++        print("\nAttempting to sum with min_count over a single dimension...")
++        result = da.sum("dim_0", min_count=1)
++        print(f"Success! Result: {result}")
++    except Exception as e:
++        print(f"Error: {e}")
++
++if __name__ == "__main__":
++    test_sum_min_count_multidim()
+\ No newline at end of file
+diff --git a/xarray/core/nanops.py b/xarray/core/nanops.py
+index 41c8d258..3cda08f2 100644
+--- a/xarray/core/nanops.py
++++ b/xarray/core/nanops.py
+@@ -26,17 +26,19 @@ def _maybe_null_out(result, axis, mask, min_count=1):
+     """
+     xarray version of pandas.core.nanops._maybe_null_out
+     """
+-    if hasattr(axis, "__len__"):  # if tuple or list
+-        raise ValueError(
+-            "min_count is not available for reduction with more than one dimensions."
+-        )
+-
+     if axis is not None and getattr(result, "ndim", False):
+-        null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0
+-        if null_mask.any():
+-            dtype, fill_value = dtypes.maybe_promote(result.dtype)
+-            result = result.astype(dtype)
+-            result[null_mask] = fill_value
++        if hasattr(axis, "__len__"):  # if tuple or list (multiple dimensions)
++            # Calculate the total number of valid elements needed
++            total_valid = mask.size - mask.sum()
++            # If we have fewer valid elements than min_count, null out the result
++            if total_valid < min_count and getattr(result, "dtype", None) not in dtypes.NAT_TYPES:
++                result = np.nan
++        else:  # single dimension
++            null_mask = (mask.shape[axis] - mask.sum(axis) - min_count) < 0
++            if null_mask.any():
++                dtype, fill_value = dtypes.maybe_promote(result.dtype)
++                result = result.astype(dtype)
++                result[null_mask] = fill_value
+ 
+     elif getattr(result, "dtype", None) not in dtypes.NAT_TYPES:
+         null_mask = mask.size - mask.sum()

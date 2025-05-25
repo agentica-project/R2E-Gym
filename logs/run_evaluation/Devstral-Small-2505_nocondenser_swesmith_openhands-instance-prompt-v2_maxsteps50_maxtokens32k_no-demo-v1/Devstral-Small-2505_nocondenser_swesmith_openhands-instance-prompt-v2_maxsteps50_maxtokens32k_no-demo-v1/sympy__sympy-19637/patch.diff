@@ -1,0 +1,49 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..842c5dc7e4
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,21 @@
++from sympy.core.sympify import kernS
++
++# Test case 1: Expression without spaces (previously failed)
++text1 = "(2*x)/(x-1)"
++try:
++    expr1 = kernS(text1)
++    print("Test 1 (no spaces) - Success! Expression:", expr1)
++except UnboundLocalError as e:
++    print("Test 1 (no spaces) - Error:", e)
++
++# Test case 2: Expression with spaces (should work)
++text2 = "2 * ( x / ( x - 1 ) )"
++try:
++    expr2 = kernS(text2)
++    print("Test 2 (with spaces) - Success! Expression:", expr2)
++except UnboundLocalError as e:
++    print("Test 2 (with spaces) - Error:", e)
++
++# Verify both expressions are equivalent
++if expr1 != None and expr2 != None:
++    print("Both expressions are equivalent:", expr1 == expr2)
+\ No newline at end of file
+diff --git a/sympy/core/sympify.py b/sympy/core/sympify.py
+index a3f1ce2851..84d8a7d685 100644
+--- a/sympy/core/sympify.py
++++ b/sympy/core/sympify.py
+@@ -507,11 +507,12 @@ def kernS(s):
+                     break
+             s = s[:j] + ")" + s[j:]
+             i = j + 2  # the first char after 2nd )
++        # Initialize kern before it's used
++        kern = '_'
++        while kern in s:
++            kern += choice(string.ascii_letters + string.digits)
++
+         if ' ' in s:
+-            # get a unique kern
+-            kern = '_'
+-            while kern in s:
+-                kern += choice(string.ascii_letters + string.digits)
+             s = s.replace(' ', kern)
+         hit = kern in s
+ 

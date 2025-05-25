@@ -1,0 +1,80 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..efd1017d2
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,43 @@
++from sklearn.preprocessing import StandardScaler
++from sklearn.base import clone
++from sklearn.linear_model import LogisticRegression
++from sklearn.pipeline import Pipeline
++import numpy as np
++
++def test_clone_with_estimator_class():
++    """Test cloning an estimator with an estimator class as a parameter."""
++    # Test with StandardScaler
++    scaler = StandardScaler(with_mean=StandardScaler)
++    cloned_scaler = clone(scaler)
++    print("Test 1 passed: Cloned StandardScaler with StandardScaler as parameter")
++
++    # Test with LogisticRegression
++    logreg = LogisticRegression(solver='lbfgs', penalty='l2',
++                                multi_class='auto', max_iter=100,
++                                tol=0.0001, C=1.0)
++    cloned_logreg = clone(logreg)
++    print("Test 2 passed: Cloned LogisticRegression")
++
++    # Test with a pipeline containing an estimator class
++    pipe = Pipeline([
++        ('scaler', StandardScaler()),
++        ('classifier', LogisticRegression(solver='lbfgs', penalty='l2',
++                                          multi_class='auto', max_iter=100,
++                                          tol=0.0001, C=1.0))
++    ])
++    cloned_pipe = clone(pipe)
++    print("Test 3 passed: Cloned Pipeline")
++
++    # Test with nested estimator classes
++    nested_scaler = StandardScaler(with_mean=StandardScaler(with_std=StandardScaler))
++    cloned_nested_scaler = clone(nested_scaler)
++    print("Test 4 passed: Cloned nested estimator classes")
++
++    return True
++
++if __name__ == "__main__":
++    try:
++        if test_clone_with_estimator_class():
++            print("\nAll tests passed! The issue is fixed.")
++    except Exception as e:
++        print(f"\nTest failed with error: {e}")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..8625e9d3b
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,10 @@
++from sklearn.preprocessing import StandardScaler
++from sklearn.base import clone
++
++try:
++    # This should fail with the current implementation
++    result = clone(StandardScaler(with_mean=StandardScaler))
++    print("Test passed! The issue is fixed.")
++except TypeError as e:
++    print(f"Test failed with error: {e}")
++    print("This reproduces the issue described.")
+\ No newline at end of file
+diff --git a/sklearn/base.py b/sklearn/base.py
+index 56ffb18bf..34998270c 100644
+--- a/sklearn/base.py
++++ b/sklearn/base.py
+@@ -48,7 +48,7 @@ def clone(estimator, safe=True):
+     # XXX: not handling dictionaries
+     if estimator_type in (list, tuple, set, frozenset):
+         return estimator_type([clone(e, safe=safe) for e in estimator])
+-    elif not hasattr(estimator, 'get_params'):
++    elif not hasattr(estimator, 'get_params') or isinstance(estimator, type):
+         if not safe:
+             return copy.deepcopy(estimator)
+         else:

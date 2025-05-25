@@ -1,0 +1,97 @@
+diff --git a/lib/matplotlib/patches.py b/lib/matplotlib/patches.py
+index e062249589..eaac8280f0 100644
+--- a/lib/matplotlib/patches.py
++++ b/lib/matplotlib/patches.py
+@@ -586,9 +586,9 @@ class Patch(artist.Artist):
+         # docstring inherited
+         if not self.get_visible():
+             return
+-        # Patch has traditionally ignored the dashoffset.
++        # Use the full dash pattern including the offset
+         with cbook._setattr_cm(
+-                 self, _dash_pattern=(0, self._dash_pattern[1])), \
++                 self, _dash_pattern=self._dash_pattern), \
+              self._bind_draw_path_function(renderer) as draw_path:
+             path = self.get_path()
+             transform = self.get_transform()
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..d92ff6db07
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,24 @@
++import matplotlib.pyplot as plt
++import matplotlib as mpl
++import numpy as np
++
++# Create a figure with two subplots
++fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 7))
++
++# First subplot: Patch objects with different offsets
++ax1.set_title('Patch objects with different offsets')
++ax1.add_patch(mpl.patches.Rectangle((0.5,0.5),1,1, alpha=0.5, edgecolor = 'r', linewidth=4, ls=(0,(10,10))))
++ax1.add_patch(mpl.patches.Rectangle((0.5,0.5),1,1, alpha=0.5, edgecolor = 'b', linewidth=4, ls=(10,(10,10))))
++ax1.set_ylim([0,2])
++ax1.set_xlim([0,2])
++
++# Second subplot: Line2D objects with different offsets for comparison
++ax2.set_title('Line2D objects with different offsets')
++x = np.linspace(0, np.pi*4, 100)
++y = np.sin(x+np.pi/2)
++ax2.plot(x, y, ls=(0, (10, 10)), color='b')
++ax2.plot(x, y, ls=(10, (10, 10)), color='r')
++
++plt.tight_layout()
++plt.savefig('reproduction.png')
++plt.close()
+\ No newline at end of file
+diff --git a/reproduction.png b/reproduction.png
+new file mode 100644
+index 0000000000..68ac348fb8
+Binary files /dev/null and b/reproduction.png differ
+diff --git a/verification.png b/verification.png
+new file mode 100644
+index 0000000000..f398552615
+Binary files /dev/null and b/verification.png differ
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..eea30acb70
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,35 @@
++import matplotlib.pyplot as plt
++import matplotlib as mpl
++import numpy as np
++
++# Create a figure with three subplots
++fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 7))
++
++# First subplot: Patch objects with different offsets
++ax1.set_title('Patch objects with different offsets')
++ax1.add_patch(mpl.patches.Rectangle((0.5,0.5),1,1, alpha=0.5, edgecolor = 'r', linewidth=4, ls=(0,(10,10))))
++ax1.add_patch(mpl.patches.Rectangle((0.5,0.5),1,1, alpha=0.5, edgecolor = 'b', linewidth=4, ls=(10,(10,10))))
++ax1.set_ylim([0,2])
++ax1.set_xlim([0,2])
++
++# Second subplot: Patch objects with different offsets and patterns
++ax2.set_title('Patch objects with different offsets and patterns')
++ax2.add_patch(mpl.patches.Rectangle((0.5,0.5),1,1, alpha=0.5, edgecolor = 'r', linewidth=4, ls=(0,(5,5))))
++ax2.add_patch(mpl.patches.Rectangle((0.5,0.5),1,1, alpha=0.5, edgecolor = 'b', linewidth=4, ls=(3,(5,5))))
++ax2.set_ylim([0,2])
++ax2.set_xlim([0,2])
++
++# Third subplot: Line2D objects with different offsets for comparison
++ax3.set_title('Line2D objects with different offsets')
++x = np.linspace(0, np.pi*4, 100)
++y = np.sin(x+np.pi/2)
++ax3.plot(x, y, ls=(0, (10, 10)), color='b')
++ax3.plot(x, y, ls=(10, (10, 10)), color='r')
++ax3.plot(x+5, y, ls=(0, (5,5)), color='green')
++ax3.plot(x+5, y, ls=(3, (5,5)), color='orange')
++
++plt.tight_layout()
++plt.savefig('verification.png')
++plt.close()
++
++print("Verification complete. Check 'verification.png' to see the results.")
+\ No newline at end of file

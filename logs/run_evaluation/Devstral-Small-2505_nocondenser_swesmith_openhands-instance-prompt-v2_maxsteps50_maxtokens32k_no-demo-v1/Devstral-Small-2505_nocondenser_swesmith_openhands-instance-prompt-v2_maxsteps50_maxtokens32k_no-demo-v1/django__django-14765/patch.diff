@@ -1,0 +1,61 @@
+diff --git a/django/db/migrations/state.py b/django/db/migrations/state.py
+index 088f5c41f0..7b3ad45610 100644
+--- a/django/db/migrations/state.py
++++ b/django/db/migrations/state.py
+@@ -91,8 +91,9 @@ class ProjectState:
+     def __init__(self, models=None, real_apps=None):
+         self.models = models or {}
+         # Apps to include from main registry, usually unmigrated ones
+-        if real_apps:
+-            self.real_apps = real_apps if isinstance(real_apps, set) else set(real_apps)
++        if real_apps is not None:
++            assert isinstance(real_apps, set), "real_apps must be a set"
++            self.real_apps = real_apps
+         else:
+             self.real_apps = set()
+         self.is_delayed = False
+diff --git a/test_project_state.py b/test_project_state.py
+new file mode 100644
+index 0000000000..e0c5236818
+--- /dev/null
++++ b/test_project_state.py
+@@ -0,0 +1,38 @@
++import os
++import sys
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, '/testbed')
++
++# Set up Django environment
++os.environ.setdefault("DJANGO_SETTINGS_MODULE", "tests.settings")
++
++import django
++django.setup()
++
++from django.db/migrations.state import ProjectState
++
++def test_project_state_init():
++    # Test with a set
++    real_apps_set = {'app1', 'app2'}
++    state1 = ProjectState(real_apps=real_apps_set)
++    print(f"Test with set: real_apps is {type(state1.real_apps)}")
++
++    # Test with a list (should be converted to set)
++    real_apps_list = ['app1', 'app2']
++    state2 = ProjectState(real_apps=real_apps_list)
++    print(f"Test with list: real_apps is {type(state2.real_apps)}")
++
++    # Test with None (should be empty set)
++    state3 = ProjectState(real_apps=None)
++    print(f"Test with None: real_apps is {type(state3.real_apps)}")
++
++    # Test with a non-iterable (should raise an error)
++    try:
++        state4 = ProjectState(real_apps=123)
++        print("Test with non-iterable: No error raised")
++    except TypeError as e:
++        print(f"Test with non-iterable: Error raised as expected: {e}")
++
++if __name__ == "__main__":
++    test_project_state_init()
+\ No newline at end of file

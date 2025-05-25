@@ -1,0 +1,157 @@
+diff --git a/django/forms/widgets.py b/django/forms/widgets.py
+index 842b73e95c..b1ffe97dcf 100644
+--- a/django/forms/widgets.py
++++ b/django/forms/widgets.py
+@@ -1156,11 +1156,18 @@ class SelectDateWidget(Widget):
+             input_format = get_format("DATE_INPUT_FORMATS")[0]
+             input_format = formats.sanitize_strftime_format(input_format)
+             try:
+-                date_value = datetime.date(int(y), int(m), int(d))
++                year_int = int(y)
++                month_int = int(m)
++                day_int = int(d)
++                date_value = datetime.date(year_int, month_int, day_int)
+             except ValueError:
+                 # Return pseudo-ISO dates with zeros for any unselected values,
+                 # e.g. '2017-0-23'.
+                 return "%s-%s-%s" % (y or 0, m or 0, d or 0)
++            except OverflowError:
++                # Handle overflow by returning the string representation
++                # This preserves the user input without crashing
++                return "%s-%s-%s" % (y, m, d)
+             return date_value.strftime(input_format)
+         return data.get(name)
+ 
+diff --git a/repro_overflow.py b/repro_overflow.py
+new file mode 100644
+index 0000000000..70669dd753
+--- /dev/null
++++ b/repro_overflow.py
+@@ -0,0 +1,45 @@
++import sys
++import datetime
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.forms',
++        ],
++        USE_I18N=True,
++    )
++    django.setup()
++
++from django.forms import SelectDateWidget
++
++def test_overflow():
++    widget = SelectDateWidget()
++
++    # Test with a value that would cause OverflowError
++    data = {
++        'field_year': str(sys.maxsize + 1),
++        'field_month': '1',
++        'field_day': '1'
++    }
++
++    result = widget.value_from_datadict(data, {}, 'field')
++    print(f"Result with large year: {result}")
++    if result == f"{sys.maxsize + 1}-1-1":
++        print("Fix successful: Large year handled correctly")
++
++    # Test with normal values to ensure existing functionality works
++    data = {
++        'field_year': '2023',
++        'field_month': '10',
++        'field_day': '5'
++    }
++    result = widget.value_from_datadict(data, {}, 'field')
++    print(f"Result with normal date: {result}")
++
++if __name__ == "__main__":
++    print(f"Python sys.maxsize: {sys.maxsize}")
++    test_overflow()
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..56af86f16c
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,74 @@
++import sys
++import os
++import django
++from django.conf import settings
++from django.forms import SelectDateWidget
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.forms',
++        ],
++        USE_I18N=True,
++    )
++    django.setup()
++
++def test_normal_values():
++    """Test that normal values still work correctly."""
++    widget = SelectDateWidget()
++    data = {
++        'field_year': '2023',
++        'field_month': '10',
++        'field_day': '5'
++    }
++    result = widget.value_from_datadict(data, {}, 'field')
++    assert result == '2023-10-05', f"Expected '2023-10-05', got {result}"
++    print("Normal values test passed")
++
++def test_large_values():
++    """Test that large values don't cause OverflowError."""
++    widget = SelectDateWidget()
++    data = {
++        'field_year': str(sys.maxsize + 1),
++        'field_month': '1',
++        'field_day': '1'
++    }
++    result = widget.value_from_datadict(data, {}, 'field')
++    expected = f"{sys.maxsize + 1}-1-1"
++    assert result == expected, f"Expected '{expected}', got {result}"
++    print("Large values test passed")
++
++def test_mixed_values():
++    """Test with a mix of normal and large values."""
++    widget = SelectDateWidget()
++    data = {
++        'field_year': str(sys.maxsize + 1),
++        'field_month': '12',
++        'field_day': '9'
++    }
++    result = widget.value_from_datadict(data, {}, 'field')
++    expected = f"{sys.maxsize + 1}-12-9"
++    assert result == expected, f"Expected '{expected}', got {result}"
++    print("Mixed values test passed")
++
++def test_invalid_values():
++    """Test with invalid values (non-numeric)."""
++    widget = SelectDateWidget()
++    data = {
++        'field_year': 'abc',
++        'field_month': '12',
++        'field_day': '9'
++    }
++    result = widget.value_from_datadict(data, {}, 'field')
++    expected = 'abc-12-9'
++    assert result == expected, f"Expected '{expected}', got {result}"
++    print("Invalid values test passed")
++
++if __name__ == "__main__":
++    print(f"Python sys.maxsize: {sys.maxsize}")
++    test_normal_values()
++    test_large_values()
++    test_mixed_values()
++    test_invalid_values()
++    print("All tests passed!")
+\ No newline at end of file

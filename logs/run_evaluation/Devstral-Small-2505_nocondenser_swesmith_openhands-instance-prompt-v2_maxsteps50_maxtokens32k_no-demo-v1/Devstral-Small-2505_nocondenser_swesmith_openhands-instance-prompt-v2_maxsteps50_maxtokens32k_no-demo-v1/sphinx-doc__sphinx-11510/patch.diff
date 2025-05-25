@@ -1,0 +1,277 @@
+diff --git a/sphinx/directives/other.py b/sphinx/directives/other.py
+index 19f7c0a8d..067b1184b 100644
+--- a/sphinx/directives/other.py
++++ b/sphinx/directives/other.py
+@@ -373,10 +373,38 @@ class Include(BaseInclude, SphinxDirective):
+            self.arguments[0].endswith('>'):
+             # docutils "standard" includes, do not do path processing
+             return super().run()
++
+         rel_filename, filename = self.env.relfn2path(self.arguments[0])
+         self.arguments[0] = filename
+         self.env.note_included(filename)
+-        return super().run()
++
++        # Process the included file through the source-read event
++        # Read the content of the included file
++        with open(filename, 'r', encoding=self.options.get(
++            'encoding', self.state.document.settings.input_encoding)) as f:
++            content = f.read()
++
++        # Process the content through the source-read event
++        arg = [content]
++        self.env.app.events.emit('source-read', rel_filename, arg)
++        processed_content = arg[0]
++
++        # Replace the original content with the processed content
++        # This is a bit of a hack, but it works
++        import docutils.statemachine
++        include_lines = docutils.statemachine.string2lines(
++            processed_content,
++            tab_width=self.state.document.settings.tab_width,
++            convert_whitespace=True
++        )
++        include_lines = docutils.statemachine.StringList(
++            include_lines, filename)
++
++        # Insert the processed content directly into the state machine
++        self.state_machine.insert_input(include_lines, filename)
++
++        # Return an empty list to indicate that we've already inserted the content
++        return []
+ 
+ 
+ def setup(app: Sphinx) -> dict[str, Any]:
+diff --git a/test_include_replacement.py b/test_include_replacement.py
+new file mode 100755
+index 000000000..95014b02e
+--- /dev/null
++++ b/test_include_replacement.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python3
++
++import os
++import shutil
++import tempfile
++import subprocess
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Created test directory: {test_dir}")
++
++# Create the necessary files
++os.makedirs(os.path.join(test_dir, "doc"))
++
++# Create conf.py
++with open(os.path.join(test_dir, "doc", "conf.py"), "w") as f:
++    f.write("""
++import sys
++import os
++
++sys.path.insert(0, os.path.abspath('..'))
++
++extensions = [
++        'my_extension'
++]
++""")
++
++# Create index.rst
++with open(os.path.join(test_dir, "doc", "index.rst"), "w") as f:
++    f.write("""
++This is a test
++==============
++
++.. include:: something-to-include.rst
++
++&REPLACE_ME;
++""")
++
++# Create something-to-include.rst
++with open(os.path.join(test_dir, "doc", "something-to-include.rst"), "w") as f:
++    f.write("""
++Testing
++=======
++
++&REPLACE_ME;
++""")
++
++# Create my_extension.py
++with open(os.path.join(test_dir, "my_extension.py"), "w") as f:
++    f.write("""
++#!/usr/bin/env python3
++
++from sphinx.application import Sphinx
++
++__version__ = '1.0'
++
++def subst_vars_replace(app: Sphinx, docname, source):
++    print(f"Processing {docname}")
++    print(f"Content before: {source[0]}")
++    result = source[0]
++    result = result.replace("&REPLACE_ME;", "REPLACED")
++    source[0] = result
++    print(f"Content after: {source[0]}")
++
++def setup(app: Sphinx):
++    app.connect('source-read', subst_vars_replace)
++
++    return dict(
++        version=__version__,
++        parallel_read_safe=True,
++        parallel_write_safe=True
++    )
++""")
++
++# Run sphinx-build
++os.chdir(test_dir)
++result = subprocess.run(["sphinx-build", "-M", "html", "doc", "build"],
++                        capture_output=True, text=True)
++
++print("Sphinx-build output:")
++print(result.stdout)
++print(result.stderr)
++
++# Check if the replacement worked
++html_file = os.path.join(test_dir, "build", "html", "index.html")
++if os.path.exists(html_file):
++    with open(html_file, "r") as f:
++        content = f.read()
++        print("\nHTML content:")
++        print(content)
++
++        # Check if the replacement worked in both places
++        if "&REPLACE_ME;" in content:
++            print("\nTEST FAILED: &REPLACE_ME; still present in the output")
++            if "REPLACED" in content:
++                print("PARTIAL SUCCESS: REPLACED found but &REPLACE_ME; still present")
++        else:
++            print("\nTEST PASSED: &REPLACE_ME; replaced successfully")
++else:
++    print(f"HTML file not found at {html_file}")
++
++# Clean up
++shutil.rmtree(test_dir)
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index a3dc56211..c76147de3 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -24,7 +24,7 @@ setenv =
+     PYTHONWARNINGS = error
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -X warn_default_encoding -m pytest --durations 25 {posargs}
++    python -X dev -X warn_default_encoding -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:docs]
+ basepython = python3
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100755
+index 000000000..95014b02e
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,103 @@
++#!/usr/bin/env python3
++
++import os
++import shutil
++import tempfile
++import subprocess
++
++# Create a temporary directory for the test
++test_dir = tempfile.mkdtemp()
++print(f"Created test directory: {test_dir}")
++
++# Create the necessary files
++os.makedirs(os.path.join(test_dir, "doc"))
++
++# Create conf.py
++with open(os.path.join(test_dir, "doc", "conf.py"), "w") as f:
++    f.write("""
++import sys
++import os
++
++sys.path.insert(0, os.path.abspath('..'))
++
++extensions = [
++        'my_extension'
++]
++""")
++
++# Create index.rst
++with open(os.path.join(test_dir, "doc", "index.rst"), "w") as f:
++    f.write("""
++This is a test
++==============
++
++.. include:: something-to-include.rst
++
++&REPLACE_ME;
++""")
++
++# Create something-to-include.rst
++with open(os.path.join(test_dir, "doc", "something-to-include.rst"), "w") as f:
++    f.write("""
++Testing
++=======
++
++&REPLACE_ME;
++""")
++
++# Create my_extension.py
++with open(os.path.join(test_dir, "my_extension.py"), "w") as f:
++    f.write("""
++#!/usr/bin/env python3
++
++from sphinx.application import Sphinx
++
++__version__ = '1.0'
++
++def subst_vars_replace(app: Sphinx, docname, source):
++    print(f"Processing {docname}")
++    print(f"Content before: {source[0]}")
++    result = source[0]
++    result = result.replace("&REPLACE_ME;", "REPLACED")
++    source[0] = result
++    print(f"Content after: {source[0]}")
++
++def setup(app: Sphinx):
++    app.connect('source-read', subst_vars_replace)
++
++    return dict(
++        version=__version__,
++        parallel_read_safe=True,
++        parallel_write_safe=True
++    )
++""")
++
++# Run sphinx-build
++os.chdir(test_dir)
++result = subprocess.run(["sphinx-build", "-M", "html", "doc", "build"],
++                        capture_output=True, text=True)
++
++print("Sphinx-build output:")
++print(result.stdout)
++print(result.stderr)
++
++# Check if the replacement worked
++html_file = os.path.join(test_dir, "build", "html", "index.html")
++if os.path.exists(html_file):
++    with open(html_file, "r") as f:
++        content = f.read()
++        print("\nHTML content:")
++        print(content)
++
++        # Check if the replacement worked in both places
++        if "&REPLACE_ME;" in content:
++            print("\nTEST FAILED: &REPLACE_ME; still present in the output")
++            if "REPLACED" in content:
++                print("PARTIAL SUCCESS: REPLACED found but &REPLACE_ME; still present")
++        else:
++            print("\nTEST PASSED: &REPLACE_ME; replaced successfully")
++else:
++    print(f"HTML file not found at {html_file}")
++
++# Clean up
++shutil.rmtree(test_dir)
+\ No newline at end of file

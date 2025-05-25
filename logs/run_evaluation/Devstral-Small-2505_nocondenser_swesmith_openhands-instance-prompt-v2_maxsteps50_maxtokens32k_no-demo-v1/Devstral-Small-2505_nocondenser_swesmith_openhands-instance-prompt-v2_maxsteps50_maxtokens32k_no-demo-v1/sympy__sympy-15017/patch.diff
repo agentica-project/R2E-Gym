@@ -1,0 +1,111 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..98887be4ec
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,53 @@
++import sympy
++
++def test_rank0_array():
++    # Test with a scalar value
++    a = sympy.Array(3)
++    assert len(a) == 1
++    assert len(list(a)) == 1
++    assert a.rank() == 0
++    assert a.shape == ()
++
++    # Test with a symbolic scalar
++    x = sympy.symbols('x')
++    b = sympy.Array(x)
++    assert len(b) == 1
++    assert len(list(b)) == 1
++    assert b.rank() == 0
++    assert b.shape == ()
++
++    print("Rank-0 array tests passed!")
++
++def test_rank1_array():
++    # Test with a 1D array
++    a = sympy.Array([1, 2, 3])
++    assert len(a) == 3
++    assert len(list(a)) == 3
++    assert a.rank() == 1
++    assert a.shape == (3,)
++
++    # Test with a symbolic 1D array
++    x, y, z = sympy.symbols('x y z')
++    b = sympy.Array([x, y, z])
++    assert len(b) == 3
++    assert len(list(b)) == 3
++    assert b.rank() == 1
++    assert b.shape == (3,)
++
++    print("Rank-1 array tests passed!")
++
++def test_rank2_array():
++    # Test with a 2D array
++    a = sympy.Array([[1, 2], [3, 4]])
++    assert len(a) == 4
++    assert len(list(a)) == 4
++    assert a.rank() == 2
++    assert a.shape == (2, 2)
++
++    print("Rank-2 array tests passed!")
++
++if __name__ == "__main__":
++    test_rank0_array()
++    test_rank1_array()
++    test_rank2_array()
++    print("All tests passed!")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..f2e7640f74
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,17 @@
++import sympy
++
++# Create a rank-0 array (scalar) in SymPy
++a = sympy.Array(3)
++print("SymPy Array:", a)
++print("Rank:", a.rank())
++print("Shape:", a.shape)
++print("len(a):", len(a))
++print("len(list(a)):", len(list(a)))
++
++# Create a rank-1 array for comparison
++b = sympy.Array([1, 2, 3])
++print("\nRank-1 Array:", b)
++print("Rank:", b.rank())
++print("Shape:", b.shape)
++print("len(b):", len(b))
++print("len(list(b)):", len(list(b)))
+\ No newline at end of file
+diff --git a/sympy/tensor/array/ndim_array.py b/sympy/tensor/array/ndim_array.py
+index 099b291167..ccc015347b 100644
+--- a/sympy/tensor/array/ndim_array.py
++++ b/sympy/tensor/array/ndim_array.py
+@@ -175,6 +175,9 @@ def __len__(self):
+         9
+ 
+         """
++        # For rank-0 arrays (scalars), return 1 to match NumPy behavior
++        if self.rank() == 0:
++            return 1
+         return self._loop_size
+ 
+     @property
+diff --git a/sympy/tensor/array/tests/test_immutable_ndim_array.py b/sympy/tensor/array/tests/test_immutable_ndim_array.py
+index 5a576c44f0..44b317a4c7 100644
+--- a/sympy/tensor/array/tests/test_immutable_ndim_array.py
++++ b/sympy/tensor/array/tests/test_immutable_ndim_array.py
+@@ -73,7 +73,7 @@ def test_ndim_array_initiation():
+ 
+     from sympy.abc import x
+     rank_zero_array = ImmutableDenseNDimArray(x)
+-    assert len(rank_zero_array) == 0
++    assert len(rank_zero_array) == 1
+     assert rank_zero_array.shape == ()
+     assert rank_zero_array.rank() == 0
+     assert rank_zero_array[()] == x

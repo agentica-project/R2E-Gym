@@ -1,0 +1,163 @@
+diff --git a/debug_where_attrs.py b/debug_where_attrs.py
+new file mode 100644
+index 00000000..bd9c3263
+--- /dev/null
++++ b/debug_where_attrs.py
+@@ -0,0 +1,36 @@
++import numpy as np
++import xarray as xr
++from xarray.core.computation import apply_ufunc
++from xarray.core import duck_array_ops
++
++# Create a DataArray with attributes
++data = xr.DataArray(np.ones([10, 10], dtype=np.int8))
++data.attrs["attr_1"] = "test1"
++data.attrs["attr_2"] = "test2"
++
++print("Original DataArray:")
++print(f"Attributes: {data.attrs}")
++print(f"Dtype: {data.dtype}")
++
++# Test direct application of apply_ufunc
++result1 = apply_ufunc(
++    duck_array_ops.where,
++    data == 1,
++    data,
++    0,
++    join="exact",
++    dataset_join="exact",
++    dask="allowed",
++    keep_attrs=True,
++)
++
++print("\nResult with apply_ufunc (keep_attrs=True):")
++print(f"Attributes: {result1.attrs}")
++print(f"Dtype: {result1.dtype}")
++
++# Test xr.where
++result2 = xr.where(data == 1, data, 0)
++
++print("\nResult with xr.where:")
++print(f"Attributes: {result2.attrs}")
++print(f"Dtype: {result2.dtype}")
+\ No newline at end of file
+diff --git a/debug_where_attrs_detailed.py b/debug_where_attrs_detailed.py
+new file mode 100644
+index 00000000..73689eb9
+--- /dev/null
++++ b/debug_where_attrs_detailed.py
+@@ -0,0 +1,52 @@
++import numpy as np
++import xarray as xr
++from xarray.core.computation import apply_ufunc, merge_attrs
++from xarray.core import duck_array_ops
++from xarray.core.dataarray import DataArray
++
++# Create a DataArray with attributes
++data = xr.DataArray(np.ones([10, 10], dtype=np.int8))
++data.attrs["attr_1"] = "test1"
++data.attrs["attr_2"] = "test2"
++
++print("Original DataArray:")
++print(f"Attributes: {data.attrs}")
++print(f"Dtype: {data.dtype}")
++
++# Test merge_attrs directly
++attrs_list = [data.attrs]
++print("\nTesting merge_attrs directly:")
++print(f"Input attrs: {attrs_list}")
++print(f"Result with combine_attrs='override': {merge_attrs(attrs_list, 'override')}")
++print(f"Result with combine_attrs='override': {merge_attrs(attrs_list, 'override')}")
++print(f"Result with combine_attrs='drop': {merge_attrs(attrs_list, 'drop')}")
++print(f"Result with combine_attrs='no_conflicts': {merge_attrs(attrs_list, 'no_conflicts')}")
++
++# Test direct application of apply_ufunc
++result1 = apply_ufunc(
++    duck_array_ops.where,
++    data == 1,
++    data,
++    0,
++    join="exact",
++    dataset_join="exact",
++    dask="allowed",
++    keep_attrs=True,
++)
++
++print("\nResult with apply_ufunc (keep_attrs=True):")
++print(f"Attributes: {result1.attrs}")
++print(f"Dtype: {result1.dtype}")
++
++# Test xr.where
++result2 = xr.where(data == 1, data, 0)
++
++print("\nResult with xr.where:")
++print(f"Attributes: {result2.attrs}")
++print(f"Dtype: {result2.dtype}")
++
++# Let's try to manually create a DataArray with the same attributes
++result3 = xr.where(data == 1, data, 0)
++result3.attrs = data.attrs.copy()
++print("\nManually copied attributes:")
++print(f"Attributes: {result3.attrs}")
+\ No newline at end of file
+diff --git a/reproduce_where_attrs_issue.py b/reproduce_where_attrs_issue.py
+new file mode 100644
+index 00000000..de3361fa
+--- /dev/null
++++ b/reproduce_where_attrs_issue.py
+@@ -0,0 +1,16 @@
++import numpy as np
++import xarray as xr
++
++# Create a DataArray with attributes
++data = xr.DataArray(np.ones([10, 10], dtype=np.int8))
++data.attrs["attr_1"] = "test1"
++data.attrs["attr_2"] = "test2"
++
++# Use xr.where on the DataArray
++data2 = xr.where(data == 1, 5, 0)
++
++# Check if attributes are preserved
++print("Original DataArray attributes:", data.attrs)
++print("Resulting DataArray attributes:", data2.attrs)
++print("Original dtype:", data.dtype)
++print("Resulting dtype:", data2.dtype)
+\ No newline at end of file
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 9fe93c88..62e37aa2 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1817,6 +1817,7 @@ def where(cond, x, y):
+         join="exact",
+         dataset_join="exact",
+         dask="allowed",
++        keep_attrs=True,
+     )
+ 
+ 
+@@ -1922,7 +1923,7 @@ def unify_chunks(*objects: T_Xarray) -> Tuple[T_Xarray, ...]:
+ 
+     Returns
+     -------
+-    unified (DataArray or Dataset) – Tuple of objects with the same type as
++    unified (DataArray or Dataset) â€“ Tuple of objects with the same type as
+     *objects with consistent chunk sizes for all dask-array variables
+ 
+     See Also
+diff --git a/xarray/core/duck_array_ops.py b/xarray/core/duck_array_ops.py
+index 5b0d9a4f..1f495e74 100644
+--- a/xarray/core/duck_array_ops.py
++++ b/xarray/core/duck_array_ops.py
+@@ -283,7 +283,11 @@ def count(data, axis=None):
+ 
+ def where(condition, x, y):
+     """Three argument where() with better dtype promotion rules."""
+-    return _where(condition, *as_shared_dtype([x, y]))
++    result = _where(condition, *as_shared_dtype([x, y]))
++    # Preserve the dtype of x if it exists
++    if hasattr(x, 'dtype') and result.dtype != x.dtype:
++        return result.astype(x.dtype)
++    return result
+ 
+ 
+ def where_method(data, cond, other=dtypes.NA):

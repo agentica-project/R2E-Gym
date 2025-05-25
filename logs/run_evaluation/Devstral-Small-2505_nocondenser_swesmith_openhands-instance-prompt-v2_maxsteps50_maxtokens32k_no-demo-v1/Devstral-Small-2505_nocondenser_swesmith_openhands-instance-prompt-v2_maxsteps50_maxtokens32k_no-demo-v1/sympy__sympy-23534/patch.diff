@@ -1,0 +1,97 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..f01cfff4ae
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,44 @@
++import sympy as smp
++
++def test_case(description, code):
++    print(f"\n=== {description} ===")
++    local_vars = {"smp": smp}
++    exec(code, {}, local_vars)
++    print(f"Result: {local_vars['result']}")
++
++# Test case 1: Original issue
++test_case("Original issue",
++"""
++q, u = smp.symbols(('q:2', 'u:2'), cls=smp.Function)
++result = type(q[0])
++""")
++
++# Test case 2: Multiple ranges
++test_case("Multiple ranges",
++"""
++a, b = smp.symbols(('x:2', 'y:2'), cls=smp.Function)
++result = type(a[0])
++""")
++
++# Test case 3: Nested parentheses
++test_case("Nested parentheses",
++"""
++f, g = smp.symbols(('f(1:2)', 'g(1:2)'), cls=smp.Function)
++result = type(f[0])
++""")
++
++# Test case 4: List input
++test_case("List input",
++"""
++h = smp.symbols(['h1', 'h2'], cls=smp.Function)
++result = type(h[0])
++""")
++
++# Test case 5: Set input
++test_case("Set input",
++"""
++i = smp.symbols({'i1', 'i2'}, cls=smp.Function)
++result = type(next(iter(i)))
++""")
++
++print("\nAll expected types should be <class 'sympy.core.function.UndefinedFunction'>")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..55509fa54b
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,8 @@
++import sympy as smp
++
++# Reproduce the issue
++q, u = smp.symbols(('q:2', 'u:2'), cls=smp.Function)
++print("Type of q[0]:", type(q[0]))
++
++# Expected: <class 'sympy.core.function.UndefinedFunction'>
++# Actual: <class 'sympy.core.symbol.Symbol'>
+\ No newline at end of file
+diff --git a/sympy/core/symbol.py b/sympy/core/symbol.py
+index f4a555c13f..2aca8bab27 100644
+--- a/sympy/core/symbol.py
++++ b/sympy/core/symbol.py
+@@ -791,7 +791,7 @@ def literal(s):
+         return tuple(result)
+     else:
+         for name in names:
+-            result.append(symbols(name, **args))
++            result.append(symbols(name, cls=cls, **args))
+ 
+         return type(names)(result)
+ 
+diff --git a/sympy/core/tests/test_symbol.py b/sympy/core/tests/test_symbol.py
+index 19494c2083..3276f9f36d 100644
+--- a/sympy/core/tests/test_symbol.py
++++ b/sympy/core/tests/test_symbol.py
+@@ -335,6 +335,13 @@ def test_symbols_become_functions_issue_3539():
+     raises(TypeError, lambda: alpha(2.5))
+     raises(TypeError, lambda: phi(t))
+ 
++def test_symbols_with_function_class():
++    """Test that symbols with cls=Function work correctly with tuple unpacking."""
++    from sympy import Function
++    q, u = symbols(('q:2', 'u:2'), cls=Function)
++    assert isinstance(q[0], Function)
++    assert isinstance(u[0], Function)
++
+ 
+ def test_unicode():
+     xu = Symbol('x')

@@ -1,0 +1,166 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..8f4a2733e7
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,17 @@
++from sympy import FiniteSet, Interval, Complement, Symbol
++from sympy.abc import x, y
++
++# Create a finite set with symbols and a number
++a = FiniteSet(x, y, 2)
++
++# Create an interval
++b = Interval(-10, 10)
++
++# Compute the complement
++result = Complement(a, b)
++
++# Print the result
++print(f"a = {a}")
++print(f"b = {b}")
++print(f"Complement(a, b) = {result}")
++print(f"Expected: {{x, y, 2}} \\ [-10, 10]")
+\ No newline at end of file
+diff --git a/sympy/sets/sets.py b/sympy/sets/sets.py
+index 917717bb74..9f629ca195 100644
+--- a/sympy/sets/sets.py
++++ b/sympy/sets/sets.py
+@@ -1000,9 +1000,26 @@ def _complement(self, other):
+ 
+         if isinstance(other, FiniteSet):
+             nums = [m for m in other.args if m.is_number]
++            syms = [m for m in other.args if m.is_Symbol]
++
+             if nums == []:
++                # If there are only symbols, return them as is
++                if syms:
++                    return FiniteSet(*syms)
+                 return None
+ 
++            # Create a finite set with just the numbers that are not in the interval
++            result_nums = [num for num in nums if num < self.start or num > self.end]
++
++            # If there are symbolic elements, include them in the result
++            if syms:
++                result_nums.extend(syms)
++
++            if result_nums:
++                return FiniteSet(*result_nums)
++
++            return None
++
+         return Set._complement(self, other)
+ 
+ 
+@@ -1709,6 +1726,22 @@ class Complement(Set, EvalfMixin):
+ 
+     def __new__(cls, a, b, evaluate=True):
+         if evaluate:
++            # Special case for FiniteSet with mixture of symbols and numbers
++            if isinstance(a, FiniteSet) and isinstance(b, Interval):
++                nums = [m for m in a.args if m.is_number]
++                syms = [m for m in a.args if m.is_Symbol]
++
++                if nums:
++                    # Create a finite set with just the numbers that are not in the interval
++                    result_nums = [num for num in nums if num < b.start or num > b.end]
++
++                    # If there are symbolic elements, include them in the result
++                    if syms:
++                        result_nums.extend(syms)
++
++                    if result_nums:
++                        return FiniteSet(*result_nums)
++
+             return Complement.reduce(a, b)
+ 
+         return Basic.__new__(cls, a, b)
+@@ -1725,6 +1758,25 @@ def reduce(A, B):
+         if isinstance(B, Union):
+             return Intersection(s.complement(A) for s in B.args)
+ 
++        # Special case for FiniteSet with mixture of symbols and numbers
++        if isinstance(A, FiniteSet) and isinstance(B, Interval):
++            nums = [m for m in A.args if m.is_number]
++            syms = [m for m in A.args if m.is_Symbol]
++
++            if nums:
++                # Create a finite set with just the numeric elements
++                num_set = FiniteSet(*nums)
++                # Get the complement of the numeric elements with the interval
++                num_complement = B._complement(num_set)
++
++                if num_complement is not None:
++                    # Create a union of the numeric complement and the symbols
++                    result_set = FiniteSet(*syms)
++                    for num in nums:
++                        if num not in B:
++                            result_set = result_set.union(FiniteSet(num))
++                    return result_set
++
+         result = B._complement(A)
+         if result != None:
+             return result
+@@ -1932,24 +1984,45 @@ def _intersect(self, other):
+ 
+     def _complement(self, other):
+         if isinstance(other, Interval):
++            # Separate numeric and symbolic elements
+             nums = sorted(m for m in self.args if m.is_number)
+-            if other == S.Reals and nums != []:
+-                syms = [m for m in self.args if m.is_Symbol]
+-                # Reals cannot contain elements other than numbers and symbols.
+-
+-                intervals = []  # Build up a list of intervals between the elements
+-                intervals += [Interval(S.NegativeInfinity, nums[0], True, True)]
+-                for a, b in zip(nums[:-1], nums[1:]):
+-                    intervals.append(Interval(a, b, True, True))  # both open
+-                intervals.append(Interval(nums[-1], S.Infinity, True, True))
+-
+-                if syms != []:
+-                    return Complement(Union(intervals, evaluate=False),
+-                            FiniteSet(*syms), evaluate=False)
++            syms = [m for m in self.args if m.is_Symbol]
++
++            # Handle both S.Reals and regular intervals
++            if nums != []:
++                # Process numeric elements
++                if other == S.Reals:
++                    # Reals cannot contain elements other than numbers and symbols.
++                    intervals = []  # Build up a list of intervals between the elements
++                    intervals += [Interval(S.NegativeInfinity, nums[0], True, True)]
++                    for a, b in zip(nums[:-1], nums[1:]):
++                        intervals.append(Interval(a, b, True, True))  # both open
++                    intervals.append(Interval(nums[-1], S.Infinity, True, True))
++
++                    if syms != []:
++                        # Include both the intervals and the symbols in the complement
++                        return Complement(Union(intervals, evaluate=False),
++                                FiniteSet(*syms), evaluate=False)
++                    else:
++                        return Union(intervals, evaluate=False)
+                 else:
+-                    return Union(intervals, evaluate=False)
+-            elif nums == []:
+-                return None
++                    # For regular intervals, we need to handle both numeric and symbolic elements
++                    # Create a finite set with just the numbers that are not in the interval
++                    result_nums = [num for num in nums if num < other.start or num > other.end]
++
++                    # If there are symbolic elements, include them in the result
++                    if syms:
++                        result_nums.extend(syms)
++
++                    if result_nums:
++                        return FiniteSet(*result_nums)
++
++            elif syms != []:
++                # If there are no numeric elements but there are symbols,
++                # we still need to handle the complement with the symbols
++                return FiniteSet(*syms)
++
++            return None
+ 
+         elif isinstance(other, FiniteSet):
+             unk = []

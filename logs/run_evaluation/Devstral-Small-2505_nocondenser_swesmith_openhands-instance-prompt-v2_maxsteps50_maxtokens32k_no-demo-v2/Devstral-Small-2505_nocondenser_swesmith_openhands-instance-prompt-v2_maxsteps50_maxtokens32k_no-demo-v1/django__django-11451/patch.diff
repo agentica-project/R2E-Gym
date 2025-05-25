@@ -1,0 +1,170 @@
+diff --git a/django/contrib/auth/backends.py b/django/contrib/auth/backends.py
+index f4b1722757..eca22025a1 100644
+--- a/django/contrib/auth/backends.py
++++ b/django/contrib/auth/backends.py
+@@ -37,8 +37,15 @@ class ModelBackend(BaseBackend):
+     """
+ 
+     def authenticate(self, request, username=None, password=None, **kwargs):
++        # If password is None, we can't authenticate
++        if password is None:
++            return
++        # If username is None, try to get it from kwargs
+         if username is None:
+             username = kwargs.get(UserModel.USERNAME_FIELD)
++            # If we still don't have a username, we can't authenticate
++            if username is None:
++                return
+         try:
+             user = UserModel._default_manager.get_by_natural_key(username)
+         except UserModel.DoesNotExist:
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..107a54ce29
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,73 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    AUTHENTICATION_BACKENDS=[
++        'django.contrib.auth.backends.ModelBackend',
++    ]
++)
++
++django.setup()
++
++# Create database tables
++from django.core.management import call_command
++call_command('migrate', 'auth')
++
++from django.contrib.auth import authenticate
++from django.contrib.auth.models import User
++from django.db import connection
++from contextlib import contextmanager
++
++@contextmanager
++def capture_queries():
++    # Store the original queries list
++    original_queries = getattr(connection, 'queries', [])
++    # Create a new empty list for this context
++    connection.queries = []
++    try:
++        yield
++    finally:
++        # Restore the original queries list
++        setattr(connection, 'queries', original_queries)
++        print(f"Queries executed: {len(connection.queries)}")
++        for query in connection.queries:
++            print(f"  {query['sql']}")
++
++# Create a test user
++User.objects.create_user(username='testuser', password='testpass')
++
++# Function to test the issue
++def test_authenticate_with_none_username():
++    print("Testing with username=None and password=None:")
++    with capture_queries():
++        # This should not make a database query
++        user = authenticate(username=None, password=None)
++        print(f"User returned: {user}")
++
++    print("\nTesting with username=None:")
++    with capture_queries():
++        # This should not make a database query
++        user = authenticate(username=None)
++        print(f"User returned: {user}")
++
++    print("\nTesting with password=None:")
++    with capture_queries():
++        # This should not make a database query
++        user = authenticate(password=None)
++        print(f"User returned: {user}")
++
++if __name__ == "__main__":
++    test_authenticate_with_none_username()
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..d507489206
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,63 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++settings.configure(
++    INSTALLED_APPS=[
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    DATABASES={
++        'default': {
++            'ENGINE': 'django.db.backends.sqlite3',
++            'NAME': ':memory:',
++        }
++    },
++    AUTHENTICATION_BACKENDS=[
++        'django.contrib.auth.backends.ModelBackend',
++    ]
++)
++
++django.setup()
++
++# Create database tables
++from django.core.management import call_command
++call_command('migrate', 'auth')
++
++from django.contrib.auth import authenticate
++from django.contrib.auth.models import User
++
++# Create a test user
++User.objects.create_user(username='testuser', password='testpass')
++
++# Import the ModelBackend directly to inspect its behavior
++from django.contrib.auth.backends import ModelBackend
++
++# We don't need to instantiate ModelBackend, we can call the class method directly
++# But we'll create a simple request object
++class DummyRequest:
++    pass
++
++request = DummyRequest()
++
++# Test with username=None, password=None
++print("Testing with username=None, password=None:")
++result = ModelBackend().authenticate(request, username=None, password=None)
++print(f"Result: {result}")
++
++# Test with username=None, password='test'
++print("\nTesting with username=None, password='test':")
++result = ModelBackend().authenticate(request, username=None, password='test')
++print(f"Result: {result}")
++
++# Test with username='testuser', password=None
++print("\nTesting with username='testuser', password=None:")
++result = ModelBackend().authenticate(request, username='testuser', password=None)
++print(f"Result: {result}")
++
++# Test with username='testuser', password='testpass'
++print("\nTesting with username='testuser', password='testpass':")
++result = ModelBackend().authenticate(request, username='testuser', password='testpass')
++print(f"Result: {result}")
+\ No newline at end of file

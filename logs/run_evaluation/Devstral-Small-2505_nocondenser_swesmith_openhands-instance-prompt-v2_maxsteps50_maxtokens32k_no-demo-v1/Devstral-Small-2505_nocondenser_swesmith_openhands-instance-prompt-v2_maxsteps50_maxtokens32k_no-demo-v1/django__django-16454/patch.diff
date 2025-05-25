@@ -1,0 +1,152 @@
+diff --git a/django/core/management/base.py b/django/core/management/base.py
+index abc6f79a15..f5eea1ec79 100644
+--- a/django/core/management/base.py
++++ b/django/core/management/base.py
+@@ -71,6 +71,35 @@ class CommandParser(ArgumentParser):
+         else:
+             raise CommandError("Error: %s" % message)
+ 
++    def add_subparsers(self, **kwargs):
++        """
++        Override add_subparsers to ensure subparsers inherit our custom attributes.
++        """
++        # Get the original subparsers action
++        action = super().add_subparsers(**kwargs)
++
++        # Store reference to the original add_parser method
++        original_add_parser = action.add_parser
++
++        # Define a wrapper for add_parser that copies our custom attributes
++        def wrapped_add_parser(name, **parser_kwargs):
++            # Create the parser using the original method
++            parser = original_add_parser(name, **parser_kwargs)
++
++            # Copy our custom attributes to the parser
++            parser.missing_args_message = self.missing_args_message
++            parser.called_from_command_line = self.called_from_command_line
++
++            # Copy our error method to the parser
++            parser.error = self.error
++
++            return parser
++
++        # Replace the add_parser method with our wrapper
++        action.add_parser = wrapped_add_parser
++
++        return action
++
+ 
+ def handle_default_options(options):
+     """
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..09eb426a47
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import sys
++import io
++import traceback
++import os
++from django.core.management.base import BaseCommand, CommandParser, CommandError
++
++# Set a minimal settings module to avoid configuration errors
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++
++class TestCommand(BaseCommand):
++    def add_arguments(self, parser):
++        subparsers = parser.add_subparsers(required=True)
++        create = subparsers.add_parser("create")
++        create.add_argument("name")
++
++    def handle(self, *args, **options):
++        pass
++
++def run_test_case(argv, case_name):
++    print(f"\n{case_name}")
++    old_argv = sys.argv
++    sys.argv = argv
++    command = TestCommand()
++
++    try:
++        command.run_from_argv(sys.argv)
++    except SystemExit:
++        print("SystemExit: Command exited normally")
++    except CommandError as e:
++        print(f"CommandError: {e}")
++    except Exception as e:
++        print(f"Exception: {type(e).__name__}: {e}")
++        traceback.print_exc()
++
++    sys.argv = old_argv
++
++if __name__ == "__main__":
++    # Test case 1: Missing subcommand
++    run_test_case(
++        ["manage.py", "testcommand"],
++        "Test case 1: Missing subcommand"
++    )
++
++    # Test case 2: Missing required argument in subcommand
++    run_test_case(
++        ["manage.py", "testcommand", "create"],
++        "Test case 2: Missing required argument in subcommand"
++    )
+\ No newline at end of file
+diff --git a/test_nested_subparsers.py b/test_nested_subparsers.py
+new file mode 100644
+index 0000000000..e17ffa34f8
+--- /dev/null
++++ b/test_nested_subparsers.py
+@@ -0,0 +1,50 @@
++import sys
++import io
++import traceback
++import os
++from django.core.management.base import BaseCommand, CommandParser, CommandError
++
++# Set a minimal settings module to avoid configuration errors
++os.environ['DJANGO_SETTINGS_MODULE'] = 'django.conf.global_settings'
++
++class NestedTestCommand(BaseCommand):
++    def add_arguments(self, parser):
++        subparsers = parser.add_subparsers(required=True)
++        create = subparsers.add_parser("create")
++        subsubparsers = create.add_subparsers(required=True)
++        nested = subsubparsers.add_parser("nested")
++        nested.add_argument("name")
++
++    def handle(self, *args, **options):
++        pass
++
++def run_test_case(argv, case_name):
++    print(f"\n{case_name}")
++    old_argv = sys.argv
++    sys.argv = argv
++    command = NestedTestCommand()
++
++    try:
++        command.run_from_argv(sys.argv)
++    except SystemExit:
++        print("SystemExit: Command exited normally")
++    except CommandError as e:
++        print(f"CommandError: {e}")
++    except Exception as e:
++        print(f"Exception: {type(e).__name__}: {e}")
++        traceback.print_exc()
++
++    sys.argv = old_argv
++
++if __name__ == "__main__":
++    # Test case 1: Missing subcommand
++    run_test_case(
++        ["manage.py", "nestedtest", "create"],
++        "Test case 1: Missing nested subcommand"
++    )
++
++    # Test case 2: Missing required argument in nested subcommand
++    run_test_case(
++        ["manage.py", "nestedtest", "create", "nested"],
++        "Test case 2: Missing required argument in nested subcommand"
++    )
+\ No newline at end of file

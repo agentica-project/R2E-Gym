@@ -1,0 +1,197 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..c5e6c74e1
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,57 @@
++import numpy as np
++from sklearn.decomposition import SparseCoder
++import warnings
++
++# Create a simple dictionary and data
++dictionary = np.random.rand(10, 5)
++X = np.random.rand(2, 5)
++
++print("Test 1: Using SparseCoder with default parameters")
++# Try to use SparseCoder with lasso_cd algorithm
++with warnings.catch_warnings(record=True) as w:
++    warnings.simplefilter("always")
++
++    # Create a SparseCoder with lasso_cd algorithm
++    coder = SparseCoder(dictionary=dictionary, transform_algorithm='lasso_cd',
++                        transform_alpha=0.1)
++
++    # Transform the data
++    code = coder.transform(X)
++
++    # Check if any warnings were issued
++    for warning in w:
++        if "Lasso" in str(warning.message) and "has not converged" in str(warning.message):
++            print("Warning detected: Lasso has not converged")
++            print(f"Warning message: {warning.message}")
++            break
++    else:
++        print("No convergence warning detected")
++
++print("\nTest 2: Using SparseCoder with custom max_iter")
++# Try to set max_iter directly (which should now work)
++try:
++    # This should now work with our fix
++    coder_with_max_iter = SparseCoder(dictionary=dictionary, transform_algorithm='lasso_cd',
++                                     transform_alpha=0.1, max_iter=2000)
++    print("Setting max_iter directly worked successfully")
++
++    # Transform the data with custom max_iter
++    code = coder_with_max_iter.transform(X)
++    print("Data successfully transformed with custom max_iter")
++except TypeError as e:
++    print(f"Error when trying to set max_iter: {e}")
++
++print("\nTest 3: Using SparseCoder with other Lasso parameters")
++# Try to set other Lasso parameters
++try:
++    # This should now work with our fix
++    coder_with_params = SparseCoder(dictionary=dictionary, transform_algorithm='lasso_cd',
++                                   transform_alpha=0.1, max_iter=2000, tol=0.001,
++                                   selection='random')
++    print("Setting other Lasso parameters worked successfully")
++
++    # Transform the data with custom parameters
++    code = coder_with_params.transform(X)
++    print("Data successfully transformed with custom parameters")
++except TypeError as e:
++    print(f"Error when trying to set other parameters: {e}")
+\ No newline at end of file
+diff --git a/sklearn/decomposition/dict_learning.py b/sklearn/decomposition/dict_learning.py
+index a318c957f..f17d3cb74 100644
+--- a/sklearn/decomposition/dict_learning.py
++++ b/sklearn/decomposition/dict_learning.py
+@@ -32,7 +32,7 @@ def _check_positive_coding(method, positive):
+ def _sparse_encode(X, dictionary, gram, cov=None, algorithm='lasso_lars',
+                    regularization=None, copy_cov=True,
+                    init=None, max_iter=1000, check_input=True, verbose=0,
+-                   positive=False):
++                   positive=False, **lasso_params):
+     """Generic sparse coding
+ 
+     Each column of the result is the solution to a Lasso problem.
+@@ -90,6 +90,11 @@ def _sparse_encode(X, dictionary, gram, cov=None, algorithm='lasso_lars',
+ 
+         .. versionadded:: 0.20
+ 
++    **lasso_params : dict, optional
++        Additional parameters to pass to the Lasso estimator when
++        algorithm='lasso_cd'. For example, you can pass tol, selection,
++        max_iter, etc.
++
+     Returns
+     -------
+     code : array of shape (n_components, n_features)
+@@ -139,9 +144,19 @@ def _sparse_encode(X, dictionary, gram, cov=None, algorithm='lasso_lars',
+         # TODO: Make verbosity argument for Lasso?
+         # sklearn.linear_model.coordinate_descent.enet_path has a verbosity
+         # argument that we could pass in from Lasso.
+-        clf = Lasso(alpha=alpha, fit_intercept=False, normalize=False,
+-                    precompute=gram, max_iter=max_iter, warm_start=True,
+-                    positive=positive)
++        lasso_kwargs = {
++            'alpha': alpha,
++            'fit_intercept': False,
++            'normalize': False,
++            'precompute': gram,
++            'max_iter': max_iter,
++            'warm_start': True,
++            'positive': positive
++        }
++        # Add any additional Lasso parameters
++        lasso_kwargs.update(lasso_params)
++
++        clf = Lasso(**lasso_kwargs)
+ 
+         if init is not None:
+             clf.coef_ = init
+@@ -187,7 +202,7 @@ def _sparse_encode(X, dictionary, gram, cov=None, algorithm='lasso_lars',
+ def sparse_encode(X, dictionary, gram=None, cov=None, algorithm='lasso_lars',
+                   n_nonzero_coefs=None, alpha=None, copy_cov=True, init=None,
+                   max_iter=1000, n_jobs=None, check_input=True, verbose=0,
+-                  positive=False):
++                  positive=False, **kwargs):
+     """Sparse coding
+ 
+     Each row of the result is the solution to a sparse coding problem.
+@@ -265,6 +280,11 @@ def sparse_encode(X, dictionary, gram=None, cov=None, algorithm='lasso_lars',
+ 
+         .. versionadded:: 0.20
+ 
++    **kwargs : dict, optional
++        Additional parameters to pass to the sparse coding algorithm.
++        For example, if algorithm='lasso_cd', you can pass Lasso parameters
++        like max_iter, tol, selection, etc.
++
+     Returns
+     -------
+     code : array of shape (n_samples, n_components)
+@@ -313,7 +333,8 @@ def sparse_encode(X, dictionary, gram=None, cov=None, algorithm='lasso_lars',
+                               max_iter=max_iter,
+                               check_input=False,
+                               verbose=verbose,
+-                              positive=positive)
++                              positive=positive,
++                              **kwargs)
+         return code
+ 
+     # Enter parallel code block
+@@ -329,7 +350,8 @@ def sparse_encode(X, dictionary, gram=None, cov=None, algorithm='lasso_lars',
+             init=init[this_slice] if init is not None else None,
+             max_iter=max_iter,
+             check_input=False,
+-            positive=positive)
++            positive=positive,
++            **kwargs)
+         for this_slice in slices)
+     for this_slice, this_view in zip(slices, code_views):
+         code[this_slice] = this_view
+@@ -896,11 +918,14 @@ class SparseCodingMixin(TransformerMixin):
+ 
+         X = check_array(X)
+ 
++        # Get kwargs from the instance if it exists, otherwise use an empty dict
++        kwargs = getattr(self, 'kwargs', {})
++
+         code = sparse_encode(
+             X, self.components_, algorithm=self.transform_algorithm,
+             n_nonzero_coefs=self.transform_n_nonzero_coefs,
+             alpha=self.transform_alpha, n_jobs=self.n_jobs,
+-            positive=self.positive_code)
++            positive=self.positive_code, **kwargs)
+ 
+         if self.split_sign:
+             # feature vector is split into a positive and negative side
+@@ -974,6 +999,11 @@ class SparseCoder(BaseEstimator, SparseCodingMixin):
+ 
+         .. versionadded:: 0.20
+ 
++    **kwargs : dict
++        Additional parameters to pass to the sparse coding algorithm.
++        For example, if `transform_algorithm='lasso_cd'`, you can pass
++        `max_iter=2000` to increase the maximum number of iterations.
++
+     Attributes
+     ----------
+     components_ : array, [n_components, n_features]
+@@ -991,13 +1021,14 @@ class SparseCoder(BaseEstimator, SparseCodingMixin):
+ 
+     def __init__(self, dictionary, transform_algorithm='omp',
+                  transform_n_nonzero_coefs=None, transform_alpha=None,
+-                 split_sign=False, n_jobs=None, positive_code=False):
++                 split_sign=False, n_jobs=None, positive_code=False, **kwargs):
+         self._set_sparse_coding_params(dictionary.shape[0],
+                                        transform_algorithm,
+                                        transform_n_nonzero_coefs,
+                                        transform_alpha, split_sign, n_jobs,
+                                        positive_code)
+         self.components_ = dictionary
++        self.kwargs = kwargs
+ 
+     def fit(self, X, y=None):
+         """Do nothing and return the estimator unchanged

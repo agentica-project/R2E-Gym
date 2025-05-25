@@ -1,0 +1,94 @@
+diff --git a/django/forms/formsets.py b/django/forms/formsets.py
+index a89c35599f..8dd0c620a7 100644
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -292,9 +292,17 @@ class BaseFormSet:
+         Return an ErrorList of errors that aren't associated with a particular
+         form -- i.e., from formset.clean(). Return an empty ErrorList if there
+         are none.
++
++        The returned ErrorList will have the 'nonform' CSS class applied to it,
++        similar to how Form.non_field_errors() applies the 'nonfield' CSS class.
++        This allows custom ErrorList implementations to distinguish between form
++        field errors, non-field errors (within forms), and non-form errors
++        (at the FormSet level) when rendering error messages.
+         """
+         if self._non_form_errors is None:
+             self.full_clean()
++        if self._non_form_errors:
++            self._non_form_errors.error_class = '{} nonform'.format(self._non_form_errors.error_class.split()[0])
+         return self._non_form_errors
+ 
+     @property
+diff --git a/test_formset_nonform_errors.py b/test_formset_nonform_errors.py
+new file mode 100644
+index 0000000000..8937d64249
+--- /dev/null
++++ b/test_formset_nonform_errors.py
+@@ -0,0 +1,65 @@
++import os
++import django
++from django.conf import settings
++from django import forms
++from django.forms.formsets import BaseFormSet
++from django.core.exceptions import ValidationError
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        DEBUG=True,
++        USE_TZ=True,
++        DATABASES={
++            "default": {
++                "ENGINE": "django.db.backends.sqlite3",
++                "NAME": ":memory:",
++            }
++        },
++        INSTALLED_APPS=[
++            "django.contrib.auth",
++            "django.contrib.contenttypes",
++            "django.contrib.sites",
++        ],
++        SITE_ID=1,
++        MIDDLEWARE_CLASSES=(),
++    )
++    django.setup()
++
++# Define a simple form
++class TestForm(forms.Form):
++    name = forms.CharField(max_length=100)
++
++# Define a formset
++TestFormSet = forms.formset_factory(TestForm)
++
++# Create a formset with invalid data
++data = {
++    'form-TOTAL_FORMS': '2',
++    'form-INITIAL_FORMS': '0',
++    'form-MAX_NUM_FORMS': '',
++    'form-0-name': '',  # Empty field will cause a validation error
++    'form-1-name': 'Test',  # Valid field
++}
++
++# Create a formset with a non-form error
++formset = TestFormSet(data=data)
++
++# Try to validate the formset
++is_valid = formset.is_valid()
++
++# Manually add a non-form error
++formset._non_form_errors = formset.error_class([ValidationError("This is a non-form error")], error_class='nonform')
++
++# Print the errors
++print("Formset non-form errors:")
++errors = formset.non_form_errors()
++print(f"- Error list class: {errors.error_class}")
++for error in errors:
++    print(f"- {error}")
++
++print("\nForm errors:")
++for i, form in enumerate(formset.forms):
++    print(f"Form {i} errors:")
++    for field, errors in form.errors.items():
++        print(f"  - {field}: {errors}")
+\ No newline at end of file

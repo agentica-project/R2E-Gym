@@ -1,0 +1,143 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..a0959be144
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,35 @@
++from sympy import Symbol, Mod, sympify
++
++# Create symbolic integers
++i = Symbol('i', integer=True)
++j = Symbol('j', integer=True)
++k = Symbol('k', integer=True)
++
++# Test cases
++test_cases = [
++    (Mod(3*i, 2), Mod(i, 2)),
++    (Mod(5*j, 3), Mod(j, 3)),
++    (Mod(7*k, 4), Mod(k, 4)),
++    (Mod(3*i*j, 2), Mod(i*j, 2)),
++    (Mod(5*i*j, 3), Mod(i*j, 3)),
++    (Mod(7*i*j, 4), Mod(i*j, 4)),
++    # Test with sympify
++    (sympify("3*k % 2"), Mod(k, 2)),
++    (sympify("5*k % 3"), Mod(k, 3)),
++    (sympify("7*k % 4"), Mod(k, 4))
++]
++
++# Run tests
++all_passed = True
++for expr, expected in test_cases:
++    result = expr
++    if result != expected:
++        all_passed = False
++        print(f"FAIL: {expr} != {expected}")
++    else:
++        print(f"PASS: {expr} == {expected}")
++
++if all_passed:
++    print("\nAll tests passed!")
++else:
++    print("\nSome tests failed!")
+\ No newline at end of file
+diff --git a/debug_sympify.py b/debug_sympify.py
+new file mode 100644
+index 0000000000..9428a8fa56
+--- /dev/null
++++ b/debug_sympify.py
+@@ -0,0 +1,13 @@
++from sympy import Symbol, Mod, sympify
++
++# Create symbolic integers
++k = Symbol('k', integer=True)
++
++# Test with sympify
++result = sympify("3*k % 2")
++expected = Mod(k, 2)
++print(f"Result: {result}")
++print(f"Expected: {expected}")
++print(f"Type of result: {type(result)}")
++print(f"Type of expected: {type(expected)}")
++print(f"Result == expected: {result == expected}")
+\ No newline at end of file
+diff --git a/debug_sympify2.py b/debug_sympify2.py
+new file mode 100644
+index 0000000000..beb5247fbf
+--- /dev/null
++++ b/debug_sympify2.py
+@@ -0,0 +1,14 @@
++from sympy import Symbol, Mod, sympify
++
++# Create symbolic integers
++k = Symbol('k', integer=True)
++
++# Test with sympify
++result = sympify("3*k % 2")
++expected = Mod(k, 2)
++print(f"Result: {result}")
++print(f"Expected: {expected}")
++print(f"String result: {str(result)}")
++print(f"String expected: {str(expected)}")
++print(f"Result == expected: {result == expected}")
++print(f"String result == String expected: {str(result) == str(expected)}")
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..a8bbf9e377
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,11 @@
++from sympy import Symbol, Mod
++
++# Create a symbolic integer
++i = Symbol('i', integer=True)
++
++# Test the current behavior
++expr = Mod(3*i, 2)
++print(f"Current result: {expr}")
++
++# After the fix, we expect: Mod(i, 2)
++print(f"Expected result: Mod(i, 2)")
+\ No newline at end of file
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..bbedc814bb
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,17 @@
++from sympy import Symbol, Mod, sympify
++
++# Create symbolic integers
++i = Symbol('i', integer=True)
++k = Symbol('k', integer=True)
++
++# Test the specific case from the issue
++result1 = Mod(3*i, 2)
++expected1 = Mod(i, 2)
++print(f"Test 1: {result1} == {expected1}")
++print(f"Pass: {result1 == expected1}")
++
++# Test with sympify
++result2 = sympify("3*k % 2")
++expected2 = Mod(k, 2)
++print(f"\nTest 2: {result2} == {expected2}")
++print(f"Pass: {result2 == expected2}")
+\ No newline at end of file
+diff --git a/sympy/core/mod.py b/sympy/core/mod.py
+index eae25630cc..b1ff86743b 100644
+--- a/sympy/core/mod.py
++++ b/sympy/core/mod.py
+@@ -123,9 +123,11 @@ def doit(p, q):
+             for arg in p.args:
+                 both_l[isinstance(arg, cls)].append(arg)
+ 
+-            if mod_l and all(inner.args[1] == q for inner in mod_l):
++            was = non_mod_l[:]
++            non_mod_l = [cls(x, q) for x in non_mod_l]
++            changed = was != non_mod_l
++            if changed or mod_l and all(inner.args[1] == q for inner in mod_l):
+                 # finding distributive term
+-                non_mod_l = [cls(x, q) for x in non_mod_l]
+                 mod = []
+                 non_mod = []
+                 for j in non_mod_l:

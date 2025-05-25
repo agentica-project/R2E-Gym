@@ -1,0 +1,59 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..f84f8124
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,19 @@
++import xarray as xr
++
++# Load the dataset
++ds = xr.tutorial.load_dataset("air_temperature")
++
++# Check original time attributes
++print("Original time attributes:")
++print(ds.time.attrs)
++
++# Use where with keep_attrs=True
++result = xr.where(True, ds.air, ds.air, keep_attrs=True)
++
++# Check result time attributes
++print("\nResult time attributes (with bug):")
++print(result.time.attrs)
++
++# Expected time attributes should be:
++print("\nExpected time attributes should be:")
++print({'standard_name': 'time', 'long_name': 'Time'})
+\ No newline at end of file
+diff --git a/xarray/core/merge.py b/xarray/core/merge.py
+index 859b3aef..b27a0903 100644
+--- a/xarray/core/merge.py
++++ b/xarray/core/merge.py
+@@ -257,6 +257,10 @@ def merge_collected(
+     merged_indexes: dict[Hashable, Index] = {}
+     index_cmp_cache: dict[tuple[int, int], bool | None] = {}
+ 
++    # Use no_conflicts for coordinate attributes when combine_attrs is override
++    # This ensures coordinate attributes are preserved when keep_attrs=True
++    coord_combine_attrs = "no_conflicts" if combine_attrs == "override" else combine_attrs
++
+     for name, elements_list in grouped.items():
+         if name in prioritized:
+             variable, index = prioritized[name]
+@@ -293,7 +297,7 @@ def merge_collected(
+                 merged_vars[name] = variable
+                 merged_vars[name].attrs = merge_attrs(
+                     [var.attrs for var, _ in indexed_elements],
+-                    combine_attrs=combine_attrs,
++                    combine_attrs=coord_combine_attrs,
+                 )
+                 merged_indexes[name] = index
+             else:
+@@ -310,7 +314,7 @@ def merge_collected(
+ 
+                 if name in merged_vars:
+                     merged_vars[name].attrs = merge_attrs(
+-                        [var.attrs for var in variables], combine_attrs=combine_attrs
++                        [var.attrs for var in variables], combine_attrs=coord_combine_attrs
+                     )
+ 
+     return merged_vars, merged_indexes

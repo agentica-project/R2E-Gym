@@ -1,0 +1,134 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 00000000..79652cc1
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,49 @@
++import xarray as xr
++import numpy as np
++
++def test_data_vars_length():
++    """Test that data_vars length is always non-negative."""
++    # Test case 1: Original issue
++    ds = xr.Dataset(coords={"a": ("x", [1, 2, 3]), "b": ("x", ['a', 'b', 'c'])})
++    result = ds.set_index(z=['a', 'b']).reset_index("z", drop=True)
++
++    # Check that data_vars length is non-negative
++    assert len(result.data_vars) >= 0, f"data_vars length is negative: {len(result.data_vars)}"
++
++    # Test case 2: Dataset with data variables
++    ds2 = xr.Dataset(
++        coords={"x": [0, 1, 2], "y": [3, 4, 5]},
++        data_vars={"var1": (["x"], np.random.rand(3)),
++                  "var2": (["y"], np.random.rand(3))}
++    )
++    # Set a coordinate as an index
++    ds2 = ds2.set_index(x=["x"])
++
++    # Check that data_vars length is non-negative
++    assert len(ds2.data_vars) >= 0, f"data_vars length is negative: {len(ds2.data_vars)}"
++
++    # Test case 3: Complex case with multiple coordinates and data variables
++    ds3 = xr.Dataset(
++        coords={"x": [0, 1, 2], "y": [3, 4, 5], "z": [6, 7, 8]},
++        data_vars={"var1": (["x"], np.random.rand(3)),
++                  "var2": (["y"], np.random.rand(3)),
++                  "var3": (["z"], np.random.rand(3))}
++    )
++    # Set multiple coordinates
++    ds3 = ds3.set_index(x=["x"], y=["y"])
++
++    # Check that data_vars length is non-negative
++    assert len(ds3.data_vars) >= 0, f"data_vars length is negative: {len(ds3.data_vars)}"
++
++    # Test case 4: Reset index with drop=False
++    ds4 = xr.Dataset(coords={"a": ("x", [1, 2, 3]), "b": ("x", ['a', 'b', 'c'])})
++    indexed_ds4 = ds4.set_index(z=['a', 'b'])
++    result4 = indexed_ds4.reset_index("z", drop=False)
++
++    # Check that data_vars length is non-negative
++    assert len(result4.data_vars) >= 0, f"data_vars length is negative: {len(result4.data_vars)}"
++
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    test_data_vars_length()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..a612085e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,56 @@
++import xarray as xr
++
++# Reproduce the issue as described
++ds = xr.Dataset(coords={"a": ("x", [1, 2, 3]), "b": ("x", ['a', 'b', 'c'])})
++print("Original dataset:")
++print(ds)
++
++# First, check the data_vars before any operations
++print("\nData variables before any operations:")
++print(f"data_vars: {ds.data_vars}")
++print(f"Length of data_vars: {len(ds.data_vars)}")
++
++# Now perform the operations that cause the error
++try:
++    # First set the index
++    indexed_ds = ds.set_index(z=['a', 'b'])
++    print("\nAfter set_index:")
++    print(indexed_ds)
++
++    # Check the internal state after set_index
++    print("\nInternal state after set_index:")
++    print(f"_variables: {indexed_ds._variables}")
++    print(f"_coord_names: {indexed_ds._coord_names}")
++    print(f"Length of _variables: {len(indexed_ds._variables)}")
++    print(f"Length of _coord_names: {len(indexed_ds._coord_names)}")
++
++    # Now reset the index
++    result = indexed_ds.reset_index("z", drop=True)
++    print("\nResult after reset_index:")
++    print(result)
++
++    # Check the internal state after reset_index
++    print("\nInternal state after reset_index:")
++    print(f"_variables: {result._variables}")
++    print(f"_coord_names: {result._coord_names}")
++    print(f"Length of _variables: {len(result._variables)}")
++    print(f"Length of _coord_names: {len(result._coord_names)}")
++
++except Exception as e:
++    print(f"\nError encountered: {type(e).__name__}: {e}")
++
++    # Let's inspect the internal state where the error occurred
++    if 'indexed_ds' in locals():
++        print("\nInternal state where error occurred:")
++        print(f"_variables: {indexed_ds._variables}")
++        print(f"_coord_names: {indexed_ds._coord_names}")
++        print(f"Length of _variables: {len(indexed_ds._variables)}")
++        print(f"Length of _coord_names: {len(indexed_ds._coord_names)}")
++
++        # Check data_vars at the point of error
++        print("\nData variables at point of error:")
++        try:
++            print(f"data_vars: {indexed_ds.data_vars}")
++            print(f"Length of data_vars: {len(indexed_ds.data_vars)}")
++        except Exception as e2:
++            print(f"Error accessing data_vars: {type(e2).__name__}: {e2}")
+\ No newline at end of file
+diff --git a/xarray/core/dataset.py b/xarray/core/dataset.py
+index 620f32f8..9b95d909 100644
+--- a/xarray/core/dataset.py
++++ b/xarray/core/dataset.py
+@@ -365,7 +365,9 @@ class DataVariables(Mapping[Any, "DataArray"]):
+         )
+ 
+     def __len__(self) -> int:
+-        return len(self._dataset._variables) - len(self._dataset._coord_names)
++        # Count variables that are not coordinate names
++        return sum(1 for key in self._dataset._variables
++                   if key not in self._dataset._coord_names)
+ 
+     def __contains__(self, key: Hashable) -> bool:
+         return key in self._dataset._variables and key not in self._dataset._coord_names

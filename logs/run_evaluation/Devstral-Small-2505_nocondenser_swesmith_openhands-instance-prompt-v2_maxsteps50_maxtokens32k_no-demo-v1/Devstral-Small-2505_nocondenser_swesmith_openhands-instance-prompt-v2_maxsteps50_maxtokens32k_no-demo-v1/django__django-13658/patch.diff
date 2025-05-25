@@ -1,0 +1,179 @@
+diff --git a/django/core/management/__init__.py b/django/core/management/__init__.py
+index 1ba093e51f..4bfe90e857 100644
+--- a/django/core/management/__init__.py
++++ b/django/core/management/__init__.py
+@@ -344,7 +344,11 @@ class ManagementUtility:
+         # Preprocess options to extract --settings and --pythonpath.
+         # These options could affect the commands that are available, so they
+         # must be processed early.
+-        parser = CommandParser(usage='%(prog)s subcommand [options] [args]', add_help=False, allow_abbrev=False)
++        parser = CommandParser(
++            prog=self.prog_name,
++            usage='%(prog)s subcommand [options] [args]',
++            add_help=False,
++            allow_abbrev=False)
+         parser.add_argument('--settings')
+         parser.add_argument('--pythonpath')
+         parser.add_argument('args', nargs='*')  # catch-all
+diff --git a/test_management_utility.py b/test_management_utility.py
+new file mode 100755
+index 0000000000..7100b7c6a1
+--- /dev/null
++++ b/test_management_utility.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python
++import sys
++import os
++from django.core.management import ManagementUtility
++from django.core.management.base import CommandParser
++
++# Save original sys.argv[0]
++original_argv0 = sys.argv[0]
++
++# Test with a valid sys.argv[0] first
++print("=== Test with valid sys.argv[0] ===")
++sys.argv[0] = "original_script.py"
++
++# Create a custom argv with a different program name
++custom_argv = ['custom_manage.py', 'help']
++
++# Create a ManagementUtility instance with the custom argv
++utility = ManagementUtility(custom_argv)
++
++# Manually create a CommandParser as it would be in ManagementUtility.execute
++# This is where the issue occurs
++try:
++    parser = CommandParser(usage='%(prog)s subcommand [options] [args]', add_help=False, allow_abbrev=False)
++    print(f"Program name from sys.argv[0]: {sys.argv[0]}")
++    print(f"Program name computed by ManagementUtility: {utility.prog_name}")
++    print(f"Program name used by CommandParser: {parser.prog}")
++    print("Issue: parser.prog is using sys.argv[0] ('original_script.py') instead of utility.prog_name ('custom_manage.py')")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\n=== Test with None sys.argv[0] ===")
++# Now test with sys.argv[0] set to None
++sys.argv[0] = None
++
++# Create a new ManagementUtility instance with the custom argv
++utility = ManagementUtility(custom_argv)
++
++# Try to create a CommandParser
++try:
++    parser = CommandParser(usage='%(prog)s subcommand [options] [args]', add_help=False, allow_abbrev=False)
++    print(f"Program name from sys.argv[0]: {sys.argv[0]}")
++    print(f"Program name computed by ManagementUtility: {utility.prog_name}")
++    print(f"Program name used by CommandParser: {parser.prog}")
++except Exception as e:
++    print(f"Error: {e}")
++    print("This error occurs because CommandParser tries to use sys.argv[0] which is None")
++
++# Restore original sys.argv[0]
++sys.argv[0] = original_argv0
++
++print("\n=== Proposed fix demonstration ===")
++# Demonstrate the fix
++parser = CommandParser(
++    prog=utility.prog_name,
++    usage='%(prog)s subcommand [options] [args]',
++    add_help=False,
++    allow_abbrev=False
++)
++print(f"Program name from sys.argv[0]: {sys.argv[0]}")
++print(f"Program name computed by ManagementUtility: {utility.prog_name}")
++print(f"Program name used by CommandParser with fix: {parser.prog}")
++print("With the fix, CommandParser uses the correct program name from ManagementUtility")
+\ No newline at end of file
+diff --git a/test_management_utility_fix.py b/test_management_utility_fix.py
+new file mode 100644
+index 0000000000..9a2e3d3c04
+--- /dev/null
++++ b/test_management_utility_fix.py
+@@ -0,0 +1,59 @@
++#!/usr/bin/env python
++import sys
++import os
++import django
++from django.core.management import ManagementUtility
++
++# Set up Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'test_settings')
++django.setup()
++
++# Save original sys.argv[0]
++original_argv0 = sys.argv[0]
++
++# Test with a valid sys.argv[0] first
++print("=== Test with valid sys.argv[0] ===")
++sys.argv[0] = "original_script.py"
++
++# Create a custom argv with a different program name
++custom_argv = ['custom_manage.py', 'help']
++
++# Create a ManagementUtility instance with the custom argv
++utility = ManagementUtility(custom_argv)
++
++# Execute the utility to trigger the parser creation with our fix
++try:
++    # We'll catch the SystemExit that occurs when help is displayed
++    utility.execute()
++except SystemExit:
++    # Check if the parser is using the correct program name
++    # We can't directly access the parser, but we can check the output
++    print(f"Program name from sys.argv[0]: {sys.argv[0]}")
++    print(f"Program name computed by ManagementUtility: {utility.prog_name}")
++    # The fix should ensure the parser uses utility.prog_name
++    print("With the fix, the parser should use custom_manage.py as the program name")
++except Exception as e:
++    print(f"Error: {e}")
++
++print("\n=== Test with None sys.argv[0] ===")
++# Now test with sys.argv[0] set to None
++sys.argv[0] = None
++
++# Create a new ManagementUtility instance with the custom argv
++utility = ManagementUtility(custom_argv)
++
++# Execute the utility
++try:
++    # We'll catch the SystemExit that occurs when help is displayed
++    utility.execute()
++except SystemExit:
++    # If we get here, the fix worked
++    print(f"Program name from sys.argv[0]: {sys.argv[0]}")
++    print(f"Program name computed by ManagementUtility: {utility.prog_name}")
++    print("Success! The fix allows ManagementUtility to work even when sys.argv[0] is None")
++except Exception as e:
++    print(f"Error: {e}")
++    print("The fix did not work - ManagementUtility still fails when sys.argv[0] is None")
++
++# Restore original sys.argv[0]
++sys.argv[0] = original_argv0
+\ No newline at end of file
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..f9278e967d
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,20 @@
++import os
++import django
++
++# Set up Django settings
++django.setup()
++
++# Basic settings for testing
++SECRET_KEY = 'fake-key'
++INSTALLED_APPS = [
++    'django.contrib.auth',
++    'django.contrib.contenttypes',
++    'django.contrib.sites',
++]
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++SITE_ID = 1
+\ No newline at end of file

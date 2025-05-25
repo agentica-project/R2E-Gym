@@ -1,0 +1,138 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..7709504294
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,51 @@
++import os
++import sys
++import tempfile
++from django.conf import settings
++from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
++
++# Configure Django settings
++settings.configure(
++    STATIC_URL='/static/',
++    STATIC_ROOT=tempfile.mkdtemp(),
++)
++
++def test_with_max_passes(max_passes):
++    # Create a custom storage class with the specified max_post_process_passes
++    class TestManifestStaticFilesStorage(ManifestStaticFilesStorage):
++        max_post_process_passes = max_passes
++
++    # Create a temporary directory for static files
++    with tempfile.TemporaryDirectory() as temp_dir:
++        storage = TestManifestStaticFilesStorage(location=temp_dir)
++
++        # Create a simple static file structure
++        os.makedirs(os.path.join(temp_dir, 'css'), exist_ok=True)
++        with open(os.path.join(temp_dir, 'css', 'styles.css'), 'w') as f:
++            f.write('.example { color: red; }')
++
++        # Create a dictionary of paths to process
++        paths = {
++            'css/styles.css': (storage, 'css/styles.css')
++        }
++
++        # Try to post-process the files
++        try:
++            list(storage.post_process(paths))
++            print(f"Test passed for max_post_process_passes={max_passes}: No error occurred")
++            return True
++        except UnboundLocalError as e:
++            print(f"Test failed for max_post_process_passes={max_passes}: {e}")
++            return False
++        except Exception as e:
++            print(f"Test failed for max_post_process_passes={max_passes} with unexpected error: {e}")
++            return False
++
++if __name__ == "__main__":
++    # Test with different values of max_post_process_passes
++    for passes in [0, 1, 5, 10]:
++        success = test_with_max_passes(passes)
++        if not success:
++            sys.exit(1)
++
++    sys.exit(0)
+\ No newline at end of file
+diff --git a/django/contrib/staticfiles/storage.py b/django/contrib/staticfiles/storage.py
+index f957a667b2..45df70b12d 100644
+--- a/django/contrib/staticfiles/storage.py
++++ b/django/contrib/staticfiles/storage.py
+@@ -261,14 +261,17 @@ class HashedFilesMixin:
+ 
+         paths = {path: paths[path] for path in adjustable_paths}
+ 
++        substitutions = False  # Initialize before the loop
+         for i in range(self.max_post_process_passes):
+-            substitutions = False
++            loop_substitutions = False
+             for name, hashed_name, processed, subst in self._post_process(paths, adjustable_paths, hashed_files):
+                 # Overwrite since hashed_name may be newer.
+                 processed_adjustable_paths[name] = (name, hashed_name, processed)
+-                substitutions = substitutions or subst
++                loop_substitutions = loop_substitutions or subst
+ 
+-            if not substitutions:
++            substitutions = substitutions or loop_substitutions
++
++            if not loop_substitutions:
+                 break
+ 
+         if substitutions:
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..2cd850825e
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,48 @@
++import os
++import sys
++import tempfile
++from django.conf import settings
++from django.contrib.staticfiles.storage import ManifestStaticFilesStorage
++
++# Configure Django settings
++settings.configure(
++    STATIC_URL='/static/',
++    STATIC_ROOT=tempfile.mkdtemp(),
++    STATICFILES_STORAGE='reproduce_issue.MyManifestStaticFilesStorage'
++)
++
++# Create a custom storage class with max_post_process_passes = 0
++class MyManifestStaticFilesStorage(ManifestStaticFilesStorage):
++    max_post_process_passes = 0
++
++def test_manifest_storage():
++    # Create a temporary directory for static files
++    with tempfile.TemporaryDirectory() as temp_dir:
++        storage = MyManifestStaticFilesStorage(location=temp_dir)
++
++        # Create a simple static file structure
++        os.makedirs(os.path.join(temp_dir, 'css'), exist_ok=True)
++        with open(os.path.join(temp_dir, 'css', 'styles.css'), 'w') as f:
++            f.write('.example { color: red; }')
++
++        # Create a dictionary of paths to process
++        paths = {
++            'css/styles.css': (storage, 'css/styles.css')
++        }
++
++        # Try to post-process the files
++        try:
++            list(storage.post_process(paths))
++            print("Test passed: No error occurred")
++        except UnboundLocalError as e:
++            print(f"Test failed: {e}")
++            return False
++        except Exception as e:
++            print(f"Test failed with unexpected error: {e}")
++            return False
++
++    return True
++
++if __name__ == "__main__":
++    success = test_manifest_storage()
++    sys.exit(0 if success else 1)
+\ No newline at end of file

@@ -1,0 +1,174 @@
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 5dcf923c12..bc7e6959e7 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -1171,6 +1171,9 @@ class ModelChoiceIteratorValue:
+             other = other.value
+         return self.value == other
+ 
++    def __hash__(self):
++        return hash(self.value)
++
+ 
+ class ModelChoiceIterator:
+     def __init__(self, field):
+diff --git a/test_model_choice_field_dict_lookup.py b/test_model_choice_field_dict_lookup.py
+new file mode 100644
+index 0000000000..8b8102a3db
+--- /dev/null
++++ b/test_model_choice_field_dict_lookup.py
+@@ -0,0 +1,82 @@
++import unittest
++import json
++from django.forms import ModelForm
++from django.forms.models import ModelChoiceField, ModelChoiceIteratorValue
++
++# Mock classes for testing
++class MockQuerySet:
++    def __init__(self, items):
++        self.items = items
++        self._prefetch_related_lookups = False
++
++    def __iter__(self):
++        for item in self.items:
++            yield item
++
++    def all(self):
++        return self
++
++    def iterator(self):
++        return iter(self.items)
++
++class MockModel:
++    def __init__(self, pk, first_name=None, last_name=None):
++        self.pk = pk
++        self.first_name = first_name
++        self.last_name = last_name
++
++class MockWidget:
++    def __init__(self):
++        self.attrs = {}
++
++    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
++        context = {
++            'name': name,
++            'value': value,
++            'label': label,
++            'selected': selected,
++            'index': index,
++            'attrs': attrs or {},
++            'type': 'select',
++            'template_name': None,
++            'wrap_label': True,
++        }
++        return context
++
++class TestModelChoiceFieldDictLookup(unittest.TestCase):
++    def test_dict_lookup_with_modelchoiceiteratorvalue(self):
++        """Test that ModelChoiceField works with dictionaries when values are ModelChoiceIteratorValue instances."""
++        # Create a ModelChoiceField with a mock queryset
++        field = ModelChoiceField(queryset=MockQuerySet([
++            MockModel(1, 'John', 'Doe'),
++            MockModel(2, 'Jane', 'Smith'),
++        ]))
++
++        # Create a widget
++        widget = MockWidget()
++
++        # Create a dictionary to simulate the show_fields dictionary from the issue
++        show_fields = {
++            1: ['first_name', 'last_name'],
++            2: ['email'],
++        }
++
++        # Test the scenario from the issue description
++        for value, label in field.choices:
++            context = widget.create_option('test_field', value, label, False, 0)
++            if not value:
++                continue
++
++            # This is the line that was failing before the fix
++            if value in show_fields:
++                context['attrs']['data-fields'] = json.dumps(show_fields[value])
++
++            # Verify that the attrs were updated correctly
++            if value.value == 1:  # Only model 1 should have data-fields
++                self.assertIn('data-fields', context['attrs'])
++                self.assertEqual(json.loads(context['attrs']['data-fields']), ['first_name', 'last_name'])
++            else:
++                self.assertNotIn('data-fields', context['attrs'])
++
++if __name__ == "__main__":
++    unittest.main()
+\ No newline at end of file
+diff --git a/test_model_choice_iterator_value.py b/test_model_choice_iterator_value.py
+new file mode 100644
+index 0000000000..8fc6553842
+--- /dev/null
++++ b/test_model_choice_iterator_value.py
+@@ -0,0 +1,30 @@
++import unittest
++from django.forms.models import ModelChoiceIteratorValue
++
++class TestModelChoiceIteratorValue(unittest.TestCase):
++    def test_hashability(self):
++        """Test that ModelChoiceIteratorValue is hashable."""
++        value1 = ModelChoiceIteratorValue(1, None)
++        value2 = ModelChoiceIteratorValue(1, None)
++        value3 = ModelChoiceIteratorValue(2, None)
++
++        # Create a dictionary and try to use ModelChoiceIteratorValue as a key
++        test_dict = {}
++
++        # This should not raise a TypeError
++        test_dict[value1] = "test1"
++
++        # Test equality and hash consistency
++        self.assertEqual(value1, value2)
++        self.assertNotEqual(value1, value3)
++
++        # Test that the same value can be used as a key multiple times
++        test_dict[value2] = "test2"
++        self.assertEqual(test_dict[value1], "test2")  # value1 == value2
++
++        # Test that different values are different keys
++        test_dict[value3] = "test3"
++        self.assertEqual(test_dict[value3], "test3")
++
++if __name__ == "__main__":
++    unittest.main()
+\ No newline at end of file
+diff --git a/test_settings.py b/test_settings.py
+new file mode 100644
+index 0000000000..70e133639c
+--- /dev/null
++++ b/test_settings.py
+@@ -0,0 +1,27 @@
++import os
++import django
++
++# Set up Django settings
++django.setup()
++
++# Configure settings
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'django.contrib.contenttypes',
++    'django.contrib.auth',
++    'django.contrib.sessions',
++    'django.contrib.messages',
++    'django.contrib.admin',
++    'django.contrib.staticfiles',
++]
++
++SECRET_KEY = 'fake-key-for-testing'
++ROOT_URLCONF = 'django.urls'
++TIME_ZONE = 'UTC'
++USE_TZ = True
+\ No newline at end of file

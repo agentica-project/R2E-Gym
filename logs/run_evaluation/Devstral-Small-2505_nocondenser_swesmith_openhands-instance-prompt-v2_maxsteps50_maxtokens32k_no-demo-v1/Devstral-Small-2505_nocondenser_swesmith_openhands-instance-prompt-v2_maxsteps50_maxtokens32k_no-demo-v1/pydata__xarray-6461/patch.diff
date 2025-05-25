@@ -1,0 +1,79 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 00000000..2c71964a
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,50 @@
++import xarray as xr
++import numpy as np
++
++print("Testing xr.where with various arguments and keep_attrs=True")
++print("-" * 60)
++
++# Create a DataArray with attributes
++data = xr.DataArray([1, 2, 3], attrs={"attr1": "value1"})
++
++# Test 1: Scalar as second argument
++try:
++    result = xr.where(data > 0, 1, 0, keep_attrs=True)
++    print("Test 1 (scalar as second argument) passed! Result:", result)
++except Exception as e:
++    print(f"Test 1 failed with error: {type(e).__name__}: {e}")
++
++# Test 2: DataArray as second argument
++try:
++    other = xr.DataArray([4, 5, 6], attrs={"attr2": "value2"})
++    result = xr.where(data > 0, other, 0, keep_attrs=True)
++    print("Test 2 (DataArray as second argument) passed! Result:", result)
++except Exception as e:
++    print(f"Test 2 failed with error: {type(e).__name__}: {e}")
++
++# Test 3: Scalar as third argument
++try:
++    result = xr.where(data > 0, 1, 0, keep_attrs=True)
++    print("Test 3 (scalar as third argument) passed! Result:", result)
++except Exception as e:
++    print(f"Test 3 failed with error: {type(e).__name__}: {e}")
++
++# Test 4: DataArray as third argument
++try:
++    other = xr.DataArray([4, 5, 6], attrs={"attr3": "value3"})
++    result = xr.where(data > 0, 0, other, keep_attrs=True)
++    print("Test 4 (DataArray as third argument) passed! Result:", result)
++except Exception as e:
++    print(f"Test 4 failed with error: {type(e).__name__}: {e}")
++
++# Test 5: Both second and third arguments as DataArrays
++try:
++    other1 = xr.DataArray([4, 5, 6], attrs={"attr4": "value4"})
++    other2 = xr.DataArray([7, 8, 9], attrs={"attr5": "value5"})
++    result = xr.where(data > 0, other1, other2, keep_attrs=True)
++    print("Test 5 (DataArrays as both second and third arguments) passed! Result:", result)
++except Exception as e:
++    print(f"Test 5 failed with error: {type(e).__name__}: {e}")
++
++print("-" * 60)
++print("All tests completed!")
+\ No newline at end of file
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 7676d8e5..8109fc12 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -1829,7 +1829,7 @@ def where(cond, x, y, keep_attrs=None):
+     if keep_attrs is True:
+         # keep the attributes of x, the second parameter, by default to
+         # be consistent with the `where` method of `DataArray` and `Dataset`
+-        keep_attrs = lambda attrs, context: attrs[1]
++        keep_attrs = lambda attrs, context: attrs[1] if len(attrs) > 1 else {}
+ 
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(
+@@ -1946,7 +1946,7 @@ def unify_chunks(*objects: T_Xarray) -> tuple[T_Xarray, ...]:
+ 
+     Returns
+     -------
+-    unified (DataArray or Dataset) – Tuple of objects with the same type as
++    unified (DataArray or Dataset) â€“ Tuple of objects with the same type as
+     *objects with consistent chunk sizes for all dask-array variables
+ 
+     See Also

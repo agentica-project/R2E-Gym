@@ -1,0 +1,115 @@
+diff --git a/astropy/coordinates/sky_coordinate.py b/astropy/coordinates/sky_coordinate.py
+index ab475f7d0d..fe618fc567 100644
+--- a/astropy/coordinates/sky_coordinate.py
++++ b/astropy/coordinates/sky_coordinate.py
+@@ -871,6 +871,13 @@ class SkyCoord(ShapedLikeNDArray):
+         Overrides getattr to return coordinates that this can be transformed
+         to, based on the alias attr in the primary transform graph.
+         """
++        # First check if this is a property of the class
++        # This allows proper error messages from properties that access non-existent attributes
++        attr_descriptor = self.__class__.__dict__.get(attr)
++        if isinstance(attr_descriptor, property):
++            # If it's a property, try to access it and let any errors propagate
++            return attr_descriptor.__get__(self, self.__class__)
++
+         if "_sky_coord_frame" in self.__dict__:
+             if self._is_name(attr):
+                 return self  # Should this be a deepcopy of self?
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 0000000000..299fe542d0
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,60 @@
++import astropy.coordinates as coord
++
++# Test 1: Basic property accessing non-existent attribute
++class CustomCoord1(coord.SkyCoord):
++    @property
++    def prop(self):
++        return self.random_attr
++
++# Test 2: Property with complex logic
++class CustomCoord2(coord.SkyCoord):
++    @property
++    def complex_prop(self):
++        try:
++            val = self.random_attr
++            return val * 2
++        except AttributeError as e:
++            raise ValueError("Custom error message") from e
++
++# Test 3: Property accessing another property
++class CustomCoord3(coord.SkyCoord):
++    @property
++    def inner_prop(self):
++        return self.another_inner_prop
++
++    @property
++    def outer_prop(self):
++        return self.inner_prop
++
++# Run tests
++print("Test 1: Basic property accessing non-existent attribute")
++c1 = CustomCoord1('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c1.prop
++except AttributeError as e:
++    print(f"Error message: {str(e)}")
++
++print("\nTest 2: Property with complex logic")
++c2 = CustomCoord2('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c2.complex_prop
++except Exception as e:
++    print(f"Error type: {type(e).__name__}")
++    print(f"Error message: {str(e)}")
++    if hasattr(e, '__cause__'):
++        print(f"Cause: {type(e.__cause__).__name__} - {str(e.__cause__)}")
++
++print("\nTest 3: Property accessing another property")
++c3 = CustomCoord3('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c3.outer_prop
++except AttributeError as e:
++    print(f"Error message: {str(e)}")
++
++# Test 4: Regular attribute access (should still work)
++print("\nTest 4: Regular attribute access")
++c = coord.SkyCoord('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c.nonexistent_attr
++except AttributeError as e:
++    print(f"Error message: {str(e)}")
+\ No newline at end of file
+diff --git a/pyproject.toml b/pyproject.toml
+index 486d6b9b3b..1c5f74f3a1 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.30",
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..0453fb1ef9
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,12 @@
++import astropy.coordinates as coord
++
++class custom_coord(coord.SkyCoord):
++    @property
++    def prop(self):
++        return self.random_attr
++
++c = custom_coord('00h42m30s', '+41d12m00s', frame='icrs')
++try:
++    c.prop
++except AttributeError as e:
++    print(f"Error message: {str(e)}")
+\ No newline at end of file

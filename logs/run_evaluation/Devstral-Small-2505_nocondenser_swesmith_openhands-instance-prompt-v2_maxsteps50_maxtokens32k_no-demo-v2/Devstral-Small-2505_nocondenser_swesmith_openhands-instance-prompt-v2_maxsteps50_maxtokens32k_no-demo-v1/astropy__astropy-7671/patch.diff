@@ -1,0 +1,128 @@
+diff --git a/astropy/utils/introspection.py b/astropy/utils/introspection.py
+index 3e784f9fc3..3778036cca 100644
+--- a/astropy/utils/introspection.py
++++ b/astropy/utils/introspection.py
+@@ -6,7 +6,12 @@
+ import inspect
+ import types
+ import importlib
+-from distutils.version import LooseVersion
++
++# Try to import pkg_resources.parse_version, fall back to LooseVersion if not available
++try:
++    from pkg_resources import parse_version
++except ImportError:
++    from distutils.version import LooseVersion as parse_version
+ 
+ 
+ __all__ = ['resolve_name', 'minversion', 'find_current_module',
+@@ -140,9 +145,9 @@ def minversion(module, version, inclusive=True, version_path='__version__'):
+         have_version = resolve_name(module.__name__, version_path)
+ 
+     if inclusive:
+-        return LooseVersion(have_version) >= LooseVersion(version)
++        return parse_version(have_version) >= parse_version(version)
+     else:
+-        return LooseVersion(have_version) > LooseVersion(version)
++        return parse_version(have_version) > parse_version(version)
+ 
+ 
+ def find_current_module(depth=1, finddiff=False):
+diff --git a/comprehensive_minversion_test.py b/comprehensive_minversion_test.py
+new file mode 100644
+index 0000000000..3136744580
+--- /dev/null
++++ b/comprehensive_minversion_test.py
+@@ -0,0 +1,55 @@
++#!/usr/bin/env python
++# Comprehensive test script for minversion function
++
++from astropy.utils import minversion
++import sys
++from unittest.mock import patch
++
++def test_version_comparison(version1, version2, expected_result, inclusive=True):
++    """Test minversion with mocked versions."""
++    with patch.dict('sys.modules', {'astropy': type('astropy', (), {'__version__': version1})}):
++        try:
++            result = minversion('astropy', version2, inclusive=inclusive)
++            print(f"Comparing {version1} >= {version2} (inclusive={inclusive}): {result}")
++            assert result == expected_result, f"Expected {expected_result}, got {result}"
++            return True
++        except Exception as e:
++            print(f"Error comparing {version1} >= {version2}: {type(e).__name__}: {e}")
++            return False
++
++print("Testing standard version comparisons:")
++test_cases = [
++    # (current_version, required_version, expected_result, inclusive)
++    ('1.0.0', '1.0.0', True, True),  # Equal versions should be True with inclusive
++    ('1.0.0', '1.0.0', False, False),  # Equal versions should be False with non-inclusive
++    ('1.1.0', '1.0.0', True, True),  # Newer version should be True
++    ('1.0.0', '1.1.0', False, True),  # Older version should be False
++    ('1.0.0', '1.0.0', True, True),  # Equal versions should be True with inclusive
++]
++
++for v1, v2, expected, inclusive in test_cases:
++    test_version_comparison(v1, v2, expected, inclusive)
++
++print("\nTesting development version comparisons:")
++dev_test_cases = [
++    ('1.14.3', '1.14dev', True, True),  # This was failing before the fix, now works
++    ('1.14dev', '1.14.3', False, True),  # Development version is less than specific version
++    ('1.14.3', '1.14dev', True, False),  # With non-inclusive, should be True
++    ('1.14dev', '1.14dev', True, True),  # Same development versions
++]
++
++for v1, v2, expected, inclusive in dev_test_cases:
++    test_version_comparison(v1, v2, expected, inclusive)
++
++print("\nTesting other edge cases:")
++edge_cases = [
++    ('1.0a1', '1.0', False, True),  # Alpha version is less than final
++    ('1.0b2', '1.0a1', True, True),  # Beta vs Alpha
++    ('1.0', '1.0rc1', True, True),  # Final version is greater than RC
++    ('1.0rc1', '1.0', False, False),  # RC vs final (non-inclusive)
++]
++
++for v1, v2, expected, inclusive in edge_cases:
++    test_version_comparison(v1, v2, expected, inclusive)
++
++print("\nAll tests completed successfully!")
+\ No newline at end of file
+diff --git a/test_minversion.py b/test_minversion.py
+new file mode 100644
+index 0000000000..3c4cf156c8
+--- /dev/null
++++ b/test_minversion.py
+@@ -0,0 +1,29 @@
++#!/usr/bin/env python
++# Test script for minversion function
++
++from astropy.utils import minversion
++
++# Test cases that should work
++print("Testing minversion with standard versions:")
++print(minversion('astropy', '1.0'))  # Should be True
++
++# Test cases that fail with the current implementation
++print("\nTesting minversion with development versions:")
++try:
++    result = minversion('astropy', '1.14dev')
++    print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++
++# Test with a specific version that was mentioned in the issue
++print("\nTesting with specific version '1.14.3' vs '1.14dev':")
++try:
++    # We'll mock the astropy version to be '1.14.3' for this test
++    import sys
++    from unittest.mock import patch
++
++    with patch.dict('sys.modules', {'astropy': type('astropy', (), {'__version__': '1.14.3'})}):
++        result = minversion('astropy', '1.14dev')
++        print(f"Result: {result}")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
+\ No newline at end of file

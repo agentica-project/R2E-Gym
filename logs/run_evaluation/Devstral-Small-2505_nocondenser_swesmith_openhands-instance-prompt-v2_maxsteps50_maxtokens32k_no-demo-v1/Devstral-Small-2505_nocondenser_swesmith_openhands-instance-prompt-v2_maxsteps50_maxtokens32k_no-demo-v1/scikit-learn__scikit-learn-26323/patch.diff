@@ -1,0 +1,60 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..074a2f073
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,38 @@
++import pandas as pd
++from sklearn.compose import make_column_selector, make_column_transformer
++from sklearn.feature_selection import VarianceThreshold
++
++# Create a test DataFrame
++df = pd.DataFrame({"a": [True, False, True], "b": [1, 2, 3]})
++
++# Test case 1: Using remainder as an estimator
++print("Test case 1: Using remainder as an estimator")
++out1 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    remainder=VarianceThreshold(),
++    verbose_feature_names_out=False,
++).set_output(transform="pandas").fit_transform(df)
++print(out1)
++print("Expected: DataFrame with boolean 'a' column preserved")
++print()
++
++# Test case 2: Using explicit transformer for all columns (works correctly)
++print("Test case 2: Using explicit transformer for all columns")
++out2 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    (VarianceThreshold(), make_column_selector(dtype_exclude=bool)),
++    verbose_feature_names_out=False,
++).set_output(transform="pandas").fit_transform(df)
++print(out2)
++print("Expected: DataFrame with boolean 'a' column preserved")
++print()
++
++# Test case 3: Using remainder="passthrough"
++print("Test case 3: Using remainder='passthrough'")
++out3 = make_column_transformer(
++    (VarianceThreshold(), make_column_selector(dtype_include=bool)),
++    remainder="passthrough",
++    verbose_feature_names_out=False,
++).set_output(transform="pandas").fit_transform(df)
++print(out3)
++print("Expected: DataFrame with boolean 'a' column preserved")
+\ No newline at end of file
+diff --git a/sklearn/compose/_column_transformer.py b/sklearn/compose/_column_transformer.py
+index 4eddd12b1..50921bfff 100644
+--- a/sklearn/compose/_column_transformer.py
++++ b/sklearn/compose/_column_transformer.py
+@@ -303,6 +303,10 @@ class ColumnTransformer(TransformerMixin, _BaseComposition):
+         for trans in transformers:
+             _safe_set_output(trans, transform=transform)
+ 
++        # Also set output for the remainder estimator if it's not "passthrough" or "drop"
++        if self.remainder not in {"passthrough", "drop"}:
++            _safe_set_output(self.remainder, transform=transform)
++
+         return self
+ 
+     def get_params(self, deep=True):

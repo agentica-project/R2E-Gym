@@ -1,0 +1,58 @@
+diff --git a/sympy/polys/polytools.py b/sympy/polys/polytools.py
+index d5ac051f63..9d74a0fd87 100644
+--- a/sympy/polys/polytools.py
++++ b/sympy/polys/polytools.py
+@@ -4053,7 +4053,13 @@ def __rmul__(f, g):
+             try:
+                 g = f.__class__(g, *f.gens)
+             except PolynomialError:
+-                return g*f.as_expr()
++                # For symbols and other expressions, convert to expression and back to Poly
++                # This is the same as the __mul__ method but with the operands swapped
++                # We need to convert g*f.as_expr() to a Poly object with the same generators
++                # First convert f to an expression, then multiply by g, and then convert back to Poly
++                expr = f.as_expr()
++                result_expr = g * expr
++                return f.__class__(result_expr, *f.gens)
+ 
+         return g.mul(f)
+ 
+diff --git a/test_poly_mul.py b/test_poly_mul.py
+new file mode 100644
+index 0000000000..0e417fb71a
+--- /dev/null
++++ b/test_poly_mul.py
+@@ -0,0 +1,32 @@
++from sympy import Poly, S
++from sympy.abc import x
++
++# Test case 1: Poly on the left side
++print("Test case 1: Poly(x)*x")
++result1 = Poly(x)*x
++print(f"Result: {result1}")
++print()
++
++# Test case 2: Poly on the right side
++print("Test case 2: x*Poly(x)")
++result2 = x*Poly(x)
++print(f"Result: {result2}")
++print()
++
++# Test case 3: Negative integer on the left side
++print("Test case 3: -2*Poly(x)")
++result3 = -2*Poly(x)
++print(f"Result: {result3}")
++print()
++
++# Test case 4: Negative integer on the right side (using S for symbolic integer)
++print("Test case 4: S(-2)*Poly(x)")
++result4 = S(-2)*Poly(x)
++print(f"Result: {result4}")
++print()
++
++# Test case 5: Poly on the left side with S(-2)
++print("Test case 5: Poly(x)*S(-2)")
++result5 = Poly(x)*S(-2)
++print(f"Result: {result5}")
++print()
+\ No newline at end of file

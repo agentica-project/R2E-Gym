@@ -1,0 +1,92 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..73a77ab57
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,49 @@
++import numpy as np
++from sklearn.experimental import enable_iterative_imputer
++from sklearn.impute import IterativeImputer
++from sklearn.linear_model import BayesianRidge
++
++# Create a dataset with missing values
++X = np.array([[1, 2, np.nan], [3, np.nan, 6], [np.nan, 8, 9]])
++
++# Test 1: Verify that the fill_value parameter is accepted
++try:
++    imputer = IterativeImputer(initial_strategy="constant", fill_value=0)
++    print("SUCCESS: IterativeImputer accepted fill_value parameter")
++except Exception as e:
++    print("ERROR: IterativeImputer did not accept fill_value parameter:", e)
++
++# Test 2: Verify that the fill_value is passed to the SimpleImputer
++try:
++    # Create an IterativeImputer with a custom fill_value
++    imputer = IterativeImputer(initial_strategy="constant", fill_value=0)
++
++    # Access the initial_imputer_ attribute after fitting
++    imputer.fit(X)
++
++    # Check if the fill_value was passed to the SimpleImputer
++    if hasattr(imputer.initial_imputer_, 'fill_value') and imputer.initial_imputer_.fill_value == 0:
++        print("SUCCESS: fill_value was correctly passed to SimpleImputer")
++    else:
++        print("ERROR: fill_value was not correctly passed to SimpleImputer")
++        if hasattr(imputer.initial_imputer_, 'fill_value'):
++            print("Expected: 0, Got:", imputer.initial_imputer_.fill_value)
++        else:
++            print("SimpleImputer does not have a fill_value attribute")
++
++except Exception as e:
++    print("ERROR:", e)
++
++# Test 3: Verify that np.nan is accepted as a fill_value
++try:
++    imputer = IterativeImputer(initial_strategy="constant", fill_value=np.nan)
++    imputer.fit(X)
++
++    if imputer.initial_imputer_.fill_value is np.nan:
++        print("SUCCESS: np.nan was accepted as fill_value")
++    else:
++        print("ERROR: np.nan was not accepted as fill_value")
++        print("Expected: np.nan, Got:", imputer.initial_imputer_.fill_value)
++
++except Exception as e:
++    print("ERROR:", e)
+\ No newline at end of file
+diff --git a/sklearn/impute/_iterative.py b/sklearn/impute/_iterative.py
+index 1d918bc0c..322030dab 100644
+--- a/sklearn/impute/_iterative.py
++++ b/sklearn/impute/_iterative.py
+@@ -289,6 +289,7 @@ class IterativeImputer(_BaseImputer):
+         "max_value": [None, Interval(Real, None, None, closed="both"), "array-like"],
+         "verbose": ["verbose"],
+         "random_state": ["random_state"],
++        "fill_value": "no_validation",  # any object is valid
+     }
+ 
+     def __init__(
+@@ -309,6 +310,7 @@ class IterativeImputer(_BaseImputer):
+         random_state=None,
+         add_indicator=False,
+         keep_empty_features=False,
++        fill_value=None,
+     ):
+         super().__init__(
+             missing_values=missing_values,
+@@ -328,6 +330,7 @@ class IterativeImputer(_BaseImputer):
+         self.max_value = max_value
+         self.verbose = verbose
+         self.random_state = random_state
++        self.fill_value = fill_value
+ 
+     def _impute_one_feature(
+         self,
+@@ -613,6 +616,7 @@ class IterativeImputer(_BaseImputer):
+             self.initial_imputer_ = SimpleImputer(
+                 missing_values=self.missing_values,
+                 strategy=self.initial_strategy,
++                fill_value=self.fill_value if self.initial_strategy == "constant" else None,
+                 keep_empty_features=self.keep_empty_features,
+             )
+             X_filled = self.initial_imputer_.fit_transform(X)

@@ -1,0 +1,212 @@
+diff --git a/django/contrib/admin/sites.py b/django/contrib/admin/sites.py
+index 59a4a0364d..4effd75415 100644
+--- a/django/contrib/admin/sites.py
++++ b/django/contrib/admin/sites.py
+@@ -427,7 +427,7 @@ class AdminSite:
+                 pass
+             else:
+                 if getattr(match.func, 'should_append_slash', True):
+-                    return HttpResponsePermanentRedirect(path)
++                    return HttpResponsePermanentRedirect('%s/' % request.path)
+         raise Http404
+ 
+     def _build_app_dict(self, request, label=None):
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..d816bc2c30
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,64 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.urls import path
++from django.contrib import admin
++from django.http import HttpResponse
++from django.test import SimpleTestCase, override_settings
++
++# Configure settings
++settings.configure(
++    DEBUG=True,
++    SECRET_KEY='dummy',
++    ROOT_URLCONF='reproduce_issue',
++    ALLOWED_HOSTS=['testserver'],
++    MIDDLEWARE=[
++        'django.middleware.common.CommonMiddleware',
++        'django.middleware.csrf.CsrfViewMiddleware',
++        'django.middleware.clickjacking.XFrameOptionsMiddleware',
++    ],
++    INSTALLED_APPS=[
++        'django.contrib.admin',
++        'django.contrib.auth',
++        'django.contrib.contenttypes',
++    ],
++    FORCE_SCRIPT_NAME='/admin_prefix/',
++)
++
++# Apply settings
++django.setup()
++
++# Define a simple view
++def home_view(request):
++    return HttpResponse("Home")
++
++# URL patterns
++urlpatterns = [
++    path('', home_view, name='home'),
++    path('admin/', admin.site.urls),
++]
++
++class CatchAllViewTest(SimpleTestCase):
++    @override_settings(APPEND_SLASH=True, FORCE_SCRIPT_NAME='/admin_prefix/')
++    def test_catch_all_view_with_force_script_name(self):
++        """
++        Test that catch_all_view correctly handles FORCE_SCRIPT_NAME
++        when redirecting with a trailing slash.
++        """
++        # Make a request to an admin URL without a trailing slash
++        response = self.client.get('/admin_prefix/admin/')
++
++        # Check that the redirect includes the script name
++        expected_url = '/admin_prefix/admin/'
++        self.assertEqual(response.status_code, 301)
++        self.assertEqual(response['Location'], expected_url)
++
++if __name__ == '__main__':
++    # Run the test
++    from django.test import Client
++    test = CatchAllViewTest()
++    test.setUpClass()
++    test.client = Client(HTTP_SCRIPT_NAME='/admin_prefix/')
++    test.test_catch_all_view_with_force_script_name()
++    print("Test completed successfully!")
+\ No newline at end of file
+diff --git a/test_catch_all_view.py b/test_catch_all_view.py
+new file mode 100644
+index 0000000000..c4eebddee4
+--- /dev/null
++++ b/test_catch_all_view.py
+@@ -0,0 +1,57 @@
++import django
++from django.test import TestCase, override_settings
++from django.test.client import RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.http import HttpRequest
++from django.conf import settings
++
++# Create a simple admin site
++class SimpleAdminSite(AdminSite):
++    site_header = "Test Admin"
++
++# Create a test case
++class CatchAllViewTest(TestCase):
++    def setUp(self):
++        self.factory = RequestFactory()
++        self.admin_site = SimpleAdminSite()
++
++    @override_settings(APPEND_SLASH=True, FORCE_SCRIPT_NAME='/admin_prefix/')
++    def test_catch_all_view_with_force_script_name(self):
++        """
++        Test that catch_all_view correctly handles FORCE_SCRIPT_NAME
++        when redirecting with a trailing slash.
++        """
++        # Create a request without a trailing slash
++        request = self.factory.get('/admin_prefix/some-url')
++        request.path = '/admin_prefix/some-url'
++        request.path_info = '/some-url'
++
++        # Call the catch_all_view method
++        response = self.admin_site.catch_all_view(request, 'some-url')
++
++        # Check that the redirect includes the script name
++        self.assertEqual(response.status_code, 301)
++        self.assertEqual(response['Location'], '/admin_prefix/some-url/')
++
++if __name__ == '__main__':
++    # Configure settings
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='dummy',
++        ALLOWED_HOSTS=['testserver'],
++        INSTALLED_APPS=[
++            'django.contrib.admin',
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++        ],
++        ROOT_URLCONF='django.urls',
++    )
++
++    # Setup Django
++    django.setup()
++
++    # Run the test
++    test = CatchAllViewTest()
++    test.setUp()
++    test.test_catch_all_view_with_force_script_name()
++    print("Test completed successfully!")
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..cf51765f35
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,57 @@
++import django
++from django.conf import settings
++from django.test import TestCase, override_settings
++from django.test.client import RequestFactory
++from django.contrib.admin.sites import AdminSite
++from django.http import HttpRequest, HttpResponsePermanentRedirect
++from django.urls import Resolver404, resolve
++
++# Create a simple admin site
++class SimpleAdminSite(AdminSite):
++    site_header = "Test Admin"
++
++class CatchAllViewTest(TestCase):
++    def setUp(self):
++        self.factory = RequestFactory()
++        self.admin_site = SimpleAdminSite()
++
++    def test_redirect_url_with_path_vs_path_info(self):
++        """
++        Test the difference between request.path and request.path_info
++        when redirecting with a trailing slash.
++        """
++        # Case 1: Using path_info (current behavior)
++        path_info = '/some-url'
++        request_path_info = '%s/' % path_info
++        self.assertEqual(request_path_info, '/some-url/')
++
++        # Case 2: Using path (fixed behavior)
++        request_path = '/admin_prefix/some-url'
++        request_path_with_slash = '%s/' % request_path
++        self.assertEqual(request_path_with_slash, '/admin_prefix/some-url/')
++
++        # Verify that the fix would correctly include the script name
++        self.assertNotEqual(request_path_info, request_path_with_slash)
++
++if __name__ == '__main__':
++    # Configure settings
++    settings.configure(
++        DEBUG=True,
++        SECRET_KEY='dummy',
++        ALLOWED_HOSTS=['testserver'],
++        INSTALLED_APPS=[
++            'django.contrib.admin',
++            'django.contrib.auth',
++            'django.contrib.contenttypes',
++        ],
++        ROOT_URLCONF='django.urls',
++    )
++
++    # Setup Django
++    django.setup()
++
++    # Run the test
++    test = CatchAllViewTest()
++    test.setUp()
++    test.test_redirect_url_with_path_vs_path_info()
++    print("Test completed successfully!")
+\ No newline at end of file

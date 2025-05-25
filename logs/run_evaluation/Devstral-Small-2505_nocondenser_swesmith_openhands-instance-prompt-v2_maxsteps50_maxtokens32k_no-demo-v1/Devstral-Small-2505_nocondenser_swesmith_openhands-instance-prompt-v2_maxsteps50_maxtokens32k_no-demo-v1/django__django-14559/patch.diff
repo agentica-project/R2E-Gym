@@ -1,0 +1,171 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 387deca527..211ba45ed9 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -564,8 +564,10 @@ class QuerySet:
+                 update_kwargs[field.attname] = case_statement
+             updates.append(([obj.pk for obj in batch_objs], update_kwargs))
+         with transaction.atomic(using=self.db, savepoint=False):
++            rows_updated = 0
+             for pks, update_kwargs in updates:
+-                self.filter(pk__in=pks).update(**update_kwargs)
++                rows_updated += self.filter(pk__in=pks).update(**update_kwargs)
++            return rows_updated
+     bulk_update.alters_data = True
+ 
+     def get_or_create(self, defaults=None, **kwargs):
+diff --git a/simple_test.py b/simple_test.py
+new file mode 100644
+index 0000000000..77b982c52b
+--- /dev/null
++++ b/simple_test.py
+@@ -0,0 +1,84 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        SECRET_KEY='dummy',
++    )
++    django.setup()
++
++# Import the necessary classes
++from django.db.models.query import QuerySet
++from django.db.models import Model, CharField, IntegerField
++
++# Create a mock model for testing
++class MockModel(Model):
++    class Meta:
++        app_label = 'auth'
++        abstract = True
++
++    _meta = type('Meta', (), {
++        'get_field': lambda self, name: type('Field', (), {
++            'concrete': True,
++            'many_to_many': False,
++            'attname': name,
++            'primary_key': False
++        }),
++        'model_name': 'mockmodel'
++    })
++
++# Create a simple test to check the return value of bulk_update
++def test_bulk_update_return_value():
++    # Create a QuerySet instance for our mock model
++    qs = QuerySet(model=MockModel)
++
++    # We'll patch the necessary methods to avoid actual database operations
++    original_filter = qs.filter
++    original_update = QuerySet.update
++
++    # Mock filter to return a new QuerySet
++    def mock_filter(*args, **kwargs):
++        return QuerySet()
++
++    # Mock update to return a fixed number
++    def mock_update(self, **kwargs):
++        # Return 10 for each update call
++        return 10
++
++    # Apply the patches
++    qs.filter = mock_filter
++    QuerySet.update = mock_update
++
++    try:
++        # Create mock objects with primary keys
++        mock_objs = [type('obj', (), {'pk': i+1}) for i in range(3)]
++
++        # Check if bulk_update returns the sum of rows updated
++        result = qs.bulk_update(mock_objs, ['field1', 'field2'])
++
++        # With our mock, each update returns 10, and there are 3 batches
++        expected = 10 * 3
++        print(f"bulk_update() returned: {result}")
++        print(f"Expected: {expected}")
++        print(f"Test passed: {result == expected}")
++    finally:
++        # Restore original methods
++        qs.filter = original_filter
++        QuerySet.update = original_update
++
++if __name__ == "__main__":
++    test_bulk_update_return_value()
++    print("Test completed")
+\ No newline at end of file
+diff --git a/test_bulk_update.py b/test_bulk_update.py
+new file mode 100644
+index 0000000000..b490161572
+--- /dev/null
++++ b/test_bulk_update.py
+@@ -0,0 +1,57 @@
++import os
++import sys
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++            'django.contrib.auth',
++            'test_app',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        SECRET_KEY='dummy',
++    )
++    django.setup()
++
++from django.db import models, transaction
++from django.db.models import F
++
++# Define a simple model for testing
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++    value = models.IntegerField()
++
++    class Meta:
++        app_label = 'test_app'
++
++    def __str__(self):
++        return f"{self.name}: {self.value}"
++
++# Test function
++def test_bulk_update_return_value():
++    # Create some test objects
++    objects = [TestModel(name=f"Item {i}", value=i) for i in range(10)]
++    TestModel.objects.bulk_create(objects)
++
++    # Get all objects and update them
++    all_objects = list(TestModel.objects.all())
++
++    # Test bulk_update return value
++    result = TestModel.objects.bulk_update(all_objects, ['value'])
++    print(f"bulk_update() returned: {result}")
++
++    # Test update return value for comparison
++    row_count = TestModel.objects.update(value=F('value') + 1)
++    print(f"update() returned: {row_count}")
++
++if __name__ == "__main__":
++    test_bulk_update_return_value()
++    print("Test completed")
+\ No newline at end of file

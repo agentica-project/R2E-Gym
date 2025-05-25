@@ -1,0 +1,59 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..41d3c94233
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,39 @@
++from sympy import Symbol, symbols
++
++print("Test 1: Symbol with even=True")
++# Create a symbol with even=True
++m = Symbol('m', even=True)
++# Check the is_finite property
++print(f"m.is_even: {m.is_even}")
++print(f"m.is_finite: {m.is_finite}")
++# Expected: m.is_finite should be True since m.is_even is True
++
++print("\nTest 2: Symbol with odd=True")
++# Create a symbol with odd=True
++n = Symbol('n', odd=True)
++# Check the is_finite property
++print(f"n.is_odd: {n.is_odd}")
++print(f"n.is_finite: {n.is_finite}")
++# Expected: n.is_finite should be True since n.is_odd is True (and odd -> integer -> finite)
++
++print("\nTest 3: Symbol with infinite=True")
++# Create a symbol with infinite=True
++p = Symbol('p', infinite=True)
++# Check the is_even property
++print(f"p.is_infinite: {p.is_infinite}")
++print(f"p.is_even: {p.is_even}")
++# Expected: p.is_even should be None since p.is_infinite is True and even -> finite
++
++print("\nTest 4: Multiple symbols")
++# Create multiple symbols
++x, y = symbols('x y', even=True)
++# Check the is_finite property
++print(f"x.is_even: {x.is_even}, x.is_finite: {x.is_finite}")
++print(f"y.is_even: {y.is_even}, y.is_finite: {y.is_finite}")
++# Expected: Both x and y should have is_finite=True since they are even
++
++print("\nTest 5: Original issue from description")
++# Recreate the exact scenario from the issue description
++m = Symbol('m', even=True)
++print(f"m.is_finite: {m.is_finite}")
++# Expected: m.is_finite should be True, not None
+\ No newline at end of file
+diff --git a/sympy/core/assumptions.py b/sympy/core/assumptions.py
+index ce4dd30f2e..2080d6b5f7 100644
+--- a/sympy/core/assumptions.py
++++ b/sympy/core/assumptions.py
+@@ -174,6 +174,8 @@
+ 
+     'odd            ==  integer & !even',
+     'even           ==  integer & !odd',
++    'even           ->  finite',  # A number must be finite to be even
++    'odd            ->  finite',  # A number must be finite to be odd
+ 
+     'real           ==  negative | zero | positive',
+     'transcendental ==  complex & !algebraic',

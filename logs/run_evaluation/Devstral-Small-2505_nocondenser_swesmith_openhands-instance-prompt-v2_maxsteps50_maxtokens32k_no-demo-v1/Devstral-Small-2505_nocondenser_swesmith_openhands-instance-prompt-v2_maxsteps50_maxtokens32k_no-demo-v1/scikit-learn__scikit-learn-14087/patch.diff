@@ -1,0 +1,575 @@
+diff --git a/debug_detailed.py b/debug_detailed.py
+new file mode 100644
+index 000000000..4f4a633b1
+--- /dev/null
++++ b/debug_detailed.py
+@@ -0,0 +1,90 @@
++import numpy as np
++import sys
++import sklearn
++from sklearn.linear_model.logistic import LogisticRegressionCV
++
++# Create sample data
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Create a modified version of LogisticRegressionCV.fit
++class DebugLogisticRegressionCV(LogisticRegressionCV):
++    def fit(self, X, y, sample_weight=None):
++        print("Starting fit method...")
++
++        # Simulate the shapes based on what we know
++        from sklearn.model_selection import KFold
++        cv = KFold(n_splits=5)
++        folds = list(cv.split(X, y))
++
++        n_classes = len(np.unique(y))
++        n_features = X.shape[1]
++        n_folds = len(folds)
++        n_Cs = 10  # default value
++
++        # For multi_class != 'multinomial'
++        coefs_paths_ovr = np.zeros((n_classes, n_folds, n_Cs, n_features))
++        scores_ovr = np.zeros((n_classes, n_folds, n_Cs))
++
++        # For multi_class == 'multinomial'
++        coefs_paths_multinomial = np.zeros((n_folds, n_Cs, n_classes, n_features))
++        scores_multinomial = np.zeros((n_folds, n_Cs))
++
++        print("\nShapes for multi_class != 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_ovr.shape)
++        print("scores shape:", scores_ovr.shape)
++
++        # Try to reproduce the error with the ovr case
++        try:
++            best_indices = np.argmax(scores_ovr, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # This is the line that would cause the error
++            w = np.mean([coefs_paths_ovr[i, best_indices[i], :]
++                         for i in range(len(folds))], axis=0)
++            print("No error occurred in the ovr case")
++        except Exception as e:
++            print(f"Error in ovr case: {type(e).__name__}: {e}")
++
++        print("\nShapes for multi_class == 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_multinomial.shape)
++        print("scores shape:", scores_multinomial.shape)
++
++        # Try to reproduce the error with the multinomial case
++        try:
++            best_indices = np.argmax(scores_multinomial, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # This is the line that would cause the error
++            # The issue is that we're trying to use 4 indices on a 3D array
++            # w = np.mean([coefs_paths_multinomial[:, i, best_indices[i], :]
++            #              for i in range(len(folds))], axis=0)
++
++            # Let's try a different approach
++            w_list = []
++            for i in range(len(folds)):
++                # Get the best coefficients for this fold
++                best_coefs = coefs_paths_multinomial[i, best_indices[i], :]
++                w_list.append(best_coefs)
++
++            w = np.mean(w_list, axis=0)
++            print("No error occurred in the multinomial case with fixed code")
++        except Exception as e:
++            print(f"Error in multinomial case: {type(e).__name__}: {e}")
++            import traceback
++            traceback.print_exc()
++
++        return self
++
++print("Running debug script...")
++debug_model = DebugLogisticRegressionCV(
++    cv=5,
++    solver='saga',
++    tol=1e-2,
++    refit=False)
++debug_model.fit(X, y)
+\ No newline at end of file
+diff --git a/debug_final.py b/debug_final.py
+new file mode 100644
+index 000000000..5f3dde3af
+--- /dev/null
++++ b/debug_final.py
+@@ -0,0 +1,91 @@
++import numpy as np
++import sys
++import sklearn
++from sklearn.linear_model.logistic import LogisticRegressionCV
++
++# Create sample data
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Create a modified version of LogisticRegressionCV.fit
++class DebugLogisticRegressionCV(LogisticRegressionCV):
++    def fit(self, X, y, sample_weight=None):
++        print("Starting fit method...")
++
++        # Simulate the shapes based on what we know
++        from sklearn.model_selection import KFold
++        cv = KFold(n_splits=5)
++        folds = list(cv.split(X, y))
++
++        n_classes = len(np.unique(y))
++        n_features = X.shape[1]
++        n_folds = len(folds)
++        n_Cs = 10  # default value
++
++        # For multi_class != 'multinomial'
++        coefs_paths_ovr = np.zeros((n_classes, n_folds, n_Cs, n_features))
++        scores_ovr = np.zeros((n_classes, n_folds, n_Cs))
++
++        # For multi_class == 'multinomial'
++        coefs_paths_multinomial = np.zeros((n_folds, n_Cs, n_classes, n_features))
++        scores_multinomial = np.zeros((n_folds, n_Cs))
++
++        print("\nShapes for multi_class != 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_ovr.shape)
++        print("scores shape:", scores_ovr.shape)
++
++        # Try to reproduce the error with the ovr case
++        try:
++            best_indices = np.argmax(scores_ovr, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # This is the line that would cause the error
++            w_list = []
++            for i in range(len(folds)):
++                for class_idx in range(coefs_paths_ovr.shape[0]):
++                    best_coefs = coefs_paths_ovr[class_idx, i, best_indices[class_idx], :]
++                    w_list.append(best_coefs)
++            w = np.mean(w_list, axis=0)
++            print("No error occurred in the ovr case")
++        except Exception as e:
++            print(f"Error in ovr case: {type(e).__name__}: {e}")
++            import traceback
++            traceback.print_exc()
++
++        print("\nShapes for multi_class == 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_multinomial.shape)
++        print("scores shape:", scores_multinomial.shape)
++
++        # Try to reproduce the error with the multinomial case
++        try:
++            best_indices = np.argmax(scores_multinomial, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # Let's try a different approach
++            w_list = []
++            for i in range(len(folds)):
++                for class_idx in range(coefs_paths_multinomial.shape[2]):
++                    best_coefs = coefs_paths_multinomial[i, best_indices[i], class_idx, :]
++                    w_list.append(best_coefs)
++
++            w = np.mean(w_list, axis=0)
++            print("No error occurred in the multinomial case with fixed code")
++        except Exception as e:
++            print(f"Error in multinomial case: {type(e).__name__}: {e}")
++            import traceback
++            traceback.print_exc()
++
++        return self
++
++print("Running debug script...")
++debug_model = DebugLogisticRegressionCV(
++    cv=5,
++    solver='saga',
++    tol=1e-2,
++    refit=False)
++debug_model.fit(X, y)
+\ No newline at end of file
+diff --git a/debug_shapes.py b/debug_shapes.py
+new file mode 100644
+index 000000000..0fbf0684a
+--- /dev/null
++++ b/debug_shapes.py
+@@ -0,0 +1,49 @@
++import sys
++import sklearn
++from sklearn.linear_model import LogisticRegressionCV
++import numpy as np
++
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Monkey patch the fit method to print shapes
++original_fit = LogisticRegressionCV.fit
++
++def patched_fit(self, X, y, sample_weight=None):
++    print("Multi-class setting:", self.multi_class)
++    result = original_fit(self, X, y, sample_weight)
++    return result
++
++LogisticRegressionCV.fit = patched_fit
++
++# Add debug prints to the logistic.py file
++import inspect
++import sklearn.linear_model.logistic as logistic
++
++# Store original code
++original_code = inspect.getsource(logistic.LogisticRegressionCV.fit)
++
++# Create a modified version with debug prints
++modified_code = original_code.replace(
++    "best_indices = np.argmax(scores, axis=1)",
++    "best_indices = np.argmax(scores, axis=1)\n                print('DEBUG: coefs_paths shape:', coefs_paths.shape)"
++)
++
++# Execute the modified code
++exec(modified_code, logistic.__dict__)
++
++print("Running LogisticRegressionCV with refit=False...")
++try:
++    LogisticRegressionCV(
++    cv=5,
++    solver='saga',
++    tol=1e-2,
++    refit=False).fit(X, y)
++    print("Success! No error was thrown.")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/debug_shapes2.py b/debug_shapes2.py
+new file mode 100644
+index 000000000..fee82c0a1
+--- /dev/null
++++ b/debug_shapes2.py
+@@ -0,0 +1,90 @@
++import sys
++import sklearn
++from sklearn.linear_model import LogisticRegressionCV
++import numpy as np
++
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Create a modified version of LogisticRegressionCV.fit
++class DebugLogisticRegressionCV(LogisticRegressionCV):
++    def fit(self, X, y, sample_weight=None):
++        print("Starting fit method...")
++        # Call the parent's fit method but stop before the error occurs
++        from sklearn.linear_model.logistic import _check_solver
++        solver = _check_solver(self.solver, self.penalty, self.dual)
++
++        if not isinstance(self.max_iter, (int, float)) or self.max_iter < 0:
++            raise ValueError("Maximum number of iteration must be positive;"
++                             " got (max_iter=%r)" % self.max_iter)
++        if not isinstance(self.tol, (int, float)) or self.tol < 0:
++            raise ValueError("Tolerance for stopping criteria must be "
++                             "positive; got (tol=%r)" % self.tol)
++
++        # Skip ahead to where the error occurs
++        # This is a simplified version just to check shapes
++        from sklearn.model_selection import KFold
++        cv = KFold(n_splits=5)
++        folds = list(cv.split(X, y))
++
++        # Simulate the shapes based on what we know
++        n_classes = len(np.unique(y))
++        n_features = X.shape[1]
++        n_folds = len(folds)
++        n_Cs = 10  # default value
++        n_l1_ratios = 1  # default value
++
++        # For multi_class != 'multinomial'
++        coefs_paths_ovr = np.zeros((n_classes, n_folds, n_Cs * n_l1_ratios, n_features))
++        scores_ovr = np.zeros((n_classes, n_folds, n_Cs * n_l1_ratios))
++
++        # For multi_class == 'multinomial'
++        coefs_paths_multinomial = np.zeros((len(folds), n_Cs * n_l1_ratios, n_classes, n_features))
++        scores_multinomial = np.zeros((len(folds), n_Cs * n_l1_ratios))
++
++        print("\nShapes for multi_class != 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_ovr.shape)
++        print("scores shape:", scores_ovr.shape)
++
++        # Try to reproduce the error with the ovr case
++        try:
++            best_indices = np.argmax(scores_ovr, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # This is the line that would cause the error
++            w = np.mean([coefs_paths_ovr[:, i, best_indices[i], :]
++                         for i in range(len(folds))], axis=0)
++            print("No error occurred in the ovr case")
++        except Exception as e:
++            print(f"Error in ovr case: {type(e).__name__}: {e}")
++
++        print("\nShapes for multi_class == 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_multinomial.shape)
++        print("scores shape:", scores_multinomial.shape)
++
++        # Try to reproduce the error with the multinomial case
++        try:
++            best_indices = np.argmax(scores_multinomial, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # This is the line that would cause the error
++            w = np.mean([coefs_paths_multinomial[:, i, best_indices[i], :]
++                         for i in range(len(folds))], axis=0)
++            print("No error occurred in the multinomial case")
++        except Exception as e:
++            print(f"Error in multinomial case: {type(e).__name__}: {e}")
++
++        return self
++
++print("Running debug script...")
++debug_model = DebugLogisticRegressionCV(
++    cv=5,
++    solver='saga',
++    tol=1e-2,
++    refit=False)
++debug_model.fit(X, y)
+\ No newline at end of file
+diff --git a/debug_shapes_final.py b/debug_shapes_final.py
+new file mode 100644
+index 000000000..5f6929565
+--- /dev/null
++++ b/debug_shapes_final.py
+@@ -0,0 +1,95 @@
++import numpy as np
++import sys
++import sklearn
++from sklearn.linear_model.logistic import LogisticRegressionCV
++
++# Create sample data
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Create a modified version of LogisticRegressionCV.fit
++class DebugLogisticRegressionCV(LogisticRegressionCV):
++    def fit(self, X, y, sample_weight=None):
++        print("Starting fit method...")
++
++        # Simulate the shapes based on what we know
++        from sklearn.model_selection import KFold
++        cv = KFold(n_splits=5)
++        folds = list(cv.split(X, y))
++
++        n_classes = len(np.unique(y))
++        n_features = X.shape[1]
++        n_folds = len(folds)
++        n_Cs = 10  # default value
++
++        # For multi_class != 'multinomial'
++        coefs_paths_ovr = np.zeros((n_classes, n_folds, n_Cs, n_features))
++        scores_ovr = np.zeros((n_classes, n_folds, n_Cs))
++
++        # For multi_class == 'multinomial'
++        # This is the shape that's causing the issue
++        coefs_paths_multinomial = np.zeros((5, 10, 2, 3))
++        scores_multinomial = np.zeros((5, 10))
++
++        print("\nShapes for multi_class != 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_ovr.shape)
++        print("scores shape:", scores_ovr.shape)
++
++        # Try to reproduce the error with the ovr case
++        try:
++            best_indices = np.argmax(scores_ovr, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # This is the line that would cause the error
++            w_list = []
++            for i in range(len(folds)):
++                for class_idx in range(coefs_paths_ovr.shape[0]):
++                    best_coefs = coefs_paths_ovr[class_idx, i, best_indices[class_idx], :]
++                    w_list.append(best_coefs)
++            w = np.mean(w_list, axis=0)
++            print("No error occurred in the ovr case")
++        except Exception as e:
++            print(f"Error in ovr case: {type(e).__name__}: {e}")
++            import traceback
++            traceback.print_exc()
++
++        print("\nShapes for multi_class == 'multinomial':")
++        print("coefs_paths shape:", coefs_paths_multinomial.shape)
++        print("scores shape:", scores_multinomial.shape)
++
++        # Try to reproduce the error with the multinomial case
++        try:
++            best_indices = np.argmax(scores_multinomial, axis=1)
++            print("best_indices shape:", best_indices.shape)
++            print("best_indices:", best_indices)
++
++            # Let's try a different approach
++            w_list = []
++            for i in range(len(folds)):
++                for class_idx in range(coefs_paths_multinomial.shape[2]):
++                    # The issue is that we're trying to use 4 indices on a 3D array
++                    # coefs_paths_multinomial[i, best_indices[i], class_idx, :]
++                    # Instead, we need to use 3 indices
++                    best_coefs = coefs_paths_multinomial[i, best_indices[i], :]
++                    w_list.append(best_coefs)
++
++            w = np.mean(w_list, axis=0)
++            print("No error occurred in the multinomial case with fixed code")
++        except Exception as e:
++            print(f"Error in multinomial case: {type(e).__name__}: {e}")
++            import traceback
++            traceback.print_exc()
++
++        return self
++
++print("Running debug script...")
++debug_model = DebugLogisticRegressionCV(
++    cv=5,
++    solver='saga',
++    tol=1e-2,
++    refit=False)
++debug_model.fit(X, y)
+\ No newline at end of file
+diff --git a/reproduce_exact_error.py b/reproduce_exact_error.py
+new file mode 100644
+index 000000000..96683f641
+--- /dev/null
++++ b/reproduce_exact_error.py
+@@ -0,0 +1,53 @@
++import numpy as np
++import sys
++import sklearn
++from sklearn.linear_model.logistic import LogisticRegressionCV
++
++# Create sample data
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++# Create a minimal test case that reproduces the error
++class MinimalLogisticRegressionCV(LogisticRegressionCV):
++    def fit(self, X, y, sample_weight=None):
++        # Skip to the part where the error occurs
++        from sklearn.model_selection import KFold
++        cv = KFold(n_splits=5)
++        folds = list(cv.split(X, y))
++
++        # Simulate the shapes based on what we know
++        n_classes = len(np.unique(y))
++        n_features = X.shape[1]
++        n_folds = len(folds)
++        n_Cs = 10  # default value
++
++        # For multi_class != 'multinomial'
++        coefs_paths = np.zeros((n_classes, n_folds, n_Cs, n_features))
++        scores = np.zeros((n_classes, n_folds, n_Cs))
++
++        # This is the code that causes the error
++        best_indices = np.argmax(scores, axis=1)
++        print("best_indices shape:", best_indices.shape)
++
++        try:
++            # This is the line that would cause the error in the actual code
++            w = np.mean([coefs_paths[:, i, best_indices[i], :]
++                         for i in range(len(folds))], axis=0)
++            print("No error occurred")
++        except Exception as e:
++            print(f"Error: {type(e).__name__}: {e}")
++            import traceback
++            traceback.print_exc()
++
++        return self
++
++print("Running minimal test case...")
++model = MinimalLogisticRegressionCV(
++    cv=5,
++    solver='saga',
++    tol=1e-2,
++    refit=False)
++model.fit(X, y)
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..69f746783
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,23 @@
++import sys
++import sklearn
++from sklearn.linear_model import LogisticRegressionCV
++import numpy as np
++
++np.random.seed(29)
++X = np.random.normal(size=(1000, 3))
++beta = np.random.normal(size=3)
++intercept = np.random.normal(size=None)
++y = np.sign(intercept + X @ beta)
++
++print("Running LogisticRegressionCV with refit=False...")
++try:
++    LogisticRegressionCV(
++    cv=5,
++    solver='saga', # same error with 'liblinear'
++    tol=1e-2,
++    refit=False).fit(X, y)
++    print("Success! No error was thrown.")
++except Exception as e:
++    print(f"Error: {type(e).__name__}: {e}")
++    import traceback
++    traceback.print_exc()
+\ No newline at end of file
+diff --git a/sklearn/linear_model/logistic.py b/sklearn/linear_model/logistic.py
+index 1999f1dae..ae0456296 100644
+--- a/sklearn/linear_model/logistic.py
++++ b/sklearn/linear_model/logistic.py
+@@ -2171,11 +2171,26 @@ class LogisticRegressionCV(LogisticRegression, BaseEstimator,
+                 # all coefficients corresponding to the best scores.
+                 best_indices = np.argmax(scores, axis=1)
+                 if self.multi_class == 'ovr':
+-                    w = np.mean([coefs_paths[i, best_indices[i], :]
+-                                 for i in range(len(folds))], axis=0)
++                    # For each class, get the best coefficients for each fold
++                    # and average them
++                    w_list = []
++                    for i in range(len(folds)):
++                        # For each class, get the best coefficients for this fold
++                        for class_idx in range(coefs_paths.shape[0]):
++                            best_coefs = coefs_paths[class_idx, i, best_indices[class_idx], :]
++                            w_list.append(best_coefs)
++                    w = np.mean(w_list, axis=0)
+                 else:
+-                    w = np.mean([coefs_paths[:, i, best_indices[i], :]
+-                                 for i in range(len(folds))], axis=0)
++                    # For non-ovr multi-class, we need to handle the case where
++                    # coefs_paths has a different shape than in the ovr case
++                    w_list = []
++                    for i in range(len(folds)):
++                        # For each class, get the best coefficients for this fold
++                        for class_idx in range(coefs_paths.shape[0]):
++                            # Use the correct indexing for this shape
++                            best_coefs = coefs_paths[i, best_indices[i], class_idx, :]
++                            w_list.append(best_coefs)
++                    w = np.mean(w_list, axis=0)
+ 
+                 best_indices_C = best_indices % len(self.Cs_)
+                 self.C_.append(np.mean(self.Cs_[best_indices_C]))

@@ -1,0 +1,42 @@
+diff --git a/django/utils/dateparse.py b/django/utils/dateparse.py
+index 8d08b7d1d3..a037758784 100644
+--- a/django/utils/dateparse.py
++++ b/django/utils/dateparse.py
+@@ -29,7 +29,7 @@ datetime_re = re.compile(
+ standard_duration_re = re.compile(
+     r'^'
+     r'(?:(?P<days>-?\d+) (days?, )?)?'
+-    r'((?:(?P<hours>-?\d+):)(?=\d+:\d+))?'
++    r'((?:(?P<hours>-?\d+):)(?=-?\d+:-?\d+))?'
+     r'(?:(?P<minutes>-?\d+):)?'
+     r'(?P<seconds>-?\d+)'
+     r'(?:\.(?P<microseconds>\d{1,6})\d{0,6})?'
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..235c1959ce
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,22 @@
++import re
++from django.utils.dateparse import parse_duration, standard_duration_re
++
++# Test cases
++test_cases = [
++    "4 15:30",        # Positive duration with days
++    "10:15:30",       # Positive duration with hours
++    "-4 15:30",       # Negative days
++    "-15:30",         # Negative minutes
++    "-1:15:30",       # Negative hours
++    "-30",            # Negative seconds
++    "-1:-15:30",      # Negative hours with negative minutes - this should fail with current regex
++    "-1:-15:-30",     # Negative hours, minutes, and seconds - this should fail with current regex
++]
++
++print("Current regex pattern:")
++print(standard_duration_re.pattern)
++print("\nTesting durations:")
++
++for duration in test_cases:
++    match = standard_duration_re.match(duration)
++    print(f"{duration}: {'Matched' if match else 'Failed to match'}")
+\ No newline at end of file

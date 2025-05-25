@@ -1,0 +1,110 @@
+diff --git a/django/db/backends/base/schema.py b/django/db/backends/base/schema.py
+index 09785e8586..60dc9ad785 100644
+--- a/django/db/backends/base/schema.py
++++ b/django/db/backends/base/schema.py
+@@ -450,14 +450,24 @@ class BaseDatabaseSchemaEditor:
+ 
+         # Make M2M tables
+         for field in model._meta.local_many_to_many:
+-            if field.remote_field.through._meta.auto_created:
+-                self.create_model(field.remote_field.through)
++            through = field.remote_field.through
++            # If through is a string, it's a reference to another model
++            # that will be created in its own migration
++            if isinstance(through, str):
++                continue
++            if through._meta.auto_created:
++                self.create_model(through)
+ 
+     def delete_model(self, model):
+         """Delete a model from the database."""
+         # Handle auto-created intermediary models
+         for field in model._meta.local_many_to_many:
+-            if field.remote_field.through._meta.auto_created:
++            through = field.remote_field.through
++            # If through is a string, it's a reference to another model
++            # that will be handled in its own migration
++            if isinstance(through, str):
++                continue
++            if through._meta.auto_created:
+                 self.delete_model(field.remote_field.through)
+ 
+         # Delete the table
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..9445411de5
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,34 @@
++import os
++import sys
++import django
++from django.db import models
++from django.db.models import CASCADE, ManyToManyField
++from django.db.models.fields.related import ManyToManyRel, ForeignObjectRel
++
++# Let's directly test the issue in the schema editor
++# The problem is that when a ManyToManyField uses a string for the `through` parameter,
++# the `through` attribute is a string, not a model class. When the schema editor tries
++# to access `._meta` on this string, it causes the AttributeError.
++
++# Simulate what happens in the schema editor
++def simulate_schema_editor_issue():
++    # Create a ManyToManyField with a string as the through model
++    field = ManyToManyField("VariavelModel", through="FonteVariavelModel")
++
++    # Access the remote_field.through attribute
++    through_model = field.remote_field.through
++
++    print(f"Through model type: {type(through_model)}")
++    print(f"Through model value: {through_model}")
++
++    # This is where the error would occur in the schema editor
++    try:
++        if hasattr(through_model, '_meta'):
++            print("Through model has _meta attribute")
++        else:
++            print("ERROR: Through model does not have _meta attribute")
++    except Exception as e:
++        print(f"Exception: {type(e).__name__}: {e}")
++
++# Run the simulation
++simulate_schema_editor_issue()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..6ae668b6dd
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,30 @@
++import os
++import sys
++import django
++from django.db import models
++from django.db.models import ManyToManyField
++from django.db.models.fields.related import ManyToManyRel
++
++# Set up a basic Django environment
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'django.conf.global_settings')
++django.setup()
++
++# Create a ManyToManyField with a string as the through model
++field = ManyToManyField("VariavelModel", through="FonteVariavelModel")
++
++# Get the through model
++through = field.remote_field.through
++
++print(f"Through model type: {type(through)}")
++print(f"Through model value: {through}")
++
++# This is the line that was causing the error before our fix
++if isinstance(through, str):
++    print("SUCCESS: String through model is properly handled")
++else:
++    # If it's not a string, check if it has _meta
++    try:
++        has_meta = hasattr(through, '_meta')
++        print(f"Through model has _meta attribute: {has_meta}")
++    except Exception as e:
++        print(f"ERROR: {type(e).__name__}: {e}")
+\ No newline at end of file

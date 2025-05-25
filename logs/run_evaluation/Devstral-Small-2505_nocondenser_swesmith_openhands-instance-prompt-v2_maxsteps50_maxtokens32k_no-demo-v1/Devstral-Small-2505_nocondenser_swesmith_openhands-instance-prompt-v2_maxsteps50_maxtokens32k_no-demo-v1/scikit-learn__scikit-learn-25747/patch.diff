@@ -1,0 +1,158 @@
+diff --git a/comprehensive_test.py b/comprehensive_test.py
+new file mode 100644
+index 000000000..228b76edb
+--- /dev/null
++++ b/comprehensive_test.py
+@@ -0,0 +1,96 @@
++import pandas as pd
++import numpy as np
++from sklearn.base import BaseEstimator, TransformerMixin
++from sklearn import set_config
++from sklearn.pipeline import make_union, FeatureUnion
++from sklearn.preprocessing import StandardScaler
++
++# Create sample data
++index = pd.date_range(start="2020-01-01", end="2020-01-05", inclusive="left", freq="H")
++data = pd.DataFrame(index=index, data=[10] * len(index), columns=["value"])
++data["date"] = index.date
++
++# Test 1: Simple aggregating transformer
++class AggregatingTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y=None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
++        return X["value"].groupby(X["date"]).sum().reset_index()
++
++# Test 2: Non-aggregating transformer
++class IdentityTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y=None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
++        return X[["value"]].copy()
++
++# Test 3: Transformer that changes column names
++class ColumnRenamer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y=None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
++        return X.rename(columns={"value": "renamed_value"})
++
++# Test 4: Transformer that adds a column
++class ColumnAdder(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y=None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
++        X = X.copy()
++        X["new_column"] = 1
++        return X
++
++# Run tests with different configurations
++def run_test(test_name, transformer, data):
++    print(f"\n=== {test_name} ===")
++
++    # Test with default output
++    print("\nTesting with default output:")
++    set_config(transform_output="default")
++    try:
++        result = make_union(transformer).fit_transform(data)
++        print(f"Success! Result shape: {result.shape}")
++        if isinstance(result, pd.DataFrame):
++            print(f"Result columns: {result.columns.tolist()}")
++    except Exception as e:
++        print("Error:", str(e))
++
++    # Test with pandas output
++    print("\nTesting with pandas output:")
++    set_config(transform_output="pandas")
++    try:
++        result = make_union(transformer).fit_transform(data)
++        print(f"Success! Result shape: {result.shape}")
++        if isinstance(result, pd.DataFrame):
++            print(f"Result columns: {result.columns.tolist()}")
++    except Exception as e:
++        print("Error:", str(e))
++
++# Run tests
++run_test("Test 1: Aggregating Transformer", AggregatingTransformer(), data)
++run_test("Test 2: Identity Transformer", IdentityTransformer(), data)
++run_test("Test 3: Column Renamer", ColumnRenamer(), data)
++run_test("Test 4: Column Adder", ColumnAdder(), data)
++
++# Test with multiple transformers in a FeatureUnion
++print("\n=== Test 5: Multiple Transformers in FeatureUnion ===")
++set_config(transform_output="pandas")
++try:
++    fu = FeatureUnion(transformer_list=[
++        ("agg", AggregatingTransformer()),
++        ("identity", IdentityTransformer())
++    ])
++    result = fu.fit_transform(data)
++    print(f"Success! Result shape: {result.shape}")
++    if isinstance(result, pd.DataFrame):
++        print(f"Result columns: {result.columns.tolist()}")
++except Exception as e:
++    print("Error:", str(e))
++
++# Test with sklearn's StandardScaler
++print("\n=== Test 6: StandardScaler ===")
++run_test("StandardScaler", StandardScaler(), data)
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 000000000..ee40b8eaa
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,35 @@
++import pandas as pd
++from sklearn.base import BaseEstimator, TransformerMixin
++from sklearn import set_config
++from sklearn.pipeline import make_union
++
++# Create sample data
++index = pd.date_range(start="2020-01-01", end="2020-01-05", inclusive="left", freq="H")
++data = pd.DataFrame(index=index, data=[10] * len(index), columns=["value"])
++data["date"] = index.date
++
++# Define a transformer that aggregates data
++class MyTransformer(BaseEstimator, TransformerMixin):
++    def fit(self, X: pd.DataFrame, y=None, **kwargs):
++        return self
++
++    def transform(self, X: pd.DataFrame, y=None) -> pd.DataFrame:
++        return X["value"].groupby(X["date"]).sum().reset_index()
++
++# Test with default output
++print("Testing with default output:")
++set_config(transform_output="default")
++try:
++    result = make_union(MyTransformer()).fit_transform(data)
++    print("Success! Result shape:", result.shape)
++except Exception as e:
++    print("Error:", str(e))
++
++# Test with pandas output
++print("\nTesting with pandas output:")
++set_config(transform_output="pandas")
++try:
++    result = make_union(MyTransformer()).fit_transform(data)
++    print("Success! Result shape:", result.shape)
++except Exception as e:
++    print("Error:", str(e))
+\ No newline at end of file
+diff --git a/sklearn/utils/_set_output.py b/sklearn/utils/_set_output.py
+index 335773c6a..d27df0005 100644
+--- a/sklearn/utils/_set_output.py
++++ b/sklearn/utils/_set_output.py
+@@ -55,7 +55,7 @@ def _wrap_in_pandas_container(
+     if isinstance(data_to_wrap, pd.DataFrame):
+         if columns is not None:
+             data_to_wrap.columns = columns
+-        if index is not None:
++        if index is not None and len(index) == len(data_to_wrap):
+             data_to_wrap.index = index
+         return data_to_wrap
+ 

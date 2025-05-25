@@ -1,0 +1,59 @@
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..ef1c5a5f94
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,52 @@
++import sys
++import os
++from pathlib import Path
++
++# Add the testbed directory to the Python path
++sys.path.insert(0, str(Path('/testbed').resolve()))
++
++# Import Django modules
++from django.db import models
++from django.db.models.constants import OnConflict
++
++# Create a mock model with db_column specified
++class MockMeta:
++    def __init__(self):
++        self.db_table = "Activity_BlackListed"
++        self.concrete_fields = [
++            MockField(name="blacklistid", column="BlacklistID"),
++            MockField(name="sectorid", column="SectorID")
++        ]
++        self.pk = MockField(name="blacklistid", column="BlacklistID")
++
++class MockField:
++    def __init__(self, name, column):
++        self.name = name
++        self.column = column
++        self.attname = name
++
++class ActivityBlackListed:
++    _meta = MockMeta()
++
++# Import the PostgreSQL operations class
++from django.db.backends.postgresql.operations import DatabaseOperations
++
++# Create an instance of the operations class
++ops = DatabaseOperations(None)
++
++# Test the on_conflict_suffix_sql method
++unique_fields = ["blacklistid"]
++update_fields = ["sectorid"]
++
++# Call the method
++sql = ops.on_conflict_suffix_sql(
++    fields=None,
++    on_conflict=OnConflict.UPDATE,
++    update_fields=update_fields,
++    unique_fields=unique_fields
++)
++
++print("Generated SQL for ON CONFLICT clause:")
++print(sql)
++print("\nThe issue is that it uses 'blacklistid' instead of 'BlacklistID' in the ON CONFLICT clause")
++print("and 'sectorid' instead of 'SectorID' in the EXCLUDED.sectorid part")
+\ No newline at end of file

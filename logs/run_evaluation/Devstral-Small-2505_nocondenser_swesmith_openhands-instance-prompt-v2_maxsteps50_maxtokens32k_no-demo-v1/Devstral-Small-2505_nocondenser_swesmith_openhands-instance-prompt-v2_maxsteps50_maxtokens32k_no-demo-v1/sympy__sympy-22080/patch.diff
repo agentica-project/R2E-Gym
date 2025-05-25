@@ -1,0 +1,138 @@
+diff --git a/reproduce_mod_bug.py b/reproduce_mod_bug.py
+new file mode 100644
+index 0000000000..6f49ffe6e8
+--- /dev/null
++++ b/reproduce_mod_bug.py
+@@ -0,0 +1,76 @@
++from sympy import Mod, lambdify, symbols, sin, cos
++import inspect
++
++x, y = symbols('x y')
++a, b = symbols('a b')
++
++print("Testing with various expressions containing Mod:")
++print("================================================")
++
++# Test case from the issue description
++expr = -Mod(x, y)
++f = lambdify([x, y], expr)
++f_mod_empty = lambdify([x, y], expr, modules=[])
++
++print("1. Issue description example: -Mod(x, y)")
++print(f"Regular lambdify: {inspect.getsource(f)}")
++print(f"modules=[] lambdify: {inspect.getsource(f_mod_empty)}")
++print(f"Regular result: {f(3, 7)}")
++print(f"modules=[] result: {f_mod_empty(3, 7)}")
++print(f"Expected result: -3 % 7 = 4")
++print()
++
++# Test with more complex expressions
++expr2 = sin(x) * Mod(x, y)
++f2 = lambdify([x, y], expr2)
++f2_mod_empty = lambdify([x, y], expr2, modules=[])
++print("2. sin(x) * Mod(x, y):")
++print(f"Regular lambdify: {inspect.getsource(f2)}")
++print(f"modules=[] lambdify: {inspect.getsource(f2_mod_empty)}")
++print(f"Regular result: {f2(3, 7)}")
++print(f"modules=[] result: {f2_mod_empty(3, 7)}")
++print()
++
++# Test with nested expressions
++expr3 = (a * x + b) * Mod(x, y)
++f3 = lambdify([x, y, a, b], expr3)
++f3_mod_empty = lambdify([x, y, a, b], expr3, modules=[])
++print("3. (a*x + b) * Mod(x, y):")
++print(f"Regular lambdify: {inspect.getsource(f3)}")
++print(f"modules=[] lambdify: {inspect.getsource(f3_mod_empty)}")
++print(f"Regular result: {f3(3, 7, 2, 1)}")
++print(f"modules=[] result: {f3_mod_empty(3, 7, 2, 1)}")
++print()
++
++# Test with multiple Mod expressions
++expr4 = Mod(x, y) + 2 * Mod(x + 1, y)
++f4 = lambdify([x, y], expr4)
++f4_mod_empty = lambdify([x, y], expr4, modules=[])
++print("4. Mod(x, y) + 2 * Mod(x + 1, y):")
++print(f"Regular lambdify: {inspect.getsource(f4)}")
++print(f"modules=[] lambdify: {inspect.getsource(f4_mod_empty)}")
++print(f"Regular result: {f4(3, 7)}")
++print(f"modules=[] result: {f4_mod_empty(3, 7)}")
++print()
++
++# Test with negative Mod
++expr5 = -Mod(x + 1, y)
++f5 = lambdify([x, y], expr5)
++f5_mod_empty = lambdify([x, y], expr5, modules=[])
++print("5. -Mod(x + 1, y):")
++print(f"Regular lambdify: {inspect.getsource(f5)}")
++print(f"modules=[] lambdify: {inspect.getsource(f5_mod_empty)}")
++print(f"Regular result: {f5(3, 7)}")
++print(f"modules=[] result: {f5_mod_empty(3, 7)}")
++print()
++
++# Test with complex coefficients
++expr6 = (1/2) * Mod(2*x, y)
++f6 = lambdify([x, y], expr6)
++f6_mod_empty = lambdify([x, y], expr6, modules=[])
++print("6. (1/2) * Mod(2*x, y):")
++print(f"Regular lambdify: {inspect.getsource(f6)}")
++print(f"modules=[] lambdify: {inspect.getsource(f6_mod_empty)}")
++print(f"Regular result: {f6(3, 7)}")
++print(f"modules=[] result: {f6_mod_empty(3, 7)}")
++print()
+\ No newline at end of file
+diff --git a/test_mod_bug.py b/test_mod_bug.py
+new file mode 100644
+index 0000000000..1c8741e237
+--- /dev/null
++++ b/test_mod_bug.py
+@@ -0,0 +1,48 @@
++from sympy import Mod, lambdify, symbols, sin, cos
++import inspect
++
++x, y = symbols('x y')
++
++# Test case 1: Basic Mod function
++expr1 = Mod(x, y)
++f1 = lambdify([x, y], expr1)
++f1_mod_empty = lambdify([x, y], expr1, modules=[])
++print("Test case 1 - Basic Mod:")
++print(f"Regular lambdify: {inspect.getsource(f1)}")
++print(f"modules=[] lambdify: {inspect.getsource(f1_mod_empty)}")
++print(f"Regular result: {f1(3, 7)}")
++print(f"modules=[] result: {f1_mod_empty(3, 7)}")
++print()
++
++# Test case 2: Expression * Mod
++expr2 = sin(x) * Mod(x, y)
++f2 = lambdify([x, y], expr2)
++f2_mod_empty = lambdify([x, y], expr2, modules=[])
++print("Test case 2 - sin(x) * Mod(x, y):")
++print(f"Regular lambdify: {inspect.getsource(f2)}")
++print(f"modules=[] lambdify: {inspect.getsource(f2_mod_empty)}")
++print(f"Regular result: {f2(3, 7)}")
++print(f"modules=[] result: {f2_mod_empty(3, 7)}")
++print()
++
++# Test case 3: -Mod(x, y)
++expr3 = -Mod(x, y)
++f3 = lambdify([x, y], expr3)
++f3_mod_empty = lambdify([x, y], expr3, modules=[])
++print("Test case 3 - -Mod(x, y):")
++print(f"Regular lambdify: {inspect.getsource(f3)}")
++print(f"modules=[] lambdify: {inspect.getsource(f3_mod_empty)}")
++print(f"Regular result: {f3(3, 7)}")
++print(f"modules=[] result: {f3_mod_empty(3, 7)}")
++print()
++
++# Test case 4: 2 * Mod(x, y)
++expr4 = 2 * Mod(x, y)
++f4 = lambdify([x, y], expr4)
++f4_mod_empty = lambdify([x, y], expr4, modules=[])
++print("Test case 4 - 2 * Mod(x, y):")
++print(f"Regular lambdify: {inspect.getsource(f4)}")
++print(f"modules=[] lambdify: {inspect.getsource(f4_mod_empty)}")
++print(f"Regular result: {f4(3, 7)}")
++print(f"modules=[] result: {f4_mod_empty(3, 7)}")
++print()
+\ No newline at end of file

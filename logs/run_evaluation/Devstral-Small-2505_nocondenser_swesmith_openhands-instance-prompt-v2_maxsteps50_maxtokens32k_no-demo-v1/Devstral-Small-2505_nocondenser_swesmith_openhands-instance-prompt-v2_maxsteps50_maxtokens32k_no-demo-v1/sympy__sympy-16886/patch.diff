@@ -1,0 +1,74 @@
+diff --git a/run_crypto_tests.py b/run_crypto_tests.py
+new file mode 100644
+index 0000000000..91a10c409a
+--- /dev/null
++++ b/run_crypto_tests.py
+@@ -0,0 +1,20 @@
++#!/usr/bin/env python
++"""
++Run the Morse code tests from the sympy.crypto.tests.test_crypto module.
++"""
++
++from sympy.crypto.tests.test_crypto import test_encode_morse, test_decode_morse
++
++def run_tests():
++    print("Running test_encode_morse...")
++    test_encode_morse()
++    print("test_encode_morse passed!")
++
++    print("Running test_decode_morse...")
++    test_decode_morse()
++    print("test_decode_morse passed!")
++
++    print("All tests passed!")
++
++if __name__ == "__main__":
++    run_tests()
+\ No newline at end of file
+diff --git a/sympy/crypto/crypto.py b/sympy/crypto/crypto.py
+index ca552191c0..0c556b6efb 100644
+--- a/sympy/crypto/crypto.py
++++ b/sympy/crypto/crypto.py
+@@ -1520,7 +1520,7 @@ def decipher_kid_rsa(msg, key):
+     "..-": "U", "...-": "V",
+     ".--": "W", "-..-": "X",
+     "-.--": "Y", "--..": "Z",
+-    "-----": "0", "----": "1",
++    "-----": "0", ".----": "1",
+     "..---": "2", "...--": "3",
+     "....-": "4", ".....": "5",
+     "-....": "6", "--...": "7",
+diff --git a/test_morse_fix.py b/test_morse_fix.py
+new file mode 100644
+index 0000000000..0820df8e91
+--- /dev/null
++++ b/test_morse_fix.py
+@@ -0,0 +1,27 @@
++#!/usr/bin/env python
++"""
++Test script to verify the Morse code encoding for digit '1'.
++"""
++
++from sympy.crypto.crypto import encode_morse, decode_morse
++
++def test_morse_encoding_for_1():
++    # Test encoding of '1'
++    encoded = encode_morse('1')
++    print(f"Encoding for '1': {encoded}")
++    assert encoded == '.----', f"Expected '.----', got '{encoded}'"
++
++    # Test decoding of '.----'
++    decoded = decode_morse('.----')
++    print(f"Decoding '.----' gives: '{decoded}'")
++    assert decoded == '1', f"Expected '1', got '{decoded}'"
++
++    # Test that '----' can no longer be decoded
++    try:
++        decode_morse('----')
++        assert False, "Expected KeyError when decoding '----'"
++    except KeyError:
++        print("KeyError when decoding '----' (expected)")
++
++if __name__ == "__main__":
++    test_morse_encoding_for_1()
+\ No newline at end of file

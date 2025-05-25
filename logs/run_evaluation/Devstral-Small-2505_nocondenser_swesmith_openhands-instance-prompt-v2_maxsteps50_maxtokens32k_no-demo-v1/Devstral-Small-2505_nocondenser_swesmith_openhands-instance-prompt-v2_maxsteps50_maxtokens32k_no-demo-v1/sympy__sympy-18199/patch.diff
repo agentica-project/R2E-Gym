@@ -1,0 +1,84 @@
+diff --git a/sympy/ntheory/residue_ntheory.py b/sympy/ntheory/residue_ntheory.py
+index 9a3052d4c3..f3fb4b94e6 100644
+--- a/sympy/ntheory/residue_ntheory.py
++++ b/sympy/ntheory/residue_ntheory.py
+@@ -765,9 +765,20 @@ def nthroot_mod(a, n, p, all_roots=False):
+     [8, 11]
+     >>> nthroot_mod(68, 3, 109)
+     23
++    >>> nthroot_mod(0, 5, 17)
++    0
++    >>> nthroot_mod(0, 5, 17, True)
++    [0]
+     """
+     from sympy.core.numbers import igcdex
+     a, n, p = as_int(a), as_int(n), as_int(p)
++
++    # Special case: if a % p == 0, then x = 0 mod p is a root
++    if a % p == 0:
++        if all_roots:
++            return [0]
++        return 0
++
+     if n == 2:
+         return sqrt_mod(a, p, all_roots)
+     # see Hackman "Elementary Number Theory" (2009), page 76
+diff --git a/sympy/ntheory/tests/test_residue.py b/sympy/ntheory/tests/test_residue.py
+index d4854547be..6146c59890 100644
+--- a/sympy/ntheory/tests/test_residue.py
++++ b/sympy/ntheory/tests/test_residue.py
+@@ -164,6 +164,12 @@ def test_residue():
+     assert is_nthpow_residue(8547, 12, 10007)
+     raises(NotImplementedError, lambda: nthroot_mod(29, 31, 74))
+     assert nthroot_mod(1801, 11, 2663) == 44
++    # Test the special case where a % p == 0
++    assert nthroot_mod(0, 5, 17) == 0
++    assert nthroot_mod(0, 5, 17, True) == [0]
++    assert nthroot_mod(17*17*17, 5, 17) == 0
++    assert nthroot_mod(17*17*17, 5, 17, True) == [0]
++
+     for a, q, p in [(51922, 2, 203017), (43, 3, 109), (1801, 11, 2663),
+           (26118163, 1303, 33333347), (1499, 7, 2663), (595, 6, 2663),
+           (1714, 12, 2663), (28477, 9, 33343)]:
+diff --git a/test_nthroot_mod.py b/test_nthroot_mod.py
+new file mode 100644
+index 0000000000..8f6eb0d5a8
+--- /dev/null
++++ b/test_nthroot_mod.py
+@@ -0,0 +1,35 @@
++from sympy.ntheory.residue_ntheory import nthroot_mod
++
++# Test case where a % p == 0
++a = 17 * 17 * 17  # 4913
++n = 5
++p = 17
++
++# This should return 0 as one of the roots since 4913 % 17 = 0
++print(f"{a} % {p} = {a % p}")
++
++# This should return 0 as one of the roots
++result = nthroot_mod(a, n, p)
++print(f"nthroot_mod({a}, {n}, {p}) = {result}")
++
++# Verify that 0 is indeed a root
++if result is not None:
++    print(f"Is {result} a root? {pow(result, n, p) == a % p}")
++
++# Test with all_roots=True
++all_results = nthroot_mod(a, n, p, all_roots=True)
++print(f"nthroot_mod({a}, {n}, {p}, all_roots=True) = {all_results}")
++
++# Verify all roots
++if all_results:
++    for root in all_results:
++        print(f"Is {root} a root? {pow(root, n, p) == a % p}")
++
++# Another test case
++a2 = 0  # Directly 0
++n2 = 3
++p2 = 7
++result2 = nthroot_mod(a2, n2, p2)
++print(f"\nnthroot_mod({a2}, {n2}, {p2}) = {result2}")
++all_results2 = nthroot_mod(a2, n2, p2, all_roots=True)
++print(f"nthroot_mod({a2}, {n2}, {p2}, all_roots=True) = {all_results2}")
+\ No newline at end of file

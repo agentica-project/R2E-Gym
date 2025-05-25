@@ -1,0 +1,213 @@
+diff --git a/django/contrib/contenttypes/management/__init__.py b/django/contrib/contenttypes/management/__init__.py
+index 2b5f688136..563cba2fdf 100644
+--- a/django/contrib/contenttypes/management/__init__.py
++++ b/django/contrib/contenttypes/management/__init__.py
+@@ -24,7 +24,7 @@ class RenameContentType(migrations.RunPython):
+             content_type.model = new_model
+             try:
+                 with transaction.atomic(using=db):
+-                    content_type.save(update_fields={'model'})
++                    content_type.save(using=db, update_fields={'model'})
+             except IntegrityError:
+                 # Gracefully fallback if a stale content type causes a
+                 # conflict as remove_stale_contenttypes will take care of
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..c276fec727
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,76 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection, transaction
++from django.contrib.contenttypes.models import ContentType
++from django.contrib.contenttypes.management import RenameContentType
++from django.db.migrations.executor import MigrationExecutor
++from django.db.migrations.recorder import MigrationRecorder
++from django.db.migrations.loader import MigrationLoader
++from django.db.migrations import migrations
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            },
++            'other_db': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        }
++    )
++    django.setup()
++
++# Create a test model
++class TestModel(models.Model):
++    name = models.CharField(max_length=100)
++
++    class Meta:
++        app_label = 'test_app'
++        managed = False  # We don't want Django to create this table
++
++# Create a content type for the test model
++ContentType.objects.create(app_label='test_app', model='testmodel')
++
++# Mock the apps and schema_editor
++class MockApps:
++    def get_model(self, app_label, model_name):
++        if app_label == 'contenttypes' and model_name == 'ContentType':
++            return ContentType
++        return None
++
++class MockSchemaEditor:
++    def __init__(self, db_alias):
++        self.connection = type('obj', (object,), {'alias': db_alias})
++
++# Test the RenameContentType._rename method
++def test_rename_content_type():
++    # Create a RenameContentType instance
++    rename_op = RenameContentType('test_app', 'testmodel', 'newtestmodel')
++
++    # Call the _rename method with a mock database alias
++    apps = MockApps()
++    schema_editor = MockSchemaEditor('other_db')
++
++    # This should use 'other_db' but currently tries to use the default database
++    try:
++        rename_op._rename(apps, schema_editor, 'testmodel', 'newtestmodel')
++        print("Test passed - Content type renamed successfully")
++    except Exception as e:
++        print(f"Test failed with error: {e}")
++        # Check if the error is related to the default database
++        if 'no such table: django_content_types' in str(e):
++            print("This is the expected error when using a dynamic database router without a default database")
++        else:
++            print("Unexpected error")
++
++if __name__ == '__main__':
++    test_rename_content_type()
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..632006b76f
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,86 @@
++import os
++import sys
++import django
++from django.conf import settings
++from django.db import models, connection, transaction
++from django.contrib.contenttypes.models import ContentType
++from django.contrib.contenttypes.management import RenameContentType
++from django.db.migrations import migrations
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        INSTALLED_APPS=[
++            'django.contrib.contenttypes',
++        ],
++        DATABASES={
++            'default': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            },
++            'other_db': {
++                'ENGINE': 'django.db.backends.sqlite3',
++                'NAME': ':memory:',
++            }
++        },
++        SECRET_KEY='fake-key',
++    )
++    django.setup()
++
++# Create a mock ContentType model for testing
++class MockContentType(models.Model):
++    app_label = models.CharField(max_length=100)
++    model = models.CharField(max_length=100)
++
++    class Meta:
++        managed = False
++
++    @classmethod
++    def objects(cls):
++        return cls
++
++    @classmethod
++    def db_manager(cls, db):
++        return cls
++
++    @classmethod
++    def get_by_natural_key(cls, app_label, model_name):
++        # Return a new instance for testing
++        instance = cls(app_label=app_label, model=model_name)
++        return instance
++
++    def save(self, using=None, update_fields=None):
++        # Print the database being used
++        print(f"Saving to database: {using}")
++        super().save()
++
++# Mock the apps
++class MockApps:
++    def get_model(self, app_label, model_name):
++        if app_label == 'contenttypes' and model_name == 'ContentType':
++            return MockContentType
++        return None
++
++# Mock the schema editor
++class MockSchemaEditor:
++    def __init__(self, db_alias):
++        self.connection = type('obj', (object,), {'alias': db_alias})
++
++# Test the RenameContentType._rename method
++def test_rename_content_type():
++    # Create a RenameContentType instance
++    rename_op = RenameContentType('test_app', 'testmodel', 'newtestmodel')
++
++    # Call the _rename method with a mock database alias
++    apps = MockApps()
++    schema_editor = MockSchemaEditor('other_db')
++
++    # This should use 'other_db' with our fix
++    try:
++        rename_op._rename(apps, schema_editor, 'testmodel', 'newtestmodel')
++        print("Test passed - Content type renamed successfully")
++    except Exception as e:
++        print(f"Test failed with error: {e}")
++
++if __name__ == '__main__':
++    test_rename_content_type()
+\ No newline at end of file
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 0000000000..916e3044fa
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,17 @@
++import sys
++import os
++
++# Get the path to the file we modified
++file_path = '/testbed/django/contrib/contenttypes/management/__init__.py'
++
++# Read the file
++with open(file_path, 'r') as f:
++    content = f.read()
++
++# Check if our fix is in the file
++if "content_type.save(using=db, update_fields={'model'})" in content:
++    print("Fix verified: The 'using=db' parameter has been added to the save() method.")
++    sys.exit(0)
++else:
++    print("Fix not found: The 'using=db' parameter is not present in the save() method.")
++    sys.exit(1)
+\ No newline at end of file

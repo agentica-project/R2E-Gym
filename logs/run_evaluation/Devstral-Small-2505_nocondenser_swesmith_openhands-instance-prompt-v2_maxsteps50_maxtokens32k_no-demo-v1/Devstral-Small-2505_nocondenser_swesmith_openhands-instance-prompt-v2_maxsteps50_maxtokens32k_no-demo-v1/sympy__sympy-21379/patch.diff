@@ -1,0 +1,143 @@
+diff --git a/complex_test.py b/complex_test.py
+new file mode 100644
+index 0000000000..fcde64c51d
+--- /dev/null
++++ b/complex_test.py
+@@ -0,0 +1,55 @@
++from sympy import *
++from sympy.core.cache import clear_cache
++import gc
++
++def test_complex_piecewise_subs():
++    """Test more complex cases that might trigger the issue."""
++    print("Testing complex piecewise subs cases...")
++
++    # Test with nested piecewise and hyperbolic functions
++    clear_cache()
++    gc.collect()  # Force garbage collection to ensure cache is cleared
++
++    x, y, z = symbols('x y z', real=True)
++    # Create a more complex expression with nested piecewise and hyperbolic functions
++    pw1 = Piecewise((x, y > x), (y, True))
++    pw2 = Piecewise((x**2, y > x), (y**2, True))
++    expr = exp(sinh(pw1) * cosh(pw2) / z)
++
++    print("Complex test with nested piecewise and hyperbolic functions:")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Test with multiple substitutions
++    clear_cache()
++    gc.collect()
++
++    x, y, z = symbols('x y z', real=True)
++    expr = exp(sinh(Piecewise((x, y > x), (y, True))) / z)
++
++    print("\nTest with multiple substitutions:")
++    try:
++        result = expr.subs({1: 1.0, x: 2.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Test with a more complex substitution
++    clear_cache()
++    gc.collect()
++
++    x, y, z = symbols('x y z', real=True)
++    expr = exp(sinh(Piecewise((x, y > x), (y, True))) / z)
++
++    print("\nTest with complex substitution:")
++    try:
++        result = expr.subs({z: Piecewise((1, y > 0), (2, True))})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++if __name__ == "__main__":
++    test_complex_piecewise_subs()
+\ No newline at end of file
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..d2135826cd
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,74 @@
++from sympy import *
++from sympy.core.cache import clear_cache
++
++def test_piecewise_subs_issue():
++    print("Testing piecewise subs issue...")
++
++    # Test case 1: Without real assumptions (should work)
++    clear_cache()
++    x, y, z = symbols('x y z')
++    expr = exp(sinh(Piecewise((x, y > x), (y, True))) / z)
++    print("Test 1 (without real assumptions):")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Test case 2: With real assumptions (should fail)
++    clear_cache()
++    x, y, z = symbols('x y z', real=True)
++    expr = exp(sinh(Piecewise((x, y > x), (y, True))) / z)
++    print("\nTest 2 (with real assumptions):")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Test case 3: Run it again without clearing cache (should work)
++    print("\nTest 3 (with real assumptions, second call):")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Additional test cases to match the issue description
++    print("\nAdditional test cases:")
++
++    # Test with cosh
++    clear_cache()
++    x, y, z = symbols('x y z', real=True)
++    expr = exp(cosh(Piecewise((x, y > x), (y, True))) / z)
++    print("\nTest with cosh:")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Test without division by z
++    clear_cache()
++    x, y, z = symbols('x y z', real=True)
++    expr = exp(sinh(Piecewise((x, y > x), (y, True))))
++    print("\nTest without division by z:")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++    # Test without exp
++    clear_cache()
++    x, y, z = symbols('x y z', real=True)
++    expr = sinh(Piecewise((x, y > x), (y, True))) / z
++    print("\nTest without exp:")
++    try:
++        result = expr.subs({1: 1.0})
++        print("Success! Result:", result)
++    except Exception as e:
++        print("Error:", type(e).__name__, e)
++
++if __name__ == "__main__":
++    test_piecewise_subs_issue()
+\ No newline at end of file

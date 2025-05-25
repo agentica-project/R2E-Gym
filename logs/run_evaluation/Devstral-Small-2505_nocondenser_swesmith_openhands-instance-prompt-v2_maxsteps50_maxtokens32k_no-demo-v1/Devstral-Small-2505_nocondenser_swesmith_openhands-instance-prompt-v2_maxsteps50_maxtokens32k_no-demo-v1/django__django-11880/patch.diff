@@ -1,0 +1,80 @@
+diff --git a/django/forms/fields.py b/django/forms/fields.py
+index 03cd8af8d7..18007accab 100644
+--- a/django/forms/fields.py
++++ b/django/forms/fields.py
+@@ -199,6 +199,7 @@ class Field:
+         result = copy.copy(self)
+         memo[id(self)] = result
+         result.widget = copy.deepcopy(self.widget, memo)
++        result.error_messages = copy.deepcopy(self.error_messages, memo)
+         result.validators = self.validators[:]
+         return result
+ 
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..8baa194b72
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,25 @@
++import copy
++from django.forms import Field
++
++# Create a field with custom error messages
++field1 = Field(error_messages={'required': 'Custom required message'})
++
++# Deep copy the field
++field2 = copy.deepcopy(field1)
++
++# Verify that both fields have the same error message initially
++print("Initial error messages:")
++print(f"field1 error message: {field1.error_messages['required']}")
++print(f"field2 error message: {field2.error_messages['required']}")
++print(f"Same object? {field1.error_messages is field2.error_messages}")
++
++# Modify the error message in field2
++field2.error_messages['required'] = 'Modified required message'
++
++# Check if the change is reflected in field1
++print("\nAfter modifying field2:")
++print(f"field1 error message: {field1.error_messages['required']}")
++print(f"field2 error message: {field2.error_messages['required']}")
++print(f"Same object? {field1.error_messages is field2.error_messages}")
++
++# This should output "Modified required message" for both fields if the issue exists
+\ No newline at end of file
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000000..9d712117b3
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,29 @@
++import copy
++import unittest
++from django.forms.fields import Field
++
++class TestFieldDeepCopy(unittest.TestCase):
++    def test_error_messages_deepcopy(self):
++        """Test that error_messages are properly deep copied."""
++        # Create a field with custom error messages
++        field1 = Field(error_messages={'required': 'Custom required message'})
++
++        # Deep copy the field
++        field2 = copy.deepcopy(field1)
++
++        # Verify that both fields have the same error message initially
++        self.assertEqual(field1.error_messages['required'], 'Custom required message')
++        self.assertEqual(field2.error_messages['required'], 'Custom required message')
++
++        # Verify that they are different objects
++        self.assertIsNot(field1.error_messages, field2.error_messages)
++
++        # Modify the error message in field2
++        field2.error_messages['required'] = 'Modified required message'
++
++        # Check that the change is not reflected in field1
++        self.assertEqual(field1.error_messages['required'], 'Custom required message')
++        self.assertEqual(field2.error_messages['required'], 'Modified required message')
++
++if __name__ == '__main__':
++    unittest.main()
+\ No newline at end of file

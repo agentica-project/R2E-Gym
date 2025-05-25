@@ -1,0 +1,352 @@
+diff --git a/_build/test_conf.py b/_build/test_conf.py
+new file mode 100644
+index 000000000..675d94d6b
+--- /dev/null
++++ b/_build/test_conf.py
+@@ -0,0 +1,16 @@
++import os
++import sys
++sys.path.insert(0, os.path.abspath('.'))
++
++extensions = ['sphinx.ext.autodoc']
++
++# General information about the project.
++project = 'Test Project'
++copyright = '2023, Test Author'
++author = 'Test Author'
++
++# The master toctree document.
++master_doc = 'index'
++
++# -- Options for HTML output --------------------------------------------------
++# html_theme = 'alabaster'
+\ No newline at end of file
+diff --git a/setup.py b/setup.py
+index 8d40de1a8..03f325278 100644
+--- a/setup.py
++++ b/setup.py
+@@ -15,22 +15,22 @@ if sys.version_info < (3, 5):
+     sys.exit(1)
+ 
+ install_requires = [
+-    'sphinxcontrib-applehelp',
+-    'sphinxcontrib-devhelp',
++    'sphinxcontrib-applehelp<=1.0.7',
++    'sphinxcontrib-devhelp<=1.0.5',
+     'sphinxcontrib-jsmath',
+-    'sphinxcontrib-htmlhelp',
+-    'sphinxcontrib-serializinghtml',
+-    'sphinxcontrib-qthelp',
+-    'Jinja2>=2.3',
++    'sphinxcontrib-htmlhelp<=2.0.4',
++    'sphinxcontrib-serializinghtml<=1.1.9',
++    'sphinxcontrib-qthelp<=1.0.6',
++    'Jinja2<3.0',
+     'Pygments>=2.0',
+     'docutils>=0.12',
+     'snowballstemmer>=1.1',
+     'babel>=1.3',
+-    'alabaster>=0.7,<0.8',
++    'alabaster>=0.7,<0.7.12',
+     'imagesize',
+     'requests>=2.5.0',
+     'setuptools',
+-    'packaging',
++    'packaging', 'markupsafe<=2.0.1',
+ ]
+ 
+ extras_require = {
+diff --git a/sphinx/ext/autodoc/__init__.py b/sphinx/ext/autodoc/__init__.py
+index 76265f5be..3b2537716 100644
+--- a/sphinx/ext/autodoc/__init__.py
++++ b/sphinx/ext/autodoc/__init__.py
+@@ -729,11 +729,24 @@ class Documenter:
+             has_doc = bool(doc)
+ 
+             metadata = extract_metadata(doc)
+-            if 'private' in metadata:
++            isprivate_metadata = 'private' in metadata
++            ispublic_metadata = 'public' in metadata
++
++            # Check for variable metadata from comments
++            var_metadata = {}
++            if self.analyzer and hasattr(self.analyzer.parser, 'variable_metadata'):
++                namespace = '.'.join(self.objpath)
++                if (namespace, membername) in self.analyzer.parser.variable_metadata:
++                    var_metadata = self.analyzer.parser.variable_metadata[(namespace, membername)]
++
++            # Check if the variable has public metadata in its comment
++            ispublic_var_metadata = 'public' in var_metadata
++
++            if isprivate_metadata:
+                 # consider a member private if docstring has "private" metadata
+                 isprivate = True
+-            elif 'public' in metadata:
+-                # consider a member public if docstring has "public" metadata
++            elif ispublic_metadata or ispublic_var_metadata:
++                # consider a member public if docstring or comment has "public" metadata
+                 isprivate = False
+             else:
+                 isprivate = membername.startswith('_')
+diff --git a/sphinx/pycode/__init__.py b/sphinx/pycode/__init__.py
+index b72683f98..be0df7b96 100644
+--- a/sphinx/pycode/__init__.py
++++ b/sphinx/pycode/__init__.py
+@@ -188,6 +188,11 @@ class ModuleAnalyzer:
+         self.analyze()
+         return self.attr_docs
+ 
++    def get_variable_metadata(self) -> Dict[Tuple[str, str], Dict[str, str]]:
++        """Get metadata for variables with comments."""
++        self.analyze()
++        return getattr(self.parser, 'variable_metadata', {})
++
+     def find_tags(self) -> Dict[str, Tuple[str, int, int]]:
+         """Find class, function and method definitions and their location."""
+         self.analyze()
+diff --git a/sphinx/pycode/parser.py b/sphinx/pycode/parser.py
+index d24012111..090b214c2 100644
+--- a/sphinx/pycode/parser.py
++++ b/sphinx/pycode/parser.py
+@@ -274,6 +274,17 @@ class VariableCommentPicker(ast.NodeVisitor):
+             basename = ".".join(qualname[:-1])
+             self.comments[(basename, name)] = comment
+ 
++            # Extract metadata from the comment
++            from sphinx.util.docstrings import extract_metadata
++            metadata = extract_metadata(comment)
++            if metadata:
++                # Store metadata separately
++                key = (basename, name)
++                if hasattr(self, 'variable_metadata'):
++                    self.variable_metadata[key] = metadata
++                else:
++                    self.variable_metadata = {key: metadata}
++
+     def add_variable_annotation(self, name: str, annotation: ast.AST) -> None:
+         qualname = self.get_qualname_for(name)
+         if qualname:
+@@ -552,6 +563,7 @@ class Parser:
+         self.definitions = {}       # type: Dict[str, Tuple[str, int, int]]
+         self.finals = []            # type: List[str]
+         self.overloads = {}         # type: Dict[str, List[Signature]]
++        self.variable_metadata = {}  # type: Dict[Tuple[str, str], Dict[str, str]]
+ 
+     def parse(self) -> None:
+         """Parse the source code."""
+diff --git a/test_Makefile b/test_Makefile
+new file mode 100644
+index 000000000..054db73e3
+--- /dev/null
++++ b/test_Makefile
+@@ -0,0 +1,40 @@
++SPHINXBUILD = sphinx-build
++SPHINXPROJ = .
++SPHINXCONF = _build/test_conf.py
++BUILDDIR = _build
++
++# Internal variables.
++PAPER = a4
++
++.all: help
++
++help:
++	@echo "Please use `make <target>` where <target> is one of"
++	@echo "  html      to make standalone HTML files"
++	@echo "  dirhtml   to make HTML files named index.html in directories"
++	@echo "  singlehtml to make a single large HTML file"
++	@echo "  pickle    to make pickle files"
++	@echo "  json      to make JSON files"
++	@echo "  htmlhelp  to make HTML files and an HTML help project file"
++	@echo "  qthelp    to make HTML files and a qthelp project file"
++	@echo "  devhelp   to make HTML files and a Devhelp project file"
++	@echo "  epub      to make an epub"
++	@echo "  latex     to make LaTeX files, you can set PAPER=a4 or PAPER=letter"
++	@echo "  latexpdf  to make LaTeX and PDF files (default pdflatex)"
++	@echo "  latexpdfja to make LaTeX and PDF files (using platex/dvipdfmx)"
++	@echo "  text      to make text files"
++	@echo "  man       to make manual pages"
++	@echo "  texinfo   to make Texinfo files"
++	@echo "  info      to make Texinfo files and run them through makeinfo"
++	@echo "  gettext   to make PO message catalogs"
++	@echo "  changes   to make an overview of all changed/added/deprecated items"
++	@echo "  xml       to make Docutils-native XML files"
++	@echo "  pseudoxml to make pseudoxml-XML files for display purposes"
++	@echo "  linkcheck to check all external links for integrity"
++	@echo "  doctest   to run all doctests embedded in the documentation (if enabled)"
++
++html:
++	$(SPHINXBUILD) -b html -d _build/doctrees   -D language=en   $(SPHINXCONF) $(BUILDDIR)/html
++
++clean:
++	rm -rf $(BUILDDIR)/*
+\ No newline at end of file
+diff --git a/test_conf.py b/test_conf.py
+new file mode 100644
+index 000000000..675d94d6b
+--- /dev/null
++++ b/test_conf.py
+@@ -0,0 +1,16 @@
++import os
++import sys
++sys.path.insert(0, os.path.abspath('.'))
++
++extensions = ['sphinx.ext.autodoc']
++
++# General information about the project.
++project = 'Test Project'
++copyright = '2023, Test Author'
++author = 'Test Author'
++
++# The master toctree document.
++master_doc = 'index'
++
++# -- Options for HTML output --------------------------------------------------
++# html_theme = 'alabaster'
+\ No newline at end of file
+diff --git a/test_doc.py b/test_doc.py
+new file mode 100644
+index 000000000..624766dfb
+--- /dev/null
++++ b/test_doc.py
+@@ -0,0 +1,18 @@
++import os
++import sys
++import inspect
++from sphinx.util.docstrings import extract_metadata
++
++# Test variable with public meta directive
++_foo = None  #: :meta public:
++
++# Get the docstring (comment) for the variable
++doc = inspect.getdoc(_foo)
++
++# Extract metadata from the docstring
++metadata = extract_metadata(doc)
++
++print(f"Variable: _foo")
++print(f"Docstring: {doc}")
++print(f"Metadata: {metadata}")
++print(f"'public' in metadata: {'public' in metadata}")
+\ No newline at end of file
+diff --git a/test_index.rst b/test_index.rst
+new file mode 100644
+index 000000000..625271e0b
+--- /dev/null
++++ b/test_index.rst
+@@ -0,0 +1,15 @@
++Welcome to Test Project's documentation!
++========================================
++
++.. toctree::
++   :maxdepth: 2
++   :caption: Contents:
++
++   test_public_variable
++
++Indices and tables
++==================
++
++* :ref:`genindex`
++* :ref:`modindex`
++* :ref:`search`
+\ No newline at end of file
+diff --git a/test_public_variable.py b/test_public_variable.py
+new file mode 100644
+index 000000000..b3b0b5597
+--- /dev/null
++++ b/test_public_variable.py
+@@ -0,0 +1,2 @@
++# Test variable with public meta directive
++_foo = None  #: :meta public:
+\ No newline at end of file
+diff --git a/tox.ini b/tox.ini
+index dbb705a3a..9f4fc3a32 100644
+--- a/tox.ini
++++ b/tox.ini
+@@ -28,7 +28,7 @@ setenv =
+     PYTHONWARNINGS = all,ignore::ImportWarning:importlib._bootstrap_external,ignore::DeprecationWarning:site,ignore::DeprecationWarning:distutils
+     PYTEST_ADDOPTS = {env:PYTEST_ADDOPTS:} --color yes
+ commands=
+-    python -X dev -m pytest --durations 25 {posargs}
++    python -X dev -m pytest -rA --durations 25 {posargs}
+ 
+ [testenv:flake8]
+ basepython = python3
+diff --git a/verify_fix.py b/verify_fix.py
+new file mode 100644
+index 000000000..f6d719b8c
+--- /dev/null
++++ b/verify_fix.py
+@@ -0,0 +1,70 @@
++import os
++import sys
++import tempfile
++import shutil
++from pathlib import Path
++
++# Create a temporary directory for our test
++temp_dir = tempfile.mkdtemp()
++try:
++    # Create a test module
++    test_module_path = os.path.join(temp_dir, 'test_module.py')
++    with open(test_module_path, 'w') as f:
++        f.write('# Test module with private variable\n')
++        f.write('_foo = None  #: :meta public:\n')
++        f.write('bar = 42  #: :meta private:\n')
++
++    # Create a Sphinx project
++    conf_path = os.path.join(temp_dir, 'conf.py')
++    with open(conf_path, 'w') as f:
++        f.write('import os\n')
++        f.write('import sys\n')
++        f.write('sys.path.insert(0, os.path.abspath(\'.\'))\n')
++        f.write('\n')
++        f.write('extensions = [\'sphinx.ext.autodoc\']\n')
++        f.write('\n')
++        f.write('# General information about the project.\n')
++        f.write('project = \'Test Project\'\n')
++        f.write('copyright = \'2023, Test Author\'\n')
++        f.write('author = \'Test Author\'\n')
++        f.write('\n')
++        f.write('# The master toctree document.\n')
++        f.write('master_doc = \'index\'\n')
++
++    # Create an index file
++    index_path = os.path.join(temp_dir, 'index.rst')
++    with open(index_path, 'w') as f:
++        f.write('.. toctree::\n')
++        f.write('   :maxdepth: 2\n')
++        f.write('   :caption: Contents:\n')
++        f.write('\n')
++        f.write('   test_module\n')
++        f.write('\n')
++        f.write('.. automodule:: test_module\n')
++        f.write('   :members:\n')
++
++    # Create a test_module.rst file
++    module_rst_path = os.path.join(temp_dir, 'test_module.rst')
++    with open(module_rst_path, 'w') as f:
++        f.write('.. automodule:: test_module\n')
++        f.write('   :members:\n')
++
++    # Build the documentation
++    os.chdir(temp_dir)
++    os.system('sphinx-build -b html -d _build/doctrees . _build/html')
++
++    # Check if _foo is in the generated HTML
++    html_path = os.path.join(temp_dir, '_build', 'html', 'test_module.html')
++    if os.path.exists(html_path):
++        with open(html_path, 'r') as f:
++            content = f.read()
++            if '_foo' in content:
++                print("SUCCESS: _foo is in the generated documentation")
++            else:
++                print("FAILURE: _foo is not in the generated documentation")
++    else:
++        print(f"FAILURE: HTML file was not generated at {html_path}")
++
++finally:
++    # Clean up
++    shutil.rmtree(temp_dir)
+\ No newline at end of file

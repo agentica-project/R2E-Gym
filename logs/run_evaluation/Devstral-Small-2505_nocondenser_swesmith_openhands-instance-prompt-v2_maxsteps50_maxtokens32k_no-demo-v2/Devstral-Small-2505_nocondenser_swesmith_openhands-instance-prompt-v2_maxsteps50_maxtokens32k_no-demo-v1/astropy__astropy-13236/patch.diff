@@ -1,0 +1,73 @@
+diff --git a/astropy/table/table.py b/astropy/table/table.py
+index 5afe2127a3..d468475c0f 100644
+--- a/astropy/table/table.py
++++ b/astropy/table/table.py
+@@ -1243,6 +1243,11 @@ class Table:
+         # mixin class
+         if (not isinstance(data, Column) and not data_is_mixin
+                 and isinstance(data, np.ndarray) and len(data.dtype) > 1):
++            warnings.warn(
++                "Automatic conversion of structured ndarray to NdarrayMixin is deprecated and "
++                "will be removed in a future version. To maintain the current behavior, wrap "
++                "the data in a Column explicitly, e.g., Column(data).",
++                FutureWarning, stacklevel=2)
+             data = data.view(NdarrayMixin)
+             data_is_mixin = True
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 4e84dd196b..3c3d00c32d 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools",
++requires = ["setuptools==68.0.0",
+             "setuptools_scm>=6.2",
+             "wheel",
+             "cython==0.29.22",
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..cad20f82d9
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,16 @@
++import numpy as np
++from astropy.table import Table
++from astropy.table.ndarray_mixin import NdarrayMixin
++
++# Create a structured NumPy array
++structured_array = np.array([(1, 'a'), (2, 'b')],
++                           dtype=[('col1', int), ('col2', 'U10')])
++
++# Add it to a Table
++table = Table()
++table['structured'] = structured_array
++
++# Check the type of the column
++print(f"Type of column: {type(table['structured'])}")
++print(f"Is NdarrayMixin: {hasattr(table['structured'], 'view') and table['structured'].view(NdarrayMixin) is table['structured']}")
++print(f"Column data: {table['structured']}")
+\ No newline at end of file
+diff --git a/test_explicit_column.py b/test_explicit_column.py
+new file mode 100644
+index 0000000000..2f4ef6fdd0
+--- /dev/null
++++ b/test_explicit_column.py
+@@ -0,0 +1,16 @@
++import numpy as np
++from astropy.table import Table, Column
++from astropy.table.ndarray_mixin import NdarrayMixin
++
++# Create a structured NumPy array
++structured_array = np.array([(1, 'a'), (2, 'b')],
++                           dtype=[('col1', int), ('col2', 'U10')])
++
++# Add it to a Table wrapped in a Column
++table = Table()
++table['structured'] = Column(structured_array)
++
++# Check the type of the column
++print(f"Type of column: {type(table['structured'])}")
++print(f"Is NdarrayMixin: {isinstance(table['structured'], NdarrayMixin)}")
++print(f"Column data: {table['structured']}")
+\ No newline at end of file

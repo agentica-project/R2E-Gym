@@ -1,0 +1,82 @@
+diff --git a/django/template/engine.py b/django/template/engine.py
+index dfaa67ba12..ff9ce58d59 100644
+--- a/django/template/engine.py
++++ b/django/template/engine.py
+@@ -160,7 +160,7 @@ class Engine:
+         if isinstance(context, Context):
+             return t.render(context)
+         else:
+-            return t.render(Context(context))
++            return t.render(Context(context, autoescape=self.autoescape))
+ 
+     def select_template(self, template_name_list):
+         """
+diff --git a/reproduce_issue.py b/reproduce_issue.py
+new file mode 100644
+index 0000000000..66d08c4969
+--- /dev/null
++++ b/reproduce_issue.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python
++import os
++import django
++from django.conf import settings
++
++# Configure Django settings
++if not settings.configured:
++    settings.configure(
++        TEMPLATES=[
++            {
++                'BACKEND': 'django.template.backends.django.DjangoTemplates',
++                'APP_DIRS': True,
++            },
++        ],
++        INSTALLED_APPS=[
++            'django.template',
++        ],
++    )
++    django.setup()
++
++from django.template import Context, Engine, Template
++
++# Create a simple template with HTML content
++template_code = "{{ value }}"
++
++# Create an engine with autoescape=False
++engine = Engine(autoescape=False)
++
++# Compile the template
++template = engine.from_string(template_code)
++
++# Test 1: Direct rendering with Context - should NOT escape HTML
++context = Context({'value': '<script>alert("XSS")</script>'}, autoescape=False)
++rendered1 = template.render(context)
++print("Test 1 (direct rendering with Context, autoescape=False):", rendered1)
++
++# Test 1b: Direct rendering with Context with autoescape=True
++context_escaped = Context({'value': '<script>alert("XSS")</script>'}, autoescape=True)
++rendered1b = template.render(context_escaped)
++print("Test 1b (direct rendering with Context, autoescape=True):", rendered1b)
++
++# Test 2: Using render_to_string with a template object - should NOT escape HTML but currently does
++context_dict = {'value': '<script>alert("XSS")</script>'}
++try:
++    # This will fail because we can't directly pass a template object to render_to_string
++    # But we can use this approach to test our fix later
++    rendered2 = engine.render_to_string(template=template, context=context_dict)
++    print("Test 2 (render_to_string with template):", rendered2)
++except TypeError:
++    print("Test 2: render_to_string doesn't accept a template parameter directly")
++
++# Test 3: Create a subclass of Engine to test the issue
++class TestEngine(Engine):
++    def get_template(self, template_name):
++        if template_name == "test_template":
++            return Template(template_code)
++        return super().get_template(template_name)
++
++test_engine = TestEngine(autoescape=False)
++context_dict = {'value': '<script>alert("XSS")</script>'}
++rendered3 = test_engine.render_to_string(template_name="test_template", context=context_dict)
++print("Test 3 (custom engine with template name):", rendered3)
+\ No newline at end of file
