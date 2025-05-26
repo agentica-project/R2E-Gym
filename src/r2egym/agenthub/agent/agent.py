@@ -319,7 +319,10 @@ class Agent:
                 extra_headers = {"anthropic-beta": "interleaved-thinking-2025-05-14"}
 
                 # Add thinking capability if needed
-                thinking_config = {"type": "enabled", "budget_tokens": 10000}
+                thinking_config = {
+                    "type": "enabled",
+                    "budget_tokens": 10000,
+                }
 
                 system_message = messages_[0]["content"]
                 messages__ = messages_[1:]
@@ -330,7 +333,7 @@ class Agent:
                     max_tokens=16000,
                     thinking=thinking_config,
                     tools=anthropic_tools,
-                    extra_headers=extra_headers,
+                    # extra_headers=extra_headers,
                     system=system_message,
                     messages=messages__,
                     # temperature=temperature,
@@ -630,7 +633,8 @@ class Agent:
                 self.history.append(
                     {
                         "role": "assistant",
-                        "content": thinking_blocks + text_blocks + tool_use_blocks,
+                        # "content": thinking_blocks + text_blocks + tool_use_blocks,
+                        "content": text_blocks + tool_use_blocks,
                     }
                 )
 
@@ -653,7 +657,11 @@ class Agent:
                                         # "tool_result": str(obs),
                                         # "name": tool_block.name,
                                         # "tool_call_id": tool_block.id
-                                    }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": f"Previous step thoughts saved in context:\n\n{thought.split('<think>')[1].split('</think>')[0]}",
+                                    },
                                 ],
                             }
                         )
@@ -768,7 +776,7 @@ class Agent:
                 step_count=step_count,
             )
             self.trajectory_steps.append(trajectory_step)
-            time.sleep(15)  # Sleep for 60 seconds after each step
+            # time.sleep(15)  # Sleep for 60 seconds after each step
 
         # get the output patch
         # output_patch, _ = env.runtime.run(f"git diff {initial_commit} HEAD")
