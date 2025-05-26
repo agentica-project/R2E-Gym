@@ -14,7 +14,12 @@ instance_prompt: |-
   I have already taken care of all changes to any of the test files described in the <github_issue>. This means you DON'T have to modify the testing logic or any of the tests in any way! Your task is to make changes to non-test files in the /testbed directory to ensure the <github_issue> is resolved.
 
   Follow these steps to resolve the issue:
-  1. First, explore the codebase to locate and understand the code relevant to the <github_issue>. Use efficient search commands to identify key files and functions. 
+  1. First, explore the codebase to locate and understand the code relevant to the <github_issue>. 
+    - Use efficient search commands to identify key files and functions. 
+    - You should err on the side of caution and look at various relevant files and build your understanding of 
+      - how the code works
+      - what are the expected behaviors and edge cases
+      - what are the potential root causes for the given issue
   
   2. Assess whether you can reproduce the issue:
      - Create a script at '/testbed/reproduce_issue.py' that demonstrates the error.
@@ -24,10 +29,13 @@ instance_prompt: |-
   
   3. Analyze the root cause:
      - Identify the underlying problem based on your code exploration and reproduction results.
-     - Critically analyze different potential approaches to fix the issue and select the most appropriate one.
+     - Critically analyze different potential approaches to fix the issue.
+     - This is the most important step. You should explore multiple approaches to fix the issue and find the most elegant and effective solution. 
+     - You would need to reason about execution paths, edge cases, and other potential issues.
   
   4. Implement your solution:
-     - Make targeted changes to the necessary files following idiomatic code patterns.
+     - Make targeted changes to the necessary files following idiomatic code patterns once you determine the root cause.
+     - You should be thorough and methodical.
   
   5. Verify your solution:
      - Rerun your reproduction script to confirm the error is fixed.
@@ -54,7 +62,7 @@ instance_prompt: |-
 
   Additional recommendations:
   - You should be thorough, methodical, and prioritize quality over speed. Be comprehensive.
-  - You should think carefully before making the tool call about what should be done. However, each step should only use one tool call.
+  - You should think carefully before making the tool call about what should be done. However, each step should only use one tool call. YOU SHOULD NOT USE TOOLS INSIDE YOUR THOUGHT PROCESS. YOU SHOULD PRIMARILY USE THINKING FOR IDENTIFYING THE ROOT CAUSE OF THE ISSUE, MAKING THE CHANGES, AND CREATING TEST CASES (REPRODUCTION OR EDGE CASES).
   - Each action you take is somewhat expensive. Wherever possible, combine multiple actions into a single action (e.g., combine multiple bash commands, use sed/grep for bulk operations). Your grep commands should identify both relevant files and line numbers so you can use the file_editor tool.
   - When exploring the codebase, use targeted search patterns to minimize unnecessary operations.
   - When creating edge cases, you should look at the relevant existing tests to understand existing "regression" test cases ensure the fix doesn't break existing functionality.
