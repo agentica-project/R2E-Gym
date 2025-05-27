@@ -1,12 +1,16 @@
 #!/root/.venv/bin/python
 
+# Control what commands are visible to agents
+ALLOWED_STR_REPLACE_EDITOR_COMMANDS = ["view", "create", "str_replace", "insert"]
+# To add undo functionality for agents: ["view", "create", "str_replace", "insert", "undo_edit"]
+# To make read-only: ["view"]
+
 """
 Description: Custom editing tool for viewing, creating and editing files
 * State is persistent across command calls and discussions with the user
 * If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
 * The `create` command cannot be used if the specified `path` already exists as a file
 * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
-* The `undo_edit` command will revert the last edit made to the file at `path`
 
 Notes for using the `str_replace` command:
 * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
@@ -14,8 +18,8 @@ Notes for using the `str_replace` command:
 * The `new_str` parameter should contain the edited lines that should replace the `old_str`
 
 Parameters:
-  (1) command (string, required): The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`.
-Allowed values: [`view`, `create`, `str_replace`, `insert`, `undo_edit`]
+  (1) command (string, required): The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`.
+Allowed values: [`view`, `create`, `str_replace`, `insert`]
   (2) path (string, required): Absolute path to file or directory, e.g. `/testbed/file.py` or `/testbed`.
   (3) file_text (string, optional): Required parameter of `create` command, with the content of the file to be created.
   (4) old_str (string, optional): Required parameter of `str_replace` command containing the string in `path` to replace.
@@ -23,7 +27,6 @@ Allowed values: [`view`, `create`, `str_replace`, `insert`, `undo_edit`]
   (6) insert_line (integer, optional): Required parameter of `insert` command. The `new_str` will be inserted AFTER the line `insert_line` of `path`.
   (7) view_range (array, optional): Optional parameter of `view` command when `path` points to a file. If none is given, the full file is shown. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Setting `[start_line, -1]` shows all lines from `start_line` to the end of the file.
   (8) enable_linting (boolean, optional): Optional parameter to enable Python linting checks before saving changes. Default is `false`.
-  (9) concise (boolean, optional): Optional parameter to enable a condensed view for Python files. Default is `false`. Super useful for understanding the structure of a Python file without getting bogged down in the details.
 """
 
 import argparse
@@ -137,10 +140,6 @@ class StrReplaceEditor:
         - undo_edit
 
     The edit history is kept in memory (self.file_history) and also persisted to disk.
-
-    Additionally, a `--concise` option for `view` on Python files:
-    - Uses tree-sitter to skip large function bodies.
-    - Preserves original line numbering, printing placeholders for elided lines.
     """
 
     def __init__(
@@ -158,14 +157,13 @@ class StrReplaceEditor:
         old_str: str = None,
         new_str: str = None,
         insert_line: int = None,
-        concise: bool = False,
         python_only: bool = True,
     ) -> EditorResult:
         path = Path(path_str)
         self.validate_path(command, path)
 
         if command == "view":
-            return self.view(path, view_range, concise=concise, python_only=python_only)
+            return self.view(path, view_range, python_only=python_only)
         elif command == "create":
             return self.create(path, file_text)
         elif command == "str_replace":
@@ -206,12 +204,11 @@ class StrReplaceEditor:
         self,
         path: Path,
         view_range: Optional[List[int]] = None,
-        concise: bool = False,
         python_only: bool = True,
     ) -> EditorResult:
         """
         If path is a directory, list contents (2 levels deep, excluding hidden).
-        If path is a file, optionally use the 'concise' approach for Python.
+        If path is a file, display the file contents with line numbers.
         Then apply [start_line, end_line] slicing if provided.
         """
         if path.is_dir():
@@ -278,26 +275,12 @@ class StrReplaceEditor:
             return EditorResult(output="", error=error_msg)
         # ====================
 
-        # -----------------------------------------------
-        # NEW LOGIC for deciding whether to use 'concise' mode
-        # -----------------------------------------------
-        # If no view_range is given, user did NOT explicitly request 'concise',
-        # and we have a Python file with more than 50 lines => default to concise
-        if path.suffix == ".py" and not view_range and not concise:
-            file_text_tmp = self.read_path(path)
-            if len(file_text_tmp.splitlines()) > 110:
-                concise = True
-
-        # For a file
-        if path.suffix == ".py" and concise:
-            # Use the tree_sitter approach
-            lines_with_original_numbers = self._get_elided_lines(path)
-        else:
-            # Normal reading
-            file_text = self.read_path(path)
-            lines_with_original_numbers = [
-                (i, line) for i, line in enumerate(file_text.splitlines())
-            ]
+        # For a file - always use normal reading
+        file_text = self.read_path(path)
+        file_text = file_text.expandtabs()
+        lines_with_original_numbers = [
+            (i, line) for i, line in enumerate(file_text.splitlines())
+        ]
 
         # Optionally slice by [start_line, end_line]
         total_lines = len(lines_with_original_numbers)
@@ -333,12 +316,9 @@ class StrReplaceEditor:
             sliced_lines = lines_with_original_numbers
 
         # Now produce a cat-like output (line numbering = i+1)
-        if concise:
-            final_output = f"Here is a condensed view for file: {path}; [Note: Useful for understanding file structure in a concise manner. Please use specific view_range without concise cmd if you want to explore further into the relevant parts.]\n"
-        else:
-            final_output = (
-                f"Here's the result of running `cat -n` on the file: {path}:\n"
-            )
+        final_output = (
+            f"Here's the result of running `cat -n` on the file: {path}:\n"
+        )
         # Then maybe truncate
         output_str_list = []
         for i, text in sliced_lines:
@@ -348,101 +328,6 @@ class StrReplaceEditor:
         final_output += "\n".join(output_str_list)
         final_output = maybe_truncate(final_output)
         return EditorResult(output=final_output)
-
-    def _get_elided_lines(self, path: Path) -> List[Tuple[int, str]]:
-        """
-        Parse the Python file with the built-in 'ast' module to skip
-        large function bodies (≥ 5 lines).
-        Return a list of (zero_based_line_idx, text).
-        """
-        import ast
-
-        file_text = self.read_path(path)
-        try:
-            tree = ast.parse(file_text, filename=str(path))
-        except SyntaxError as e:
-            # Raise EditorError to make sure we handle it gracefully upstream
-            raise EditorError(f"Syntax error for file {path}: {e}")
-
-        def max_lineno_in_subtree(n: ast.AST) -> int:
-            m = getattr(n, "lineno", 0)
-            for child in ast.iter_child_nodes(n):
-                m = max(m, max_lineno_in_subtree(child))
-            return m
-
-        # We'll gather the line ranges for all large function bodies
-        elide_line_ranges = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.body:
-                # Attempt to use end_lineno (Python 3.8+), else fallback
-                last_stmt = node.body[-1]
-                if hasattr(last_stmt, "end_lineno") and last_stmt.end_lineno:
-                    # 0-based start of the body (first statement in the function)
-                    body_start = node.body[0].lineno - 1
-
-                    body_end = last_stmt.end_lineno - 1
-                else:
-                    body_start = node.body[0].lineno - 1
-
-                    docstring = ast.get_docstring(node)
-
-                    if docstring:
-                        num_docstring_lines = docstring.count("\n") + 1
-                        body_start -= num_docstring_lines
-
-                    # Fallback: traverse the subtree to find max lineno
-                    body_end = max_lineno_in_subtree(last_stmt) - 1
-
-                # Skip the body if spans ≥ 5 lines
-                if (body_end - body_start) >= 3:
-                    elide_line_ranges.append((body_start, body_end))
-
-            if isinstance(node, ast.ClassDef) and node.body:
-                # elide large docstrings for classes
-                has_docstring1 = (
-                    isinstance(node.body[0], ast.Expr)
-                    and isinstance(node.body[0].value, ast.Constant)
-                    and isinstance(node.body[0].value.value, str)
-                )
-                has_docstring2 = isinstance(node.body[0], ast.Expr) and isinstance(
-                    node.body[0].value, ast.Str
-                )
-                has_docstring = has_docstring1 or has_docstring2
-                if has_docstring:
-                    if hasattr(node.body[0], "end_lineno") and node.body[0].end_lineno:
-                        docstring_start = node.body[0].lineno - 1
-                        docstring_end = node.body[0].end_lineno - 1
-                    else:
-                        docstring_start = node.lineno
-                        docstring_end = max_lineno_in_subtree(node.body[0]) - 1
-
-                    if (docstring_end - docstring_start) >= 4:
-                        elide_line_ranges.append(
-                            (docstring_start + 1, docstring_end - 1)
-                        )
-
-        # Build a set of lines to skip
-        elide_lines = {
-            line for (start, end) in elide_line_ranges for line in range(start, end + 1)
-        }
-
-        # Add an "elision notice" at the beginning of each range
-        elide_messages = [
-            (start, f"... eliding lines {start+1}-{end+1} ...")
-            for (start, end) in elide_line_ranges
-        ]
-
-        # Lines we do keep
-        all_lines = file_text.splitlines()
-        keep_lines = [
-            (i, line) for i, line in enumerate(all_lines) if i not in elide_lines
-        ]
-
-        # Combine and sort by line index
-        combined = elide_messages + keep_lines
-        combined.sort(key=lambda x: x[0])
-
-        return combined
 
     def create(self, path: Path, file_text: str) -> EditorResult:
         if file_text is None:
@@ -639,7 +524,7 @@ def main():
     parser = argparse.ArgumentParser(
         description=(
             "A disk-backed file editing tool (view, create, str_replace, insert, undo_edit) "
-            "with optional linting. Also supports a 'concise' view for Python files."
+            "with optional linting."
         )
     )
     parser.add_argument(
@@ -689,12 +574,6 @@ def main():
         help="Enable linting checks for Python files before saving changes.",
     )
     parser.add_argument(
-        "--concise",
-        type=str,
-        default="False",
-        help="If True, attempts to produce a condensed view for Python files, eliding large function bodies.",
-    )
-    parser.add_argument(
         "--python_only",
         type=bool,
         default=True,
@@ -705,10 +584,6 @@ def main():
 
     file_history = load_history()
     editor = StrReplaceEditor(file_history, enable_linting=args.enable_linting)
-    if args.concise.lower() == "true":
-        args.concise = True
-    else:
-        args.concise = False
 
     try:
         result = editor.run(
@@ -719,7 +594,7 @@ def main():
             old_str=args.old_str,
             new_str=args.new_str,
             insert_line=args.insert_line,
-            concise=args.concise,
+            python_only=args.python_only,
         )
         safe_print(result.output)
         if result.error:

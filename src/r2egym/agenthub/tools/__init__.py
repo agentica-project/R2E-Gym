@@ -1,12 +1,15 @@
 ##############################################################################
 # tool definitions
 ##############################################################################
+
+# Import allowed commands from the editor module
+from .str_replace_editor import ALLOWED_STR_REPLACE_EDITOR_COMMANDS
+
 _STR_REPLACE_EDITOR_DESCRIPTION = """Custom editing tool for viewing, creating and editing files
 * State is persistent across command calls and discussions with the user
 * If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
 * The `create` command cannot be used if the specified `path` already exists as a file
 * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
-* The `undo_edit` command will revert the last edit made to the file at `path`
 
 Notes for using the `str_replace` command:
 * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
@@ -23,8 +26,8 @@ file_editor = {
             "type": "object",
             "properties": {
                 "command": {
-                    "description": "The command to run. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`.",
-                    "enum": ["view", "create", "str_replace", "insert", "undo_edit"],
+                    "description": f"The command to run. Allowed options are: {', '.join(f'`{cmd}`' for cmd in ALLOWED_STR_REPLACE_EDITOR_COMMANDS)}.",
+                    "enum": ALLOWED_STR_REPLACE_EDITOR_COMMANDS,
                     "type": "string",
                 },
                 "path": {
@@ -52,10 +55,6 @@ file_editor = {
                     "type": "array",
                     "items": {"type": "integer"},
                 },
-                "concise": {
-                    "description": "Optional for the `view` command. If `True`, displays a concise skeletal view of the file. Very useful for localization tasks. Highly recommended for large files.",
-                    "type": "boolean",
-                },
             },
             "required": ["command", "path"],
         },
@@ -63,27 +62,27 @@ file_editor = {
 }
 
 
-_BASH_EXECUTE_DESCRIPTION = """
+_BASH_DESCRIPTION = """
 Description: Execute a bash command in the terminal.
 
 Parameters:
   (1) command (string, required): The bash command to execute. For example: `python my_script.py`
 """
 
-bash_execute_tool = {
+bash_tool = {
     "type": "function",
     "function": {
-        "name": "execute_bash",
-        "description": _BASH_EXECUTE_DESCRIPTION,
+        "name": "bash",
+        "description": _BASH_DESCRIPTION,
         "parameters": {
             "type": "object",
             "properties": {
-                "cmd": {
+                "command": {
                     "type": "string",
                     "description": "The command (and optional arguments) to execute. For example: 'python my_script.py'",
                 }
             },
-            "required": ["cmd"],
+            "required": ["command"],
         },
     },
 }
@@ -125,36 +124,22 @@ search_tool = {
     },
 }
 
-_FINISH_DESCRIPTION = """
-"A simple finish tool with a 'submit' command.\n\n"
-"Notes about the `submit` command:\n"
-"* When invoked with `--result`, the provided string is used for submitting required task results.\n"
-"* If no `--result` is provided, it defaults to an empty string.\n\n"
-"**Parameters:**\n"
-"  1. **command** (`string`, required): The command to run. Currently allowed option is: `submit`.\n"
-"     - Allowed value: [`submit`]\n"
-"  2. **result** (`string`, optional): The result text to submit. Defaults to an empty string.\n"
+_SUBMIT_DESCRIPTION = """
+A simple submit tool to finish tasks.
+
+This tool signals completion of a task or submission of results.
+No parameters required - simply call to indicate task completion.
 """
-finish_tool = {
+
+submit_tool = {
     "type": "function",
     "function": {
-        "name": "finish",
-        "description": _FINISH_DESCRIPTION,
+        "name": "submit",
+        "description": _SUBMIT_DESCRIPTION,
         "parameters": {
             "type": "object",
-            "properties": {
-                "command": {
-                    "description": "The command to run. Currently only `submit` is supported.",
-                    "type": "string",
-                    "enum": ["submit"],
-                },
-                "result": {
-                    "description": "Optional. The result text to submit. Defaults to an empty string if not provided.",
-                    "type": "string",
-                },
-            },
-            "required": ["command"],
+            "properties": {},
+            "required": [],
         },
-        # "cache_control": {"type": "ephemeral"},
     },
 }

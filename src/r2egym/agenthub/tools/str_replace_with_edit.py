@@ -295,6 +295,7 @@ class StrReplaceEditor:
         else:
             # Normal reading
             file_text = self.read_path(path)
+            file_text = file_text.expandtabs()
             lines_with_original_numbers = [
                 (i, line) for i, line in enumerate(file_text.splitlines())
             ]
@@ -358,6 +359,7 @@ class StrReplaceEditor:
         import ast
 
         file_text = self.read_path(path)
+        file_text = file_text.expandtabs()
         try:
             tree = ast.parse(file_text, filename=str(path))
         except SyntaxError as e:

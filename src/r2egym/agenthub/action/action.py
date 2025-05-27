@@ -128,7 +128,7 @@ class Action:
         """
         if not self.function_name:
             return ""
-        elif self.function_name == "finish":
+        elif self.function_name == "finish" or self.function_name == "submit":
             return "echo '<<<Finished>>>'"
 
         # Start building the command
