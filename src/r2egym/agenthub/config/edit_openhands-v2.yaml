@@ -92,7 +92,6 @@ system_prompt: |-
   * If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
   * The `create` command cannot be used if the specified `path` already exists as a file
   * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
-  * The `undo_edit` command will revert the last edit made to the file at `path`
 
   Notes for using the `str_replace` command:
   * The `old_str` parameter should match EXACTLY one or more consecutive lines from the original file. Be mindful of whitespaces!
@@ -100,8 +99,8 @@ system_prompt: |-
   * The `new_str` parameter should contain the edited lines that should replace the `old_str`
 
   Parameters:
-    (1) command (string, required): The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`.
-  Allowed values: [`view`, `create`, `str_replace`, `insert`, `undo_edit`]
+    (1) command (string, required): The commands to run. Allowed options are: `view`, `create`, `str_replace`, `insert`.
+  Allowed values: [`view`, `create`, `str_replace`, `insert`]
     (2) path (string, required): Absolute path to file or directory, e.g. `/repo/file.py` or `/repo`.
     (3) file_text (string, optional): Required parameter of `create` command, with the content of the file to be created.
     (4) old_str (string, optional): Required parameter of `str_replace` command containing the string in `path` to replace.
@@ -213,9 +212,9 @@ instance_prompt: |-
   PLEASE follow the format strictly! PLEASE EMIT ONE AND ONLY ONE FUNCTION CALL PER MESSAGE.
 
 command_files:
-  - "./src/r2egym/agenthub/tools/file_editor.py"
-  - "./src/r2egym/agenthub/tools/execute_bash.py"
-  - "./src/r2egym/agenthub/tools/finish.py"
+  - "./src/r2egym/agenthub/tools/str_replace_editor.py"
+  - "./src/r2egym/agenthub/tools/bash.py"
+  - "./src/r2egym/agenthub/tools/submit.py"
 llm_name: "gpt-4o"
 demo_file: "./src/r2egym/agenthub/config/demo_openhands"
 use_demo: False

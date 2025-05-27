@@ -146,8 +146,11 @@ def runagent(
                 Path("./src/r2egym/agenthub/config/edit_openhands-v2.yaml")
             )
         else:
+            # agent_args = AgentArgs.from_yaml(
+            #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
+            # )
             agent_args = AgentArgs.from_yaml(
-                Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
+                Path("./src/r2egym/agenthub/config/edit_openhands-v2.yaml")
             )
     agent_args.llm_name = llm_name
 

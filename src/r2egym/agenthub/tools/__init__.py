@@ -17,10 +17,10 @@ Notes for using the `str_replace` command:
 * The `new_str` parameter should contain the edited lines that should replace the `old_str`
 """
 
-file_editor = {
+str_replace_editor_tool = {
     "type": "function",
     "function": {
-        "name": "file_editor",
+        "name": "str_replace_editor",
         "description": _STR_REPLACE_EDITOR_DESCRIPTION,
         "parameters": {
             "type": "object",

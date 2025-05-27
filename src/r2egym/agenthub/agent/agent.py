@@ -18,10 +18,10 @@ from r2egym.agenthub.environment.env import RepoEnv
 from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
 from r2egym.agenthub.tools import (
-    search_tool,
-    file_editor,
-    bash_execute_tool,
-    finish_tool,
+    # search_tool,
+    str_replace_editor,
+    bash_tool,
+    submit_tool,
 )
 
 logger = get_logger(__name__)  # Logger for this module
@@ -134,13 +134,13 @@ class Agent:
         self.trajectory_steps = []
         self.history = []
 
-    def condense_history(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    def condense_history(self, messages: List[Dict[str, str]], max_tokens: int = 32768) -> List[Dict[str, str]]:
         """
         Condense older user messages if total token usage exceeds a threshold.
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS =32768 #65536 # 32768
+        MAX_TOKENS = max_tokens #65536 # 32768
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -153,6 +153,7 @@ class Agent:
             logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
         else:
+            # NOTE: no condensing is done here
             raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
                
         # # 1) simple pass: keep only last 5 user observations (after the first)
@@ -186,59 +187,6 @@ class Agent:
         )
         return messages_
 
-    def condense_history_old(
-        self, messages: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
-        """
-        Condense older user messages if total token usage exceeds a threshold,
-        but do so by targeting the longest user messages first.
-        Skips the very first and very last user messages.
-        """
-        MAX_TOKENS = 28000
-        messages_ = copy.deepcopy(messages)
-
-        total_tokens = self._count_tokens(messages_)
-        self.logger.warning(
-            f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
-        if total_tokens <= MAX_TOKENS:
-            return messages_
-
-        # Identify user messages (role='user')
-        user_msg_indexes = [
-            i for i, msg in enumerate(messages_) if msg["role"] == "user"
-        ]
-
-        # If there's only 0 or 1 user messages, or effectively no middle messages to condense, do nothing
-        if len(user_msg_indexes) <= 1:
-            return messages_
-
-        # Indices of user messages to consider condensing (skip first and last user message)
-        to_condense = user_msg_indexes[1:-1]
-        if not to_condense:
-            return messages_
-
-        # Sort those middle user messages by descending length (longest first)
-        to_condense_sorted = sorted(
-            to_condense,
-            key=lambda idx: self._count_tokens([messages_[idx]]),
-            reverse=True,
-        )
-
-        # Condense from the longest to shortest until we are below the token limit
-        for idx in to_condense_sorted:
-            messages_[idx]["content"] = "<Observation condensed for saving context>"
-
-            total_tokens = self._count_tokens(messages_)
-            if total_tokens <= MAX_TOKENS:
-                break
-
-        self.logger.warning(
-            f"Condensed history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
-
-        return messages_
-
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """
         Counts the tokens for a list of messages using the litellm library.
@@ -249,7 +197,7 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True
+        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True, max_tokens: int = 32768
     ) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None
@@ -257,7 +205,7 @@ class Agent:
         tools = None
 
         if self.use_fn_calling:
-            tools = [search_tool, file_editor, bash_execute_tool, finish_tool]
+            tools = [str_replace_editor, bash_tool, submit_tool]
             if "vertex" not in self.llm_name.lower():
                 self.logger.warning(f"using prompt caching for {self.llm_name}")
                 # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
@@ -282,7 +230,7 @@ class Agent:
 
         if not self.use_fn_calling and condense_history:
             # condense messages after first user message
-            messages_ = self.condense_history(messages)
+            messages_ = self.condense_history(messages, max_tokens=max_tokens)
         else:
             messages_ = copy.deepcopy(messages)
 
@@ -469,7 +417,7 @@ class Agent:
             # Query the LLM
             messages = copy.deepcopy(self.history)
             try:
-                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history)
+                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history, max_tokens=max_token_limit)
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
                 done = True
