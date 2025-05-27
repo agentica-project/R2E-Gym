@@ -20,7 +20,7 @@ from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
 from r2egym.agenthub.tools import (
     # search_tool,
     str_replace_editor,
-    bash_tool,
+    execute_bash_tool,
     submit_tool,
 )
 
@@ -205,7 +205,7 @@ class Agent:
         tools = None
 
         if self.use_fn_calling:
-            tools = [str_replace_editor, bash_tool, submit_tool]
+            tools = [str_replace_editor, execute_bash_tool, submit_tool]
             if "vertex" not in self.llm_name.lower():
                 self.logger.warning(f"using prompt caching for {self.llm_name}")
                 # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
@@ -406,7 +406,8 @@ class Agent:
             steps_remaining = max_steps - step_count
             if steps_remaining > 0:
                 # stepcount_message = f"Steps Remaining: {steps_remaining} Total Steps: {max_steps}"
-                stepcount_message = f"Steps Remaining: {steps_remaining}"
+                # stepcount_message = f"Steps Remaining: {steps_remaining}"
+                stepcount_message = "" # no step count message | only for after reaching max steps
             else:
                 stepcount_message = "You have reached the maximum number of steps. Please submit your answer NOW."
             self.history[-1][

@@ -185,7 +185,7 @@ class RepoEnv(gym.Env):
         bash_output, error_code, total_time = self.run_action(action, timeout=timeout)
         self.observation = Observation(bash_output, error_code, action)
         reward = self.calculate_reward(self.observation)
-        if "finish" in action.function_name.lower():
+        if "finish" in action.function_name.lower() or "submit" in action.function_name.lower():
             self.done = True
         info = {"total_time": total_time}
         return self.observation, reward, self.done, info

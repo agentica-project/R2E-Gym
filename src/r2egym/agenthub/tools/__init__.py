@@ -66,13 +66,13 @@ _BASH_DESCRIPTION = """
 Description: Execute a bash command in the terminal.
 
 Parameters:
-  (1) command (string, required): The bash command to execute. For example: `python my_script.py`
+  (1) command (string, optional): The bash command to execute. For example: `python my_script.py`. If not provided, will show help.
 """
 
-bash_tool = {
+execute_bash_tool = {
     "type": "function",
     "function": {
-        "name": "bash",
+        "name": "execute_bash",
         "description": _BASH_DESCRIPTION,
         "parameters": {
             "type": "object",
@@ -82,7 +82,7 @@ bash_tool = {
                     "description": "The command (and optional arguments) to execute. For example: 'python my_script.py'",
                 }
             },
-            "required": ["command"],
+            "required": [],
         },
     },
 }

@@ -3,7 +3,7 @@
 Description: Execute a bash command in the terminal, with Python version compatibility.
 
 Parameters:
-  --command (string, required): The bash command to execute. For example: --command 'python my_script.py'
+  --command (string, optional): The bash command to execute. For example: --command 'python my_script.py'. If not provided, will show help.
 """
 
 import argparse
@@ -31,9 +31,9 @@ def run_command(cmd):
 def main():
     parser = argparse.ArgumentParser(description="Execute a bash command.")
     parser.add_argument(
-        "--command",
-        required=True,
-        help="The command (and optional arguments) to execute. For example: --command 'python my_script.py'",
+        "command",
+        type=str,
+        help="The command (and optional arguments) to execute. For example: 'python my_script.py'",
     )
     args = parser.parse_args()
 

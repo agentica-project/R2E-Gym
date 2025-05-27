@@ -210,7 +210,7 @@ if __name__ == "__main__":
     xml_1 = """
     <function=file_editor>
       <parameter=command>view</parameter>
-      <parameter=path>./sympy/tensor/array/dense_ndim_array.py</parameter>
+      <parameter=path>./sympy/tensor/array/de[[pnse_ndim_array.py</parameter>
       <parameter=concise>True</parameter>
     </function>
     """
