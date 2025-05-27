@@ -660,7 +660,8 @@ class Agent:
                                     },
                                     {
                                         "type": "text",
-                                        "text": f"Previous step thoughts saved in context:\n\n{thought.split('<think>')[1].split('</think>')[0]}",
+                                        "text": f"The tool call was successful. The tool output is provided above.",
+                                        # "text": f"Previous step thoughts saved in context:\n\n{thought.split('<think>')[1].split('</think>')[0]}",
                                     },
                                 ],
                             }

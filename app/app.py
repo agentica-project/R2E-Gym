@@ -15,6 +15,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(BASE_DIR)
 TRAJ_DIR = os.path.join(BASE_DIR, "traj")
 
+
 def get_jsonl_files():
     """Retrieve all JSONL files in the TRAJ_DIR directory."""
     try:
@@ -59,6 +60,7 @@ def read_logs(filename):
                     log["ds"]["problem_statement"] = log["ds"][
                         "problem_statement"
                     ].split("[ISSUE]")[1]
+                log["num_steps"] = len(log["trajectory_steps"])
                 logs.append(log)
             except json.JSONDecodeError:
                 continue  # Skip invalid JSON lines
