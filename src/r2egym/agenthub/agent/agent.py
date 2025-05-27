@@ -139,7 +139,7 @@ class Agent:
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = 28000
+        MAX_TOKENS = 65536 # 32768
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -147,10 +147,23 @@ class Agent:
         total_tokens = self._count_tokens(messages_)
         self.logger.warning(
             f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
+        )     
         if total_tokens <= MAX_TOKENS:
             logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
+<<<<<<< HEAD
+=======
+        else:
+            raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
+               
+        # # 1) simple pass: keep only last 5 user observations (after the first)
+        # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
+        # for idx in user_idxs[:-5]:
+        #     messages_[idx]["content"] = "<Observation condensed for saving context>"        
+        # if total_tokens <= MAX_TOKENS:
+        #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
+        #     return messages_
+>>>>>>> 08959947d041816f4ef1aaf3b910e5f4c7931d1c
 
         # 2) Identify user messages (role='user'), skipping the very first user message
         user_msg_indexes = [
@@ -362,7 +375,7 @@ class Agent:
         max_steps: int = 10,
         max_steps_absolute: int = 50,
         # token limits
-        max_token_limit: int = 32768,  # 32k tokens
+        max_token_limit: int = 65536,  # 64k tokens
         # time limits
         max_exec_time: int = 90,  # 5 mins per env execution
         max_total_time: int = 1200,  # 20 minutes overall agent run limit
