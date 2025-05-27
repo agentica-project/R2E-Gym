@@ -67,23 +67,45 @@ def run_agent_with_restarts(
     use_fn_calling: bool = True,
     condense_history: bool = True,
     swesmith_wrapper: bool = False,
+    max_iterations: int = 1,
 ):
+    """
+    Iterative eval protocol:
+    - normally run the agent
+    - run for maximum num_iterations = 3 times
+    - stop if trajectory.exit_reason == "agent"
+    - otherwise continue iteratively till maximum iterations
+    - finally choose the trajectory with the lowest number of steps
+    - note restarts and iterative_evals are different (so just use one of them | add an assert flag)
+    """
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
 
-    for idx in range(num_restarts):
-        logger.warning(f"running agent at idx: {idx+1}")
-        trajectory = agent.run(
-            env,
-            max_steps=steps_per_agent,
-            temperature=temperature,
-            max_steps_absolute=max_steps_absolute,
-            use_fn_calling=use_fn_calling,
-            condense_history=condense_history,
-            swesmith_wrapper=swesmith_wrapper,
-        )
-        # remove reproduce.py
-        # env.runtime.run('rm reproduce_issue.py')
+    # only one of restarts > 1 and iterative_eval can be True
+    iterative_eval = max_iterations > 1
+    assert not (num_restarts > 1 and iterative_eval), "only one of restarts > 1 and iterative_eval can be True"
+    logger.warning(f"Using iterations: {max_iterations}, using iterative protocol: {iterative_eval}")
+
+    # run the agent in iterative protocol
+    trajectories = []
+    for iteration in range(max_iterations):
+        for idx in range(num_restarts):
+            logger.warning(f"running agent at idx: {idx+1}")
+            trajectory = agent.run(
+                env,
+                max_steps=steps_per_agent,
+                temperature=temperature,
+                max_steps_absolute=max_steps_absolute,
+                use_fn_calling=use_fn_calling,
+                condense_history=condense_history,
+                swesmith_wrapper=swesmith_wrapper,
+            )
+            # remove reproduce.py
+            # env.runtime.run('rm reproduce_issue.py')
+            trajectories.append(trajectory)
+
+    # choose the trajectory with the lowest number of steps
+    trajectory = min(trajectories, key=lambda x: x.num_steps)
     return trajectory
 
 
@@ -100,6 +122,7 @@ def runagent(
     condense_history: bool = True,
     swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
+    max_iterations: int = 1,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -169,6 +192,7 @@ def runagent(
             use_fn_calling=use_fn_calling,
             condense_history=condense_history,
             swesmith_wrapper=swesmith_wrapper,
+            max_iterations=max_iterations,
         )
     except Exception as e:
         logger.error(
@@ -217,6 +241,7 @@ def runagent_multiple(
     condense_history: bool = True,
     swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
+    max_iterations: int = 1,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -315,6 +340,7 @@ def runagent_multiple(
                 condense_history=condense_history,
                 swesmith_wrapper=swesmith_wrapper,
                 max_reward_calc_time=max_reward_calc_time,
+                iterative_eval=iterative_eval,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
