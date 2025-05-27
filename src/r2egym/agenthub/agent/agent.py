@@ -151,8 +151,6 @@ class Agent:
         if total_tokens <= MAX_TOKENS:
             logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
-<<<<<<< HEAD
-=======
         else:
             raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
                
@@ -163,7 +161,6 @@ class Agent:
         # if total_tokens <= MAX_TOKENS:
         #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
         #     return messages_
->>>>>>> 08959947d041816f4ef1aaf3b910e5f4c7931d1c
 
         # 2) Identify user messages (role='user'), skipping the very first user message
         user_msg_indexes = [
