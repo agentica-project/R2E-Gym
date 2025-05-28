@@ -59,7 +59,7 @@ compatible with the SWE-bench repository to leverage its ability to create docke
 
 ### MARK: Commonly Used Installion / Testing Specifications ###
 
-TEST_PYTEST = "pytest --disable-warnings --color=no --tb=no --verbose"
+TEST_PYTEST = "pytest --disable-warnings --color=no --tb=no --verbose -rA"
 
 DEFAULT_SPECS = {
     "install": ["python -m pip install -e ."],

@@ -111,7 +111,6 @@ class DockerRuntime(ExecutionEnvironment):
             image_name = self.ds['image_name'].replace('__', '_1776_')
             self.swebench_verified = False
             self.docker_image = f'jyangballin/{image_name}:latest'
-            print(self.docker_image)
         
         if self.swebench_verified:
             # also create a test spec for swebench verified dockers (useful for grading)
@@ -473,7 +472,6 @@ class DockerRuntime(ExecutionEnvironment):
             self.run(f"git checkout {commit_id}")
             self.run("python -m pip install chardet")
             # Setup the run_test.sh script for subsequent testing.  
-            import pdb; pdb.set_trace()
             test_command, _ = get_test_command(self.ds)
             eval_script_content = "\n".join(
                 [
@@ -494,10 +492,13 @@ class DockerRuntime(ExecutionEnvironment):
                 temp_file_path = temp_file.name
             
             # Copy the file to container and clean up
-            self.copy_to_container(temp_file_path, "/run_test.sh")
+            self.copy_to_container(temp_file_path, "/run_tests.sh")
             os.unlink(temp_file_path)  # Clean up the temporary file
             
-            self.run("chmod +x /run_test.sh")
+            self.run("chmod +x /run_tests.sh")
+            import pdb; pdb.set_trace()
+            self._calculate_reward_swesmith()
+            print('testing')
             
             
         except Exception as e:
@@ -966,6 +967,21 @@ class DockerRuntime(ExecutionEnvironment):
             return parsed_output
         else:
             return parse_log_fn(f"{self.repo_name}")(log_output)
+    
+    def _calculate_reward_swesmith(self, get_test_output=False, timeout: int = 300) -> float:
+        #self.reverse_patch(self.ds['patch'])
+        output, _ = self.run("/run_tests.sh", timeout=timeout)
+        parse = self.parse_logs(output)
+        # @(Naman, Jas): Parse the output and return the reward. This implementation is a hack rn.
+        if not parse:
+            return 0.0
+        # Everything should pass!
+        for k, v in parse.items():
+            if v == 'FAILED':
+                return 0.0
+            elif v == 'ERROR':
+                return 0.0
+        return 1.0
 
     def _calculate_reward_swebench(self, get_test_output=False, timeout: int = 300) -> float:
         # gt_test_patch = self.commit.get_patch(test_file=True,non_test_file=False)
@@ -1025,8 +1041,10 @@ class DockerRuntime(ExecutionEnvironment):
         return reward
 
     def _calculate_reward(self, get_test_output=False, timeout: int = 300) -> float:
-        if self.swebench_verified or self.swesmith:
+        if self.swebench_verified:
             return self._calculate_reward_swebench(get_test_output=get_test_output, timeout=timeout)
+        elif self.swesmith:
+            return self._calculate_reward_swesmith(get_test_output=get_test_output, timeout=timeout)
         else:
             return self._calculate_reward_r2e(get_test_output=get_test_output, timeout=timeout)
 
