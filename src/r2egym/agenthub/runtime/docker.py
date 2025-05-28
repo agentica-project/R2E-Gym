@@ -496,9 +496,6 @@ class DockerRuntime(ExecutionEnvironment):
             os.unlink(temp_file_path)  # Clean up the temporary file
             
             self.run("chmod +x /run_tests.sh")
-            import pdb; pdb.set_trace()
-            self._calculate_reward_swesmith()
-            print('testing')
             
             
         except Exception as e:
