@@ -59,7 +59,7 @@ compatible with the SWE-bench repository to leverage its ability to create docke
 
 ### MARK: Commonly Used Installion / Testing Specifications ###
 
-TEST_PYTEST = "pytest --disable-warnings --color=no --tb=no --verbose -rA"
+TEST_PYTEST = "pytest --disable-warnings --color=no --tb=no --verbose -rA -p no:snail"
 
 DEFAULT_SPECS = {
     "install": ["python -m pip install -e ."],
@@ -201,7 +201,7 @@ SPECS_REPO_GLOM = {"fb3c4e76f28816aebfd2538980e617742e98a7c2": DEFAULT_SPECS}
 SPECS_REPO_GPXPY = {
     "09fc46b3cad16b5bf49edf8e7ae873794a959620": {
         **DEFAULT_SPECS,
-        KEY_TEST_CMD: "pytest test.py --verbose --color=no --tb=no --disable-warnings",
+        KEY_TEST_CMD: "pytest test.py --verbose --color=no --tb=no --disable-warnings -rA -p no:snail",
     }
 }
 SPECS_REPO_GRAFANALIB = {"5c3b17edaa437f0bc09b5f1b9275dc8fb91689fb": DEFAULT_SPECS}
@@ -247,7 +247,7 @@ SPECS_REPO_OAUTHLIB = {"1fd5253630c03e3f12719dd8c13d43111f66a8d2": DEFAULT_SPECS
 SPECS_REPO_PARAMIKO = {
     "23f92003898b060df0e2b8b1d889455264e63a3e": {
         **DEFAULT_SPECS,
-        KEY_TEST_CMD: "pytest -rA --color=no --disable-warnings",
+        KEY_TEST_CMD: "pytest -rA --color=no --disable-warnings -p no:snail",
     }
 }
 SPECS_REPO_PARSE = {"30da9e4f37fdd979487c9fe2673df35b6b204c72": DEFAULT_SPECS}
@@ -449,7 +449,7 @@ SPECS_REPO_MYPY = {
             "python -m pip install -e .",
             "hash -r",
         ],
-        KEY_TEST_CMD: "pytest --color=no -rA -k",
+        KEY_TEST_CMD: "pytest --color=no -rA -k -p no:snail",
         KEY_MIN_TESTING: True,
     }
 }
