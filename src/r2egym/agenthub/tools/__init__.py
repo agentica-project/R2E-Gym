@@ -1,11 +1,14 @@
 ##############################################################################
 # tool definitions
 ##############################################################################
+
+# Import allowed commands from the editor module
+from .str_replace_editor import ALLOWED_STR_REPLACE_EDITOR_COMMANDS
+
 _STR_REPLACE_EDITOR_DESCRIPTION = """Custom editing tool for viewing, creating and editing files
 * State is persistent across command calls and discussions with the user
-* `path` is a file and `view` displays the result of applying `cat -n` with concise view by default. 
+* If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
 * The `create` command cannot be used if the specified `path` already exists as a file
-* The `undo_edit` command will revert the last edit made to the file at `path`
 * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
 
 Notes for using the `str_replace` command:
@@ -14,21 +17,21 @@ Notes for using the `str_replace` command:
 * The `new_str` parameter should contain the edited lines that should replace the `old_str`
 """
 
-file_editor = {
+str_replace_editor_tool = {
     "type": "function",
     "function": {
-        "name": "file_editor",
+        "name": "str_replace_editor",
         "description": _STR_REPLACE_EDITOR_DESCRIPTION,
         "input_schema": {
             "type": "object",
             "properties": {
                 "command": {
-                    "description": "The command to run. Allowed options are: `view`, `create`, `str_replace`, `insert`, `undo_edit`.",
-                    "enum": ["view", "create", "str_replace", "insert", "undo_edit"],
+                    "description": f"The command to run. Allowed options are: {', '.join(f'`{cmd}`' for cmd in ALLOWED_STR_REPLACE_EDITOR_COMMANDS)}.",
+                    "enum": ALLOWED_STR_REPLACE_EDITOR_COMMANDS,
                     "type": "string",
                 },
                 "path": {
-                    "description": "Absolute path to file e.g. `/testbed/file.py`.",
+                    "description": "Absolute path to file or directory, e.g. `/testbed/file.py` or `/testbed`.",
                     "type": "string",
                 },
                 "file_text": {
@@ -48,13 +51,9 @@ file_editor = {
                     "type": "integer",
                 },
                 "view_range": {
-                    "description": "Recommended but optional for the `view` command when `path` points to a file. Specifies the line range to view. E.g., [11, 12] shows lines 11 and 12. Indexing starts at 1. Use [start_line, -1] to show all lines from `start_line` to the end. If not provided, often long files will be elided.",
+                    "description": "Optional for the `view` command when `path` points to a file. Specifies the line range to view. E.g., [11, 12] shows lines 11 and 12. Indexing starts at 1. Use [start_line, -1] to show all lines from `start_line` to the end.",
                     "type": "array",
                     "items": {"type": "integer"},
-                },
-                "concise": {
-                    "description": "Optional for the `view` command. If `True`, displays a concise skeletal view of the file. Very useful for localization tasks. Highly recommended for large files.",
-                    "type": "boolean",
                 },
             },
             "required": ["command", "path"],
@@ -63,27 +62,27 @@ file_editor = {
 }
 
 
-_BASH_EXECUTE_DESCRIPTION = """
+_BASH_DESCRIPTION = """
 Description: Execute a bash command in the terminal.
 
 Parameters:
-  (1) command (string, required): The bash command to execute. For example: `python my_script.py`
+  (1) command (string, optional): The bash command to execute. For example: `python my_script.py`. If not provided, will show help.
 """
 
-bash_execute_tool = {
+execute_bash_tool = {
     "type": "function",
     "function": {
         "name": "execute_bash",
-        "description": _BASH_EXECUTE_DESCRIPTION,
+        "description": _BASH_DESCRIPTION,
         "input_schema": {
             "type": "object",
             "properties": {
-                "cmd": {
+                "command": {
                     "type": "string",
                     "description": "The command (and optional arguments) to execute. For example: 'python my_script.py'",
                 }
             },
-            "required": ["cmd"],
+            "required": [],
         },
     },
 }
@@ -125,42 +124,27 @@ search_tool = {
     },
 }
 
-_FINISH_DESCRIPTION = """
-"A simple finish tool with a 'submit' command.\n\n"
-"Notes about the `submit` command:\n"
-"* When invoked with `--result`, the provided string is used for submitting required task results.\n"
-"* If no `--result` is provided, it defaults to an empty string.\n\n"
-"**Parameters:**\n"
-"  1. **command** (`string`, required): The command to run. Currently allowed option is: `submit`.\n"
-"     - Allowed value: [`submit`]\n"
-"  2. **result** (`string`, optional): The result text to submit. Defaults to an empty string.\n"
+_SUBMIT_DESCRIPTION = """
+A simple submit tool to finish tasks.
+
+This tool signals completion of a task or submission of results.
+No parameters required - simply call to indicate task completion.
 """
-finish_tool = {
+
+submit_tool = {
     "type": "function",
     "function": {
-        "name": "finish",
-        "description": _FINISH_DESCRIPTION,
+        "name": "submit",
+        "description": _SUBMIT_DESCRIPTION,
         "input_schema": {
             "type": "object",
-            "properties": {
-                "command": {
-                    "description": "The command to run. Currently only `submit` is supported.",
-                    "type": "string",
-                    "enum": ["submit"],
-                },
-                "result": {
-                    "description": "Optional. The result text to submit. Defaults to an empty string if not provided.",
-                    "type": "string",
-                },
-            },
-            "required": ["command"],
+            "properties": {},
+            "required": [],
         },
-        # "cache_control": {"type": "ephemeral"},
     },
 }
 
-
-anthropic_file_editor = file_editor["function"]
-anthropic_bash_execute = bash_execute_tool["function"]
+anthropic_str_replace_editor = str_replace_editor_tool["function"]
+anthropic_execute_bash = execute_bash_tool["function"]
 anthropic_search = search_tool["function"]
-anthropic_finish = finish_tool["function"]
+anthropic_submit = submit_tool["function"]

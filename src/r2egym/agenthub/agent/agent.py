@@ -20,13 +20,13 @@ from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
 from r2egym.agenthub.tools import (
     search_tool,
-    file_editor,
-    bash_execute_tool,
-    finish_tool,
-    anthropic_file_editor,
-    anthropic_bash_execute,
+    str_replace_editor_tool,
+    execute_bash_tool,
+    submit_tool,
+    anthropic_str_replace_editor,
+    anthropic_execute_bash,
     anthropic_search,
-    anthropic_finish,
+    anthropic_submit,
 )
 
 logger = get_logger(__name__)  # Logger for this module
@@ -82,7 +82,7 @@ class Agent:
         self.command_files = args.command_files
         self.other_args = args.other_args or {}
         self.logger.info(f"Initialized Agent: {name} with LLM: {args.llm_name}")
-        self.max_retries = self.other_args.get("max_retries", 3)
+        self.max_retries = self.other_args.get("max_retries", 5)
         self.llm_timeout = self.other_args.get("timeout", 120)
 
         self.anthropic_client = AnthropicVertex(
@@ -264,12 +264,17 @@ class Agent:
 
         if self.use_fn_calling:
             # Define tools in OpenAI format
-            openai_tools = [search_tool, file_editor, bash_execute_tool, finish_tool]
+            openai_tools = [
+                search_tool,
+                str_replace_editor_tool,
+                execute_bash_tool,
+                submit_tool,
+            ]
             anthropic_tools = [
-                anthropic_file_editor,
-                anthropic_bash_execute,
+                anthropic_str_replace_editor,
+                anthropic_execute_bash,
                 # anthropic_search,
-                anthropic_finish,
+                anthropic_submit,
             ]
 
             # # Add cache_control to tools for Vertex

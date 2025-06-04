@@ -3,14 +3,14 @@
 Description: Execute a bash command in the terminal, with Python version compatibility.
 
 Parameters:
-  --cmd (string, required): The bash command to execute. For example: --cmd 'python my_script.py'
+  --command (string, optional): The bash command to execute. For example: --command 'python my_script.py'. If not provided, will show help.
 """
 
 import argparse
 import subprocess
 import sys
 
-BLOCKED_BASH_COMMANDS = []  # ["cd", "ipython", "jupyter", "pip", "nohup"]
+BLOCKED_BASH_COMMANDS = ["ipython", "jupyter", "nohup"]
 
 
 def run_command(cmd):
@@ -31,14 +31,14 @@ def run_command(cmd):
 def main():
     parser = argparse.ArgumentParser(description="Execute a bash command.")
     parser.add_argument(
-        "--cmd",
-        required=True,
-        help="The command (and optional arguments) to execute. For example: --cmd 'python my_script.py'",
+        "command",
+        type=str,
+        help="The command (and optional arguments) to execute. For example: 'python my_script.py'",
     )
     args = parser.parse_args()
 
     # Check if the command is blocked
-    first_token = args.cmd.strip().split()[0]
+    first_token = args.command.strip().split()[0]
     if first_token in BLOCKED_BASH_COMMANDS:
         print(
             f"Bash command '{first_token}' is not allowed. "
@@ -46,7 +46,7 @@ def main():
         )
         sys.exit(1)
 
-    result = run_command(args.cmd)
+    result = run_command(args.command)
 
     if result.returncode != 0:
         print(f"Error executing command:\n")
