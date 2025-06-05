@@ -153,7 +153,7 @@ class Agent:
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = 28000
+        MAX_TOKENS = 96000
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -277,6 +277,8 @@ class Agent:
                 anthropic_submit,
             ]
 
+            anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
+
             # # Add cache_control to tools for Vertex
             # for tool in anthropic_tools:
             #     tool["cache_control"] = {"type": "ephemeral"}
@@ -331,7 +333,14 @@ class Agent:
 
                 system_message = messages_[0]["content"]
                 messages__ = messages_[1:]
-                print(len(messages_))
+                if len(messages__) > 1:
+                    if "content" not in messages__[-2]:
+                        print(messages__[-2])
+                    else:
+                        print(messages__[-2]["content"])
+                        messages__[-2]["content"][-1].cache_control = {
+                            "type": "ephemeral"
+                        }
 
                 response = self.anthropic_client.messages.create(
                     model=model_name,
@@ -343,6 +352,7 @@ class Agent:
                     messages=messages__,
                     # temperature=temperature,
                 )
+                # print(response.usage.cache_read_input_tokens)
                 self.logger.warning(f"Anthropic Vertex query complete")
                 # else:
                 #     # Use litellm for other models
@@ -560,6 +570,9 @@ class Agent:
                 )
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
+                import traceback
+
+                traceback.print_exc()
                 done = True
                 exit_reason = "llm_query_error"
                 break

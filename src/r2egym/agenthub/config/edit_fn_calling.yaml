@@ -48,6 +48,8 @@ instance_prompt: |-
       - Use the existing test runner to run the unit tests you identify as relevant to the changes you made. For example:
          - `python -m pytest -xvs sympy/physics/units/tests/test_dimensions_transcendental.py`
          - `python -m pytest tests/test_domain_py.py::test_pymethod_options`
+         - `./tests/runtests.py constraints.tests.CheckConstraintTests -v 2`
+      - RUN ALL relevant unit tests to ensure your solution is correct and does not cause any regressions.
   
   7. Test edge cases:
      - Identify potential edge cases that might challenge your solution.
@@ -78,9 +80,9 @@ instance_prompt: |-
   - When creating edge cases, you should look at the relevant existing tests to understand existing "regression" test cases. Ensure the fix doesn't break existing functionality.
 
 command_files:
-  - "./src/r2egym/agenthub/tools/file_editor.py"
+  - "./src/r2egym/agenthub/tools/str_replace_editor.py"
   - "./src/r2egym/agenthub/tools/execute_bash.py"
-  - "./src/r2egym/agenthub/tools/finish.py"
+  - "./src/r2egym/agenthub/tools/submit.py"
 llm_name: "gpt-4o"
 demo_file: "./r2egym/agenthub/config/localizer-demo"
 other_args:
