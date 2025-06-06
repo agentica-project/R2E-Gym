@@ -60,6 +60,19 @@ def read_logs(filename):
                     log["ds"]["problem_statement"] = log["ds"][
                         "problem_statement"
                     ].split("[ISSUE]")[1]
+
+                first_submit = next(
+                    (
+                        step
+                        for step in log["trajectory_steps"]
+                        if "submit" in step["action"].split(">")[0]
+                    ),
+                    None,
+                )
+                if first_submit:
+                    log["trajectory_steps"] = log["trajectory_steps"][
+                        : log["trajectory_steps"].index(first_submit)
+                    ]
                 log["num_steps"] = len(log["trajectory_steps"])
                 logs.append(log)
             except json.JSONDecodeError:

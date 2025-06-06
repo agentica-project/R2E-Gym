@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 import litellm
 from openai import OpenAI
-from anthropic import AnthropicVertex  # Add Anthropic Vertex import
+from anthropic import Anthropic, AnthropicVertex  # Add Anthropic Vertex import
 
 from r2egym.agenthub.action import Action
 from r2egym.agenthub.utils.log import get_logger
@@ -85,8 +85,11 @@ class Agent:
         self.max_retries = self.other_args.get("max_retries", 5)
         self.llm_timeout = self.other_args.get("timeout", 120)
 
-        self.anthropic_client = AnthropicVertex(
-            project_id=ANTHROPIC_PROJECT_ID, region=ANTHROPIC_REGION
+        # self.anthropic_client = AnthropicVertex(
+        #     project_id=ANTHROPIC_PROJECT_ID, region=ANTHROPIC_REGION
+        # )
+        self.anthropic_client = Anthropic(
+            api_key="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",
         )
         self.logger.info(f"Initialized Anthropic Vertex client for {self.llm_name}")
 
@@ -153,7 +156,7 @@ class Agent:
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = 96000
+        MAX_TOKENS = 105000
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
