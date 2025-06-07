@@ -321,7 +321,7 @@ class Agent:
         max_steps: int = 10,
         max_steps_absolute: int = 50,
         # token limits
-        max_token_limit: int = 131072,  # 128k tokens
+        max_token_limit: int = 65536,  # 64k tokens
         # time limits
         max_exec_time: int = 90,  # 5 mins per env execution
         max_total_time: int = 1200,  # 20 minutes overall agent run limit

@@ -77,6 +77,7 @@ def run_agent_with_restarts(
     - otherwise continue iteratively till maximum iterations
     - finally choose the trajectory with the lowest number of steps
     - note restarts and iterative_evals are different (so just use one of them | add an assert flag)
+    - also if original is at temp = 0, then we do next with 0.1 and 0.2 and so on (max 0.2)
     """
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
@@ -86,6 +87,15 @@ def run_agent_with_restarts(
     assert not (num_restarts > 1 and iterative_eval), "only one of restarts > 1 and iterative_eval can be True"
     logger.warning(f"Using iterations: {max_iterations}, using iterative protocol: {iterative_eval}")
 
+    # if original is at temp = 0, then we do next with 0.1 and 0.2 and so on (max 0.2)
+    # if temperature is 0, create list of increasing temperatures up to 0.2
+    if temperature == 0:
+        temperatures = [0.0 + 0.1 * i for i in range(max_iterations)]
+        temperatures = [min(t, 0.2) for t in temperatures]  # cap at 0.2
+    else:
+        temperatures = [temperature] * max_iterations
+    logger.warning(f"Using temperatures: {temperatures}")
+
     # run the agent in iterative protocol
     trajectories = []
     for iteration in range(max_iterations):
@@ -94,7 +104,7 @@ def run_agent_with_restarts(
             trajectory = agent.run(
                 env,
                 max_steps=steps_per_agent,
-                temperature=temperature,
+                temperature=temperatures[iteration],
                 max_steps_absolute=max_steps_absolute,
                 use_fn_calling=use_fn_calling,
                 condense_history=condense_history,
@@ -102,7 +112,13 @@ def run_agent_with_restarts(
             )
             # remove reproduce.py
             # env.runtime.run('rm reproduce_issue.py')
-            trajectories.append(trajectory)
+        if trajectory.exit_reason == "agent":
+            logger.warning(f"agent self-finished at iteration: {iteration}")
+            return trajectory
+        # otherwise continue iteratively
+        trajectories.append(trajectory)
+        # reset the env
+        env.reset()
 
     # choose the trajectory with the lowest number of steps
     trajectory = min(trajectories, key=lambda x: x.num_steps)
@@ -340,7 +356,7 @@ def runagent_multiple(
                 condense_history=condense_history,
                 swesmith_wrapper=swesmith_wrapper,
                 max_reward_calc_time=max_reward_calc_time,
-                iterative_eval=iterative_eval,
+                max_iterations=max_iterations,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
