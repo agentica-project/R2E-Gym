@@ -285,7 +285,7 @@ class StrReplaceEditor:
         # and we have a Python file with more than 50 lines => default to concise
         if path.suffix == ".py" and not view_range and not concise:
             file_text_tmp = self.read_path(path)
-            if len(file_text_tmp.splitlines()) > 110:
+            if len(file_text_tmp.splitlines()) > 150:
                 concise = True
 
         # For a file
@@ -694,7 +694,7 @@ def main():
     parser.add_argument(
         "--python_only",
         type=bool,
-        default=True,
+        default=False,
         help="If True, attempts to limit view (for both dir and file level) to Python files only.",
     )
 
