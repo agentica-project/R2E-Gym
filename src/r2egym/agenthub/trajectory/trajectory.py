@@ -99,7 +99,15 @@ class Trajectory(BaseModel):
 
     @classmethod
     def load_from_model_dump_json(cls, json_string: str):
-        return Trajectory.model_validate_json(json_string)
+        traj = Trajectory.model_validate_json(json_string)
+        first_submit = next(
+            (step for step in traj.trajectory_steps if "submit" in step.action), None
+        )
+        if first_submit:
+            traj.trajectory_steps = traj.trajectory_steps[
+                : traj.trajectory_steps.index(first_submit)
+            ]
+        return traj
 
     @property
     def total_time_traj(self):

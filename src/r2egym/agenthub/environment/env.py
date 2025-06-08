@@ -26,13 +26,15 @@ class EnvArgs:
 
 
 class RepoEnv(gym.Env):
-    def __init__(self,
-                 args: EnvArgs,
-                 logger=None,
-                 backend: str = "docker",
-                 verbose: bool = True,
-                 step_timeout: int = 90,
-                 reward_timeout: int = 300):
+    def __init__(
+        self,
+        args: EnvArgs,
+        logger=None,
+        backend: str = "docker",
+        verbose: bool = True,
+        step_timeout: int = 90,
+        reward_timeout: int = 300,
+    ):
         # Get the logger
         if logger is None:
             self.logger = get_logger("RepoEnv")  # Pass the module name for clarity
@@ -41,8 +43,8 @@ class RepoEnv(gym.Env):
 
         if not verbose:
             self.logger.setLevel(logging.CRITICAL)  # Disable all possible logging
-            #logging.getLogger().setLevel(logging.CRITICAL)  # Disable root logger
-            #logging.disable(logging.CRITICAL)  # Disable all logging
+            # logging.getLogger().setLevel(logging.CRITICAL)  # Disable root logger
+            # logging.disable(logging.CRITICAL)  # Disable all logging
 
         self.runtime = DockerRuntime(
             ds=args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=backend
@@ -165,7 +167,9 @@ class RepoEnv(gym.Env):
         return bash_output, error_code, total_time
 
     def step(
-        self, action: Action, timeout: int = None,
+        self,
+        action: Action,
+        timeout: int = None,
     ) -> Tuple[Observation, int, bool, Dict[str, Any]]:
         """
         Executes an action (command) in the Docker container.
@@ -185,7 +189,10 @@ class RepoEnv(gym.Env):
         bash_output, error_code, total_time = self.run_action(action, timeout=timeout)
         self.observation = Observation(bash_output, error_code, action)
         reward = self.calculate_reward(self.observation)
-        if "finish" in action.function_name.lower():
+        if (
+            "finish" in action.function_name.lower()
+            or "submit" in action.function_name.lower()
+        ):
             self.done = True
         info = {"total_time": total_time}
         return self.observation, reward, self.done, info
@@ -211,7 +218,7 @@ class RepoEnv(gym.Env):
     def add_actions(self, actions: list[dict]) -> None:
         """add different tools from the agent here"""
         pass
-    
+
     def compute_reward(self, timeout: int = None) -> float:
         """
         Compute the reward for the current state.

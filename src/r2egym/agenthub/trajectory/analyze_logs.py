@@ -111,6 +111,19 @@ def analyze_log(
     print("Exit reasons:")
     print(pd.Series(exit_reasons).value_counts())
 
+    contains_r2e_tests = [
+        any(["r2e_tests" in s.action for s in t.trajectory_steps]) for t in trajectories
+    ]
+    print(f"Number of trajectories with r2e_tests: {sum(contains_r2e_tests)}")
+
+    contains_r2e_tests_success = [
+        any(["r2e_tests" in s.action for s in t.trajectory_steps]) and t.reward == 1
+        for t in trajectories
+    ]
+    print(
+        f"Number of successful trajectories with r2e_tests: {sum(contains_r2e_tests_success)}"
+    )
+
     # For trajectories with exit_reason as "traj_time_limit",
     # compute the total_time_traj from the last trajectory step,
     # and the sum of llm_exec_time and env_exec_time across all steps.
