@@ -73,8 +73,8 @@ class Agent:
         self.command_files = args.command_files
         self.other_args = args.other_args or {}
         self.logger.info(f"Initialized Agent: {name} with LLM: {args.llm_name}")
-        self.max_retries = self.other_args.get("max_retries", 3)
-        self.llm_timeout = self.other_args.get("timeout", 120)
+        self.max_retries = self.other_args.get("max_retries", 5)
+        self.llm_timeout = self.other_args.get("timeout", 3000)
 
     def prepare_system_message(
         self, problem_statement: str, structure: str, command_docs: str, demo: str
@@ -375,7 +375,7 @@ class Agent:
         max_token_limit: int = 65536,  # 64k tokens
         # time limits
         max_exec_time: int = 90,  # 5 mins per env execution
-        max_total_time: int = 7200,  # 20 minutes overall agent run limit
+        max_total_time: int = 50000,  # 20 minutes overall agent run limit
         max_llm_time: int = 7200,  # 2 mins per LLM timeout (note this is per query exlcuding retries | not enforcing hard limit since llm might hit rate limits etc)
         # temperature
         temperature=0,
