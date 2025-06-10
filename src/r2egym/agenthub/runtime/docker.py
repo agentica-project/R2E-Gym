@@ -967,18 +967,42 @@ class DockerRuntime(ExecutionEnvironment):
     
     def _calculate_reward_swesmith(self, get_test_output=False, timeout: int = 300) -> float:
         #self.reverse_patch(self.ds['patch'])
-        output, _ = self.run("/run_tests.sh", timeout=timeout)
+        output, error_msg = self.run("/run_tests.sh", timeout=timeout)
+        # if error_msg and "The command took too long to execute" in error_msg:
+            # return -1.0
         parse = self.parse_logs(output)
+        
+        fail2pass = [ ".".join(line.split("::")[1:]) for line in self.ds['FAIL_TO_PASS']]
+        pass2pass = [ ".".join(line.split("::")[1:]) for line in self.ds['PASS_TO_PASS']]
         # @(Naman, Jas): Parse the output and return the reward. This implementation is a hack rn.
         if not parse:
             return 0.0
-        # Everything should pass!
-        for k, v in parse.items():
-            if v == 'FAILED':
+        
+        # Check fail2pass
+        for test_name in fail2pass:
+            if test_name not in parse:
+                # Check if test_name is substring of any key
+                matching_key = next((k for k in parse.keys() if test_name in k), None)
+                if matching_key is None:
+                    return 0.0
+                if parse[matching_key] != 'PASSED':
+                    return 0.0
+                test_name = matching_key
+            if parse[test_name] != 'PASSED':
                 return 0.0
-            elif v == 'ERROR':
+        
+        # Check pass2pass
+        for test_name in pass2pass:
+            if test_name not in parse:
+                # Check if test_name is substring of any key
+                matching_key = next((k for k in parse.keys() if test_name in k), None)
+                if matching_key is None:
+                    return 0.0
+                test_name = matching_key
+            if parse[test_name] != 'PASSED':
                 return 0.0
         return 1.0
+
 
     def _calculate_reward_swebench(self, get_test_output=False, timeout: int = 300) -> float:
         # gt_test_patch = self.commit.get_patch(test_file=True,non_test_file=False)

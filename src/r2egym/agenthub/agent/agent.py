@@ -375,8 +375,8 @@ class Agent:
         max_token_limit: int = 65536,  # 64k tokens
         # time limits
         max_exec_time: int = 90,  # 5 mins per env execution
-        max_total_time: int = 1200,  # 20 minutes overall agent run limit
-        max_llm_time: int = 120,  # 2 mins per LLM timeout (note this is per query exlcuding retries | not enforcing hard limit since llm might hit rate limits etc)
+        max_total_time: int = 7200,  # 20 minutes overall agent run limit
+        max_llm_time: int = 7200,  # 2 mins per LLM timeout (note this is per query exlcuding retries | not enforcing hard limit since llm might hit rate limits etc)
         # temperature
         temperature=0,
         # additional metadata e.g. for hints / additional inputs etc

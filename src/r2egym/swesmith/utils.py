@@ -15,6 +15,7 @@ from r2egym.swesmith.constants import (
 )
 
 FAIL_TO_PASS = "FAIL_TO_PASS"
+PASS_TO_PASS = "PASS_TO_PASS"
 INSTANCE_REF = "instance_ref"
 
 def get_repo_name(repo, commit) -> str:
@@ -73,7 +74,12 @@ def get_test_command_mypy(instance: dict):
     repo, commit = get_repo_commit_from_image_name(instance[KEY_IMAGE_NAME])
     pattern = r"\[case ([^\]]+)\]"
     if FAIL_TO_PASS in instance:
-        test_keys = " or ".join([x.rsplit("::", 1)[-1] for x in instance[FAIL_TO_PASS]])
+        fail_to_pass_files = [x.rsplit("::", 1)[-1] for x in instance[FAIL_TO_PASS]]
+        if PASS_TO_PASS in instance:
+            pass_to_pass_files = [x.rsplit("::", 1)[-1] for x in instance[PASS_TO_PASS]]
+            test_keys = " or ".join(list(set(fail_to_pass_files + pass_to_pass_files)))
+        else:
+            test_keys = " or ".join(fail_to_pass_files)
     elif INSTANCE_REF in instance and "test_patch" in instance[INSTANCE_REF]:
         test_keys = " or ".join(
             re.findall(pattern, instance[INSTANCE_REF]["test_patch"])
@@ -97,8 +103,12 @@ def get_test_command(instance: dict):
         if repo in MAP_REPO_TO_TEST_CMD:
             return MAP_REPO_TO_TEST_CMD[repo](instance), []
         f2p_files = list(set([x.split("::", 1)[0] for x in instance[FAIL_TO_PASS]]))
-        test_command += f" {' '.join(f2p_files)}"
-        return test_command, f2p_files
+        p2p_files = []
+        if PASS_TO_PASS in instance:
+            p2p_files = list(set([x.split("::", 1)[0] for x in instance[PASS_TO_PASS]]))
+        all_files = list(set(f2p_files + p2p_files))
+        test_command += f" {' '.join(all_files)}"
+        return test_command, all_files
 
     if KEY_MIN_TESTING not in specs or KEY_PATCH not in instance:
         # If min testing is not enabled or there's no patch
