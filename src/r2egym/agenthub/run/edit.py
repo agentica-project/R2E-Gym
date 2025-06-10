@@ -142,6 +142,7 @@ def runagent(
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
     thinking_mode: bool = False,
+    version: str = "v2",
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -162,6 +163,7 @@ def runagent(
     logger.info(f"Using LLM: {llm_name}")
     logger.info(f"Max Steps: {max_steps}")
 
+    assert version in ["v1", "v2"], "Version must be either v1 or v2"
     # Generate a unique experiment name if not provided
     if exp_name is None:
         exp_name = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -173,31 +175,34 @@ def runagent(
     env = RepoEnv(env_args, logger=logger, backend=backend)
     # set agent args
     if use_fn_calling:
-        agent_args = AgentArgs.from_yaml(
-            Path("./src/r2egym/agenthub/config/edit_fn_calling.yaml")
-        )
-        if thinking_mode:
+        if version == "v1":
             agent_args = AgentArgs.from_yaml(
-                Path("./src/r2egym/agenthub/config/edit_fn_calling_v2.yaml")
+                Path("./src/r2egym/agenthub/config/v1/edit_fn_calling.yaml")
+            )
+        elif version == "v2":
+            assert thinking_mode, "Thinking_mode must be True for v2 function calling."
+            agent_args = AgentArgs.from_yaml(
+                Path("./src/r2egym/agenthub/config/v2/edit_fn_calling_v2.yaml")
             )
     else:
-        # agent_args = AgentArgs.from_yaml(
-        #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
-        # )
         if swesmith_wrapper:
-            # agent_args = AgentArgs.from_yaml(
-            #     Path("./src/r2egym/agenthub/config/edit_swesmith.yaml")
-            # )
-            agent_args = AgentArgs.from_yaml(
-                Path("./src/r2egym/agenthub/config/edit_openhands-v2.yaml")
-            )
+            if version == "v1":                
+                agent_args = AgentArgs.from_yaml(
+                    Path("./src/r2egym/agenthub/config/v1/edit_swesmith.yaml")
+                )
+            elif version == "v2":
+                agent_args = AgentArgs.from_yaml(
+                    Path("./src/r2egym/agenthub/config/v2/edit_openhands-v2.yaml")
+                )
         else:
-            # agent_args = AgentArgs.from_yaml(
-            #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
-            # )
-            agent_args = AgentArgs.from_yaml(
-                Path("./src/r2egym/agenthub/config/edit_openhands-v2.yaml")
-            )
+            if version == "v1":
+                agent_args = AgentArgs.from_yaml(
+                    Path("./src/r2egym/agenthub/config/v1/edit_non_fn_calling.yaml")
+                )
+            elif version == "v2":
+                agent_args = AgentArgs.from_yaml(
+                    Path("./src/r2egym/agenthub/config/v2/edit_openhands-v2.yaml")
+                )
     agent_args.llm_name = llm_name
 
     # Initialize the agent
