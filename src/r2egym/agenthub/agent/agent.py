@@ -19,8 +19,10 @@ from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
 from anthropic import Anthropic, AnthropicVertex  # Add Anthropic Vertex import
 from r2egym.agenthub.tools import (
-    # search_tool,
-    str_replace_editor,
+    search_tool,
+    file_editor,
+    finish_tool,
+    str_replace_editor_tool,
     execute_bash_tool,
     submit_tool,
 )
@@ -216,13 +218,16 @@ class Agent:
         tools = None
 
         if self.use_fn_calling:
-            tools = [str_replace_editor, execute_bash_tool, submit_tool]
+            if self.version == "v1":
+                tools = [search_tool, file_editor, execute_bash_tool, finish_tool]
+            elif self.version == "v2":
+                tools = [str_replace_editor_tool, execute_bash_tool, submit_tool]
+
             if thinking_mode:
                 # anthropic tools references to the function parts of the main tools
                 anthropic_tools = [x["function"] for x in tools]
                 anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
             else:
-                tools = [str_replace_editor, execute_bash_tool, submit_tool]
                 if "vertex" not in self.llm_name.lower():
                     self.logger.warning(f"using prompt caching for {self.llm_name}")
                     # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
@@ -449,8 +454,10 @@ class Agent:
         condense_history: bool = True,
         swesmith_wrapper: bool = False,
         thinking_mode: bool = False,
+        version: str = "v2",
     ):
-
+        assert version in ["v1", "v2"], "Version must be either v1 or v2"
+        self.version = version
         # get the start time
         start_time = time.time()
         self.llm_timeout = max_llm_time

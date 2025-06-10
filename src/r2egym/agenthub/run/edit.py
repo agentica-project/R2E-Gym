@@ -69,6 +69,7 @@ def run_agent_with_restarts(
     swesmith_wrapper: bool = False,
     max_iterations: int = 1,
     thinking_mode: bool = False,
+    version: str = "v2",
 ):
     """
     Iterative eval protocol:
@@ -111,6 +112,7 @@ def run_agent_with_restarts(
                 condense_history=condense_history,
                 swesmith_wrapper=swesmith_wrapper,
                 thinking_mode=thinking_mode,
+                version=version,
             )
             # remove reproduce.py
             # env.runtime.run('rm reproduce_issue.py')
@@ -222,6 +224,7 @@ def runagent(
             swesmith_wrapper=swesmith_wrapper,
             max_iterations=max_iterations,
             thinking_mode=thinking_mode,
+            version=version,
         )
     except Exception as e:
         logger.error(
@@ -272,6 +275,7 @@ def runagent_multiple(
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
     thinking_mode: bool = False,
+    version: str = "v2",
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -372,6 +376,7 @@ def runagent_multiple(
                 max_reward_calc_time=max_reward_calc_time,
                 max_iterations=max_iterations,
                 thinking_mode=thinking_mode,
+                version=version,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
