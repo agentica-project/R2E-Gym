@@ -166,15 +166,15 @@ class Action:
             action.parameters = {'command': 'submit'}
         elif action.function_name == 'bash':
             action.function_name = 'execute_bash'
-            action.parameters = {'cmd': action.parameters['command']}
+            #action.parameters = {'cmd': action.parameters['command']}
         elif action.function_name == 'str_replace_editor':
             action.function_name = 'file_editor'
             # Parameters are compatible between str_replace_editor and file_editor
             # No parameter mapping needed
         elif action.function_name in ['finish', 'execute_bash', 'file_editor']:
-          if action.function_name == 'execute_bash' and 'command' in action.parameters:
-            action.parameters['cmd'] = action.parameters['command']
-            del action.parameters['command']
+          if action.function_name == 'execute_bash' and 'cmd' in action.parameters:
+            action.parameters['command'] = action.parameters['cmd']
+            del action.parameters['cmd']
 
         return action
 
@@ -201,15 +201,15 @@ class Action:
             action.parameters = {'command': 'submit'}
         elif action.function_name == 'bash':
             action.function_name = 'execute_bash'
-            action.parameters = {'cmd': action.parameters['command']}
+            #action.parameters = {'cmd': action.parameters['command']}
         elif action.function_name == 'str_replace_editor':
             action.function_name = 'file_editor'
             # Parameters are compatible between str_replace_editor and file_editor
             # No parameter mapping needed
         elif action.function_name in ['finish', 'execute_bash', 'file_editor']:
-          if action.function_name == 'execute_bash' and 'command' in action.parameters:
-            action.parameters['cmd'] = action.parameters['command']
-            del action.parameters['command']
+          if action.function_name == 'execute_bash' and 'cmd' in action.parameters:
+            action.parameters['command'] = action.parameters['cmd']
+            del action.parameters['cmd']
         return action, original_xml_str
 
 
@@ -220,7 +220,7 @@ if __name__ == "__main__":
     xml_1 = """
     <function=file_editor>
       <parameter=command>view</parameter>
-      <parameter=path>./sympy/tensor/array/de[[pnse_ndim_array.py</parameter>
+      <parameter=path>./sympy/tensor/array/dense_ndim_array.py</parameter>
       <parameter=concise>True</parameter>
     </function>
     """
