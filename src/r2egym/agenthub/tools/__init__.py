@@ -143,3 +143,9 @@ submit_tool = {
         },
     },
 }
+
+# Anthropic tool definitions (references to the function parts of the main tools)
+anthropic_str_replace_editor = str_replace_editor_tool["function"]
+anthropic_execute_bash = execute_bash_tool["function"]
+anthropic_search = search_tool["function"]
+anthropic_submit = submit_tool["function"]

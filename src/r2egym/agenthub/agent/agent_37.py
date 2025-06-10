@@ -11,25 +11,30 @@ from pydantic import BaseModel
 
 import litellm
 from openai import OpenAI
+from anthropic import Anthropic, AnthropicVertex  # Add Anthropic Vertex import
 
 from r2egym.agenthub.action import Action
 from r2egym.agenthub.utils.log import get_logger
 from r2egym.agenthub.environment.env import RepoEnv
 from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
-from anthropic import Anthropic, AnthropicVertex  # Add Anthropic Vertex import
 from r2egym.agenthub.tools import (
-    # search_tool,
-    str_replace_editor,
+    search_tool,
+    str_replace_editor_tool,
     execute_bash_tool,
     submit_tool,
+    anthropic_str_replace_editor,
+    anthropic_execute_bash,
+    anthropic_search,
+    anthropic_submit,
 )
-import traceback
+
 logger = get_logger(__name__)  # Logger for this module
 
 # Anthropic Vertex configuration
 ANTHROPIC_PROJECT_ID = "r2eg-441800"  # Your GCP project ID
 ANTHROPIC_REGION = "us-east5"  # Region where the model is running
+
 
 ##############################################################################
 # AgentArgs Dataclass
@@ -42,7 +47,6 @@ class AgentArgs:
     llm_name: str
     llm_base_url: Optional[str] = "http://localhost:8000/v1"  # None
     demo_file: Optional[Path] = None
-    use_demo: Optional[bool] = False
     other_args: Optional[Dict[str, Any]] = None  # To handle extra configurations
 
     @classmethod
@@ -78,15 +82,16 @@ class Agent:
         self.command_files = args.command_files
         self.other_args = args.other_args or {}
         self.logger.info(f"Initialized Agent: {name} with LLM: {args.llm_name}")
-        self.max_retries = self.other_args.get("max_retries", 3)
+        self.max_retries = self.other_args.get("max_retries", 5)
         self.llm_timeout = self.other_args.get("timeout", 120)
 
-        # initialize anthropic client for thinking mode
+        # self.anthropic_client = AnthropicVertex(
+        #     project_id=ANTHROPIC_PROJECT_ID, region=ANTHROPIC_REGION
+        # )
         self.anthropic_client = Anthropic(
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            api_key="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",
         )
         self.logger.info(f"Initialized Anthropic Vertex client for {self.llm_name}")
-
 
     def prepare_system_message(
         self, problem_statement: str, structure: str, command_docs: str, demo: str
@@ -145,13 +150,13 @@ class Agent:
         self.trajectory_steps = []
         self.history = []
 
-    def condense_history(self, messages: List[Dict[str, str]], max_tokens: int = 32768) -> List[Dict[str, str]]:
+    def condense_history(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """
         Condense older user messages if total token usage exceeds a threshold.
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = max_tokens #65536 # 32768
+        MAX_TOKENS = 105000
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -159,23 +164,11 @@ class Agent:
         total_tokens = self._count_tokens(messages_)
         self.logger.warning(
             f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )     
+        )
         if total_tokens <= MAX_TOKENS:
-            logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
-        else:
-            # NOTE: no condensing is done here
-            raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
-               
-        # # 1) simple pass: keep only last 5 user observations (after the first)
-        # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
-        # for idx in user_idxs[:-5]:
-        #     messages_[idx]["content"] = "<Observation condensed for saving context>"        
-        # if total_tokens <= MAX_TOKENS:
-        #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
-        #     return messages_
 
-        # 2) Identify user messages (role='user'), skipping the very first user message
+        # Identify user messages (role='user'), skipping the very first user message
         user_msg_indexes = [
             i for i, msg in enumerate(messages_) if msg["role"] == "user"
         ]
@@ -194,8 +187,62 @@ class Agent:
                 break
 
         self.logger.warning(
-            f"Condensed history (both) to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
+            f"Condensed history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
         )
+
+        return messages_
+
+    def condense_history_old(
+        self, messages: List[Dict[str, str]]
+    ) -> List[Dict[str, str]]:
+        """
+        Condense older user messages if total token usage exceeds a threshold,
+        but do so by targeting the longest user messages first.
+        Skips the very first and very last user messages.
+        """
+        MAX_TOKENS = 28000
+        messages_ = copy.deepcopy(messages)
+
+        total_tokens = self._count_tokens(messages_)
+        self.logger.warning(
+            f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
+        )
+        if total_tokens <= MAX_TOKENS:
+            return messages_
+
+        # Identify user messages (role='user')
+        user_msg_indexes = [
+            i for i, msg in enumerate(messages_) if msg["role"] == "user"
+        ]
+
+        # If there's only 0 or 1 user messages, or effectively no middle messages to condense, do nothing
+        if len(user_msg_indexes) <= 1:
+            return messages_
+
+        # Indices of user messages to consider condensing (skip first and last user message)
+        to_condense = user_msg_indexes[1:-1]
+        if not to_condense:
+            return messages_
+
+        # Sort those middle user messages by descending length (longest first)
+        to_condense_sorted = sorted(
+            to_condense,
+            key=lambda idx: self._count_tokens([messages_[idx]]),
+            reverse=True,
+        )
+
+        # Condense from the longest to shortest until we are below the token limit
+        for idx in to_condense_sorted:
+            messages_[idx]["content"] = "<Observation condensed for saving context>"
+
+            total_tokens = self._count_tokens(messages_)
+            if total_tokens <= MAX_TOKENS:
+                break
+
+        self.logger.warning(
+            f"Condensed history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
+        )
+
         return messages_
 
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
@@ -208,7 +255,10 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True, max_tokens: int = 32768, thinking_mode: bool = False,
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0,
+        condense_history: bool = True,
     ) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None
@@ -216,27 +266,37 @@ class Agent:
         tools = None
 
         if self.use_fn_calling:
-            tools = [str_replace_editor, execute_bash_tool, submit_tool]
-            if thinking_mode:
-                # anthropic tools references to the function parts of the main tools
-                anthropic_tools = [x["function"] for x in tools]
-                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
-            else:
-                tools = [str_replace_editor, execute_bash_tool, submit_tool]
-                if "vertex" not in self.llm_name.lower():
-                    self.logger.warning(f"using prompt caching for {self.llm_name}")
-                    # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
-                    # litellm might need dev install with vertex: https://github.com/BerriAI/litellm/issues/6898
-                    # add prompt caching for anthropic
-                    tools[-1]["function"]["cache_control"] = {"type": "ephemeral"}
-                    breakpoints_remaining = 3  # remaining 1 for system/tool (above)
-                    for message in reversed(messages):
-                        if message["role"] in ("user", "tool"):
-                            if breakpoints_remaining > 0:
-                                message["cache_control"] = {"type": "ephemeral"}
-                                breakpoints_remaining -= 1
-                            else:
-                                break
+            # Define tools in OpenAI format
+            openai_tools = [
+                search_tool,
+                str_replace_editor_tool,
+                execute_bash_tool,
+                submit_tool,
+            ]
+            anthropic_tools = [
+                anthropic_str_replace_editor,
+                anthropic_execute_bash,
+                # anthropic_search,
+                anthropic_submit,
+            ]
+
+            anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
+
+            # # Add cache_control to tools for Vertex
+            # for tool in anthropic_tools:
+            #     tool["cache_control"] = {"type": "ephemeral"}
+
+            # self.logger.warning(f"Using Anthropic Vertex with context caching for {self.llm_name}")
+
+            # Add cache_control to messages
+            # breakpoints_remaining = 3
+            # for message in reversed(messages):
+            #     if message["role"] in ("user", "tool"):
+            #         if breakpoints_remaining > 0:
+            #             message["cache_control"] = {"type": "ephemeral"}
+            #             breakpoints_remaining -= 1
+            #         else:
+            #             break
 
         # Start timer
         start_time = time.time()
@@ -247,76 +307,77 @@ class Agent:
 
         if not self.use_fn_calling and condense_history:
             # condense messages after first user message
-            messages_ = self.condense_history(messages, max_tokens=max_tokens)
+            messages_ = self.condense_history(messages)
         else:
             messages_ = copy.deepcopy(messages)
 
         # query the model with retries
         while retries < self.max_retries:
             try:
-                if self.use_fn_calling and thinking_mode:
-                    # Check if using Anthropic Vertex
-                    # if self.anthropic_client and "vertex" in self.llm_name.lower() and "claude" in self.llm_name.lower():
-                    self.logger.warning(
-                        f"Using direct Anthropic Vertex client for {self.llm_name}"
-                    )
-                    model_name = (
-                        self.llm_name.split("vertex-")[-1]
-                        if "vertex-" in self.llm_name
-                        else self.llm_name
-                    )
+                # Check if using Anthropic Vertex
+                # if self.anthropic_client and "vertex" in self.llm_name.lower() and "claude" in self.llm_name.lower():
+                self.logger.warning(
+                    f"Using direct Anthropic Vertex client for {self.llm_name}"
+                )
+                model_name = (
+                    self.llm_name.split("vertex-")[-1]
+                    if "vertex-" in self.llm_name
+                    else self.llm_name
+                )
 
-                    # Extra headers for Anthropic features
-                    extra_headers = {"anthropic-beta": "interleaved-thinking-2025-05-14"}
+                # Extra headers for Anthropic features
+                extra_headers = {"anthropic-beta": "interleaved-thinking-2025-05-14"}
 
-                    # Add thinking capability if needed
-                    thinking_config = {
-                        "type": "enabled",
-                        "budget_tokens": 10000,
-                    }
+                # Add thinking capability if needed
+                thinking_config = {
+                    "type": "enabled",
+                    "budget_tokens": 10000,
+                }
 
-                    system_message = messages_[0]["content"]
-                    messages__ = messages_[1:]
-                    if len(messages__) > 1:
-                        if "content" not in messages__[-2]:
-                            print(messages__[-2])
-                        else:
-                            print(messages__[-2]["content"])
-                            messages__[-2]["content"][-1].cache_control = {
-                                "type": "ephemeral"
-                            }
-                    response = self.anthropic_client.messages.create(
-                        model=model_name,
-                        max_tokens=16000,
-                        thinking=thinking_config,
-                        tools=anthropic_tools,
-                        # extra_headers=extra_headers,
-                        system=system_message,
-                        messages=messages__,
-                        # temperature=temperature,
-                    )
-                    # print(response.usage.cache_read_input_tokens)
-                    self.logger.warning(f"Anthropic Vertex query complete")
-                else:
-                    kwargs = {
-                        "tool_choice": "none",
-                        "function_call": None,
-                    }
-                    if tools:
-                        kwargs = {}
-                    if "o3" not in self.llm_name and "o4" not in self.llm_name:
-                        kwargs["temperature"] = temperature
-                    response = litellm.completion(
-                        model=self.llm_name,
-                        tools=tools,
-                        messages=messages_,
-                        timeout=self.llm_timeout,
-                        api_base=self.llm_base_url,
-                        # max_tokens=3000,
-                        **kwargs,
-                    )
-                    self.logger.warning(f"Querying LLM complete")
-                    break
+                system_message = messages_[0]["content"]
+                messages__ = messages_[1:]
+                if len(messages__) > 1:
+                    if "content" not in messages__[-2]:
+                        print(messages__[-2])
+                    else:
+                        print(messages__[-2]["content"])
+                        messages__[-2]["content"][-1].cache_control = {
+                            "type": "ephemeral"
+                        }
+
+                response = self.anthropic_client.messages.create(
+                    model=model_name,
+                    max_tokens=16000,
+                    thinking=thinking_config,
+                    tools=anthropic_tools,
+                    # extra_headers=extra_headers,
+                    system=system_message,
+                    messages=messages__,
+                    # temperature=temperature,
+                )
+                # print(response.usage.cache_read_input_tokens)
+                self.logger.warning(f"Anthropic Vertex query complete")
+                # else:
+                #     # Use litellm for other models
+                #     kwargs = {
+                #         "tool_choice": "none",
+                #         "function_call": None,
+                #     }
+                #     if tools:
+                #         kwargs = {}
+                #     if "o3" not in self.llm_name and "o4" not in self.llm_name:
+                #         kwargs["temperature"] = temperature
+                #     response = litellm.completion(
+                #         model=self.llm_name,
+                #         tools=tools,
+                #         messages=messages_,
+                #         timeout=self.llm_timeout,
+                #         api_base=self.llm_base_url,
+                #         # max_tokens=3000,
+                #         **kwargs,
+                #     )
+                #     self.logger.warning(f"Querying LLM complete")
+                break
             except Exception as e:
                 self.logger.error(f"LLM query failed @ {retries}: {e}")
                 retries += 1
@@ -354,11 +415,9 @@ class Agent:
 
         # convert action to Action object
         action = Action.from_string(action)
-        # action, original_xml_str = Action.from_swesmith_xml_string(action)
 
         return thought, action
 
-    # new custom parser for fn calling from anthropic_37 branch
     def custom_parser(self, response):
         thought = ""
         action = Action(function_name="", parameters={})
@@ -411,21 +470,6 @@ class Agent:
             except Exception as e:
                 self.logger.error(f"Error parsing tool call in custom_parser: {e}")
                 action = Action(function_name="", parameters={})
-        return thought, action
-
-    def custom_parser_old(self, response):
-        thought = response.choices[0].message.content
-        if not thought:
-            thought = ""
-
-        try:
-            function_name = response.choices[0].message.tool_calls[0].function.name
-            parameters = json.loads(
-                response.choices[0].message.tool_calls[0].function.arguments
-            )
-            action = Action(function_name, parameters)
-        except:
-            action = Action(function_name="", parameters={})
 
         return thought, action
 
@@ -437,18 +481,16 @@ class Agent:
         max_steps: int = 10,
         max_steps_absolute: int = 50,
         # token limits
-        max_token_limit: int = 65536,  # 64k tokens
+        max_token_limit: int = 32768,  # 32k tokens
         # time limits
         max_exec_time: int = 90,  # 5 mins per env execution
-        max_total_time: int = 5000,  # 20 minutes overall agent run limit
-        max_llm_time: int = 300,  # 2 mins per LLM timeout (note this is per query exlcuding retries | not enforcing hard limit since llm might hit rate limits etc)
+        max_total_time: int = 1200,  # 20 minutes overall agent run limit
+        max_llm_time: int = 120,  # 2 mins per LLM timeout (note this is per query exlcuding retries | not enforcing hard limit since llm might hit rate limits etc)
         # temperature
         temperature=0,
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
         condense_history: bool = True,
-        swesmith_wrapper: bool = False,
-        thinking_mode: bool = False,
     ):
 
         # get the start time
@@ -484,8 +526,6 @@ class Agent:
         user_prompt = self.instance_prompt_template.format(
             problem_statement=problem_statement,
             gt_patch=gt_patch,
-            working_dir='/testbed',
-            base_commit=env.runtime.ds['base_commit'],
             test_patch_hint=metadata.get("test_patch_hint", ""),
             candidate_patch=metadata.get("candidate_patch", ""),
             candidate_patch_correctness=(
@@ -495,12 +535,6 @@ class Agent:
             ),
         )
         self.logger.info(f"User Prompt: {user_prompt}")
-
-        if self.args.use_demo:
-            with open(self.args.demo_file, "r") as file:
-                demo = file.read()
-            user_prompt = f"{demo}\n\n{user_prompt}"
-        self.logger.info(f"User Prompt with demo: {user_prompt}")
 
         # initialize the history
         self.history = [
@@ -523,22 +557,25 @@ class Agent:
             steps_remaining = max_steps - step_count
             if steps_remaining > 0:
                 # stepcount_message = f"Steps Remaining: {steps_remaining} Total Steps: {max_steps}"
-                # stepcount_message = f"Steps Remaining: {steps_remaining}"
-                stepcount_message = "" # no step count message | only for after reaching max steps
+                stepcount_message = f"Steps Remaining: {steps_remaining}"
             else:
                 stepcount_message = "You have reached the maximum number of steps. Please submit your answer NOW."
-            self.history[-1][
-                "content"
-            ] += f"\n{stepcount_message}"  # postpend stepcount message
-            self.logger.info(stepcount_message)
+            # self.history[-1][
+            #     "content"
+            # ] += f"\n{stepcount_message}"  # postpend stepcount message
+            # self.logger.info(stepcount_message)
 
             # Query the LLM
             messages = copy.deepcopy(self.history)
             try:
-                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history, max_tokens=max_token_limit, thinking_mode=thinking_mode)
+                response, llm_exec_time = self.model_query(
+                    messages, temperature, condense_history=condense_history
+                )
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
-                self.logger.error(f"Error querying LLM: {traceback.format_exc()}")
+                import traceback
+
+                traceback.print_exc()
                 done = True
                 exit_reason = "llm_query_error"
                 break
@@ -560,7 +597,7 @@ class Agent:
                 prompt_tokens = -1
                 total_tokens = -1
                 if not condense_history:
-                    total_tokens =  self._count_tokens(messages)
+                    total_tokens = self._count_tokens(messages)
                 self.logger.warning(
                     "No token usage information available in the response."
                 )
@@ -573,11 +610,7 @@ class Agent:
             else:
                 assistant_message = response.choices[0].message.content
                 self.logger.info(f"Assistant's message:\n{assistant_message}\n")
-                thought, action_original = self.parse_response(assistant_message)
-                if swesmith_wrapper:
-                    action = action_original.from_swesmith_action()
-                else:
-                    action = action_original
+                thought, action = self.parse_response(assistant_message)
 
             action_str = action.to_xml_string()
             self.logger.info(f"THOUGHT:\n{thought}\n")
@@ -596,100 +629,109 @@ class Agent:
             total_time_traj += total_step_time
             step_count += 1  # Increment the step count
 
+            # Update history with assistant and tool responses
             if self.use_fn_calling:
-                # special case for thinking mode anthropic
-                if thinking_mode:
-                    assert "claude" in self.llm_name.lower(), "thinking mode is only supported for anthropic models"
-                    thinking_blocks = [
-                        block for block in response.content if block.type == "thinking"
-                    ]
-                    text_blocks = [
-                        block for block in response.content if block.type == "text"
-                    ]
-                    tool_use_blocks = [
-                        block for block in response.content if block.type == "tool_use"
-                    ][:1]
+                # if "vertex" in self.llm_name.lower() and self.anthropic_client:
+                # Add assistant message to history
+                ## TODO
 
-                    # Add assistant message to history with text content
-                    self.history.append(
-                        {
-                            "role": "assistant",
-                            # "content": thinking_blocks + text_blocks + tool_use_blocks,
-                            "content": text_blocks + tool_use_blocks,
-                        }
-                    )
-                    # self.logger.warning(
-                    #     f"Added assistant message to history with content length: {len(text_content)}"
-                    # )
-                    # Add tool response to history if tool was used
-                    if tool_use_blocks:
-                        tool_block = tool_use_blocks[0]
-                        try:
-                            self.history.append(
-                                {
-                                    "role": "user",
-                                    "content": [
-                                        {
-                                            "type": "tool_result",
-                                            "tool_use_id": tool_block.id,
-                                            "content": str(obs),
-                                            # "tool_result": str(obs),
-                                            # "name": tool_block.name,
-                                            # "tool_call_id": tool_block.id
-                                        },
-                                        {
-                                            "type": "text",
-                                            "text": f"The tool call was successful. The tool output is provided above.",
-                                            # "text": f"Previous step thoughts saved in context:\n\n{thought.split('<think>')[1].split('</think>')[0]}",
-                                        },
-                                    ],
-                                }
-                            )
-                            self.logger.warning(
-                                f"Added tool response to history for tool: {tool_block.name}"
-                            )
-                        except Exception as e:
-                            self.logger.error(f"Error adding tool response to history: {e}")
-                            self.logger.warning("Falling back to user message")
-                            self.history.append({"role": "user", "content": str(obs)})
-                    else:
-                        self.logger.warning(
-                            "No tool use blocks found, adding observation as user message"
-                        )
-                        self.history.append({"role": "user", "content": str(obs)})
-                else: # NOTE: normal case for non-thinking mode
-                    assistant_response = response.choices[0].message.dict()
-                    if assistant_response.get("tool_calls", None):
-                        assistant_response["tool_calls"] = assistant_response["tool_calls"][
-                            :1
-                        ]  # only keep the first tool call
-                    self.history.append(assistant_response)
-                    # add tool response / user response to history
+                # get thinking blocks
+                # get text blocks
+                # get first tool use block
+                # add to history
+
+                thinking_blocks = [
+                    block for block in response.content if block.type == "thinking"
+                ]
+                text_blocks = [
+                    block for block in response.content if block.type == "text"
+                ]
+                tool_use_blocks = [
+                    block for block in response.content if block.type == "tool_use"
+                ][:1]
+
+                # Add assistant message to history with text content
+                self.history.append(
+                    {
+                        "role": "assistant",
+                        # "content": thinking_blocks + text_blocks + tool_use_blocks,
+                        "content": text_blocks + tool_use_blocks,
+                    }
+                )
+
+                # self.logger.warning(
+                #     f"Added assistant message to history with content length: {len(text_content)}"
+                # )
+
+                # Add tool response to history if tool was used
+                if tool_use_blocks:
+                    tool_block = tool_use_blocks[0]
                     try:
-                        function_name = (
-                            response.choices[0].message.tool_calls[0].function.name
-                        )
-                        function_id = response.choices[0].message.tool_calls[0].id
                         self.history.append(
                             {
-                                "role": "tool",
-                                "content": str(obs),
-                                "name": function_name,
-                                "tool_call_id": function_id,
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": tool_block.id,
+                                        "content": str(obs),
+                                        # "tool_result": str(obs),
+                                        # "name": tool_block.name,
+                                        # "tool_call_id": tool_block.id
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": f"The tool call was successful. The tool output is provided above.",
+                                        # "text": f"Previous step thoughts saved in context:\n\n{thought.split('<think>')[1].split('</think>')[0]}",
+                                    },
+                                ],
                             }
                         )
-                        self.logger.warning("logging fn response as a tool call")
                         self.logger.warning(
-                            f"number of fn calls: {len(response.choices[0].message.tool_calls)}"
+                            f"Added tool response to history for tool: {tool_block.name}"
                         )
                     except Exception as e:
-                        self.logger.error(f"Error logging tool response: {e}")
-                        self.logger.warning("fallback: logging fn response as a tool call")
+                        self.logger.error(f"Error adding tool response to history: {e}")
+                        self.logger.warning("Falling back to user message")
                         self.history.append({"role": "user", "content": str(obs)})
+                else:
+                    self.logger.warning(
+                        "No tool use blocks found, adding observation as user message"
+                    )
+                    self.history.append({"role": "user", "content": str(obs)})
+                # else:
+                #     # Handle OpenAI-style response
+                #     assistant_response = response.choices[0].message.dict()
+                #     if assistant_response.get("tool_calls", None):
+                #         assistant_response["tool_calls"] = assistant_response["tool_calls"][
+                #             :1
+                #         ]  # only keep the first tool call
+                #     self.history.append(assistant_response)
+                #     # add tool response / user response to history
+                #     try:
+                #         function_name = (
+                #             response.choices[0].message.tool_calls[0].function.name
+                #         )
+                #         function_id = response.choices[0].message.tool_calls[0].id
+                #         self.history.append(
+                #             {
+                #                 "role": "tool",
+                #                 "content": str(obs),
+                #                 "name": function_name,
+                #                 "tool_call_id": function_id,
+                #             }
+                #         )
+                #         self.logger.warning("logging fn response as a tool call")
+                #         self.logger.warning(
+                #             f"number of fn calls: {len(response.choices[0].message.tool_calls)}"
+                #         )
+                #     except Exception as e:
+                #         self.logger.error(f"Error logging tool response: {e}")
+                #         self.logger.warning("fallback: logging fn response as a tool call")
+                #         self.history.append({"role": "user", "content": str(obs)})
             else:
                 self.logger.warning("logging fn response as a user message")
-                assistant_message = f"{thought}\n\n{action_original.to_xml_string()}"
-                # assistant_message = f"{thought}\n\n{original_xml_str}"
+                assistant_message = f"{thought}\n\n{action.to_xml_string()}"
                 self.history.append({"role": "assistant", "content": assistant_message})
                 self.history.append({"role": "user", "content": str(obs)})
 
@@ -756,6 +798,7 @@ class Agent:
                 step_count=step_count,
             )
             self.trajectory_steps.append(trajectory_step)
+            # time.sleep(15)  # Sleep for 60 seconds after each step
 
         # get the output patch
         # output_patch, _ = env.runtime.run(f"git diff {initial_commit} HEAD")

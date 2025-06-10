@@ -68,6 +68,7 @@ def run_agent_with_restarts(
     condense_history: bool = True,
     swesmith_wrapper: bool = False,
     max_iterations: int = 1,
+    thinking_mode: bool = False,
 ):
     """
     Iterative eval protocol:
@@ -109,6 +110,7 @@ def run_agent_with_restarts(
                 use_fn_calling=use_fn_calling,
                 condense_history=condense_history,
                 swesmith_wrapper=swesmith_wrapper,
+                thinking_mode=thinking_mode,
             )
             # remove reproduce.py
             # env.runtime.run('rm reproduce_issue.py')
@@ -139,6 +141,7 @@ def runagent(
     swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
+    thinking_mode: bool = False,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -173,6 +176,10 @@ def runagent(
         agent_args = AgentArgs.from_yaml(
             Path("./src/r2egym/agenthub/config/edit_fn_calling.yaml")
         )
+        if thinking_mode:
+            agent_args = AgentArgs.from_yaml(
+                Path("./src/r2egym/agenthub/config/edit_fn_calling_v2.yaml")
+            )
     else:
         # agent_args = AgentArgs.from_yaml(
         #     Path("./src/r2egym/agenthub/config/edit_non_fn_calling.yaml")
@@ -209,6 +216,7 @@ def runagent(
             condense_history=condense_history,
             swesmith_wrapper=swesmith_wrapper,
             max_iterations=max_iterations,
+            thinking_mode=thinking_mode,
         )
     except Exception as e:
         logger.error(
@@ -258,6 +266,7 @@ def runagent_multiple(
     swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
+    thinking_mode: bool = False,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -357,6 +366,7 @@ def runagent_multiple(
                 swesmith_wrapper=swesmith_wrapper,
                 max_reward_calc_time=max_reward_calc_time,
                 max_iterations=max_iterations,
+                thinking_mode=thinking_mode,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
