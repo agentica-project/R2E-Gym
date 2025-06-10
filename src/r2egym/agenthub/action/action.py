@@ -1,3 +1,4 @@
+from copy import deepcopy
 import re
 from typing import Dict
 import shlex
@@ -170,6 +171,11 @@ class Action:
             action.function_name = 'file_editor'
             # Parameters are compatible between str_replace_editor and file_editor
             # No parameter mapping needed
+        elif action.function_name in ['finish', 'execute_bash', 'file_editor']:
+          if action.function_name == 'execute_bash' and 'command' in action.parameters:
+            action.parameters['cmd'] = action.parameters['command']
+            del action.parameters['command']
+
         return action
 
 
@@ -200,6 +206,10 @@ class Action:
             action.function_name = 'file_editor'
             # Parameters are compatible between str_replace_editor and file_editor
             # No parameter mapping needed
+        elif action.function_name in ['finish', 'execute_bash', 'file_editor']:
+          if action.function_name == 'execute_bash' and 'command' in action.parameters:
+            action.parameters['cmd'] = action.parameters['command']
+            del action.parameters['command']
         return action, original_xml_str
 
 

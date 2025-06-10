@@ -10,7 +10,7 @@ import argparse
 import subprocess
 import sys
 
-BLOCKED_BASH_COMMANDS = ["ipython", "jupyter", "pip", "nohup"]
+BLOCKED_BASH_COMMANDS = ["ipython", "jupyter", "nohup"]
 
 
 def run_command(cmd):
