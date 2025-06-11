@@ -144,7 +144,7 @@ def runagent(
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
     thinking_mode: bool = False,
-    version: str = "v2",
+    version: str = "v1",
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -275,7 +275,7 @@ def runagent_multiple(
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
     thinking_mode: bool = False,
-    version: str = "v2",
+    version: str = "v1",
 ):
     """
     Runs the editagent agent on the first k Docker images.
