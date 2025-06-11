@@ -64,6 +64,9 @@ instance_prompt: |-
      - Ensure your final implementation handles all identified scenarios correctly.
      - Document any assumptions or limitations of your solution.
 
+  9. Submit your solution:
+     - Once you have verified your solution, submit your solution using the `submit` tool.
+
   A successful resolution means:
   - The specific error/issue described no longer occurs
   - Your changes maintain compatibility with existing functionality
