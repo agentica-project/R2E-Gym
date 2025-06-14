@@ -3,6 +3,7 @@
 import openai
 import re
 import yaml
+from tqdm import tqdm
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -316,7 +317,7 @@ def runagent_multiple(
         }
 
         with open(jsonl_file, "a") as f:
-            for future in concurrent.futures.as_completed(future_to_image):
+            for future in tqdm(concurrent.futures.as_completed(future_to_image), total=len(future_to_image)):
                 docker_image = future_to_image[
                     future
                 ]  # <-- retrieve that stored docker_image
