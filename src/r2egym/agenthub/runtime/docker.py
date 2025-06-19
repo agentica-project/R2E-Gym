@@ -464,6 +464,20 @@ class DockerRuntime(ExecutionEnvironment):
                     self._stop_kubernetes_pod()
         except Exception as e:
             print("Container stop/delete error:", repr(e))
+    
+    def reset_swesmith_tests(self):
+        f2p_files = list(set([x.split("::", 1)[0] for x in self.ds[FAIL_TO_PASS]]))
+        p2p_files = list(set([x.split("::", 1)[0] for x in self.ds[PASS_TO_PASS]]))
+        all_files = list(set(f2p_files + p2p_files))
+        all_files = [f for f in all_files if 
+             os.path.basename(f).startswith('test_') and os.path.basename(f).endswith('.py') or
+             os.path.basename(f).endswith('_test.py')]
+        commit_id = self.ds['base_commit']
+        reset_command = (
+            f'printf "%s\\n" {" ".join(all_files)} | '
+            f'xargs -n1 -I{{}} git checkout {commit_id} -- "{{}}" 2>/dev/null'
+        )
+        self.run(reset_command)
 
     def setup_env_swesmith(self):
         try:
@@ -966,10 +980,8 @@ class DockerRuntime(ExecutionEnvironment):
             return parse_log_fn(f"{self.repo_name}")(log_output)
     
     def _calculate_reward_swesmith(self, get_test_output=False, timeout: int = 300) -> float:
-        #self.reverse_patch(self.ds['patch'])
+        self.reset_swesmith_tests()
         output, error_msg = self.run("/run_tests.sh", timeout=timeout)
-        # if error_msg and "The command took too long to execute" in error_msg:
-            # return -1.0
         parse = self.parse_logs(output)
         
         fail2pass = [ ".".join(line.split("::")[1:]) for line in self.ds['FAIL_TO_PASS']]
