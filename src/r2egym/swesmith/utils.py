@@ -77,9 +77,10 @@ def get_test_command_mypy(instance: dict):
         fail_to_pass_files = [x.rsplit("::", 1)[-1] for x in instance[FAIL_TO_PASS]]
         if PASS_TO_PASS in instance:
             pass_to_pass_files = [x.rsplit("::", 1)[-1] for x in instance[PASS_TO_PASS]]
-            test_keys = " or ".join(list(set(fail_to_pass_files + pass_to_pass_files)))
+            all_files = list(set(fail_to_pass_files + pass_to_pass_files))
         else:
-            test_keys = " or ".join(fail_to_pass_files)
+            all_files = list(set(fail_to_pass_files))
+        test_keys = " or ".join(all_files)
     elif INSTANCE_REF in instance and "test_patch" in instance[INSTANCE_REF]:
         test_keys = " or ".join(
             re.findall(pattern, instance[INSTANCE_REF]["test_patch"])
