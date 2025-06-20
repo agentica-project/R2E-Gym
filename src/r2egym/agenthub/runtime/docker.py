@@ -500,6 +500,9 @@ class DockerRuntime(ExecutionEnvironment):
             os.unlink(temp_file_path)  # Clean up the temporary file
             
             self.run("chmod +x /run_tests.sh")
+            # Ensure can call the tools in /usr/local/bin.
+            self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
+            self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
             
             
         except Exception as e:
