@@ -2,6 +2,7 @@ PKG-INFO
 requires.txt
 traj/
 cursor
+*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

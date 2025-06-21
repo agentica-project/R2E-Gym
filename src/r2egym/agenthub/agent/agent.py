@@ -318,6 +318,9 @@ class Agent:
                         timeout=self.llm_timeout,
                         api_base=self.llm_base_url,
                         # max_tokens=3000,
+                        vertex_ai_project="r2eg-441800",
+                        # vertex_ai_location="us-east5",
+                        vertex_ai_location="europe-west1",
                         **kwargs,
                     )
                     self.logger.warning(f"Querying LLM complete")
@@ -538,6 +541,7 @@ class Agent:
                 "content"
             ] += f"\n{stepcount_message}"  # postpend stepcount message
             self.logger.info(stepcount_message)
+            self.logger.info(f"<For logging only> Steps remaining: {steps_remaining}")
 
             # Query the LLM
             messages = copy.deepcopy(self.history)
