@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% set title = "Conversations in " + filename %}
+
+{% block content %}
+<!-- Breadcrumb Navigation -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="{{ url_for('index') }}"><i class="fas fa-home"></i> Home</a>
+        </li>
+        <li class="breadcrumb-item active" aria-current="page">
+            <i class="fas fa-file-alt"></i> {{ filename }}
+        </li>
+    </ol>
+</nav>
+
+<!-- File Header -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="mb-0">
+                        <i class="fas fa-file-alt"></i> {{ filename }}
+                    </h2>
+                    <span class="badge bg-primary fs-6">{{ conversations|length }} conversations</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-4">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ conversations|length }}</div>
+                            <div class="stat-label">Total Conversations</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ conversations|sum(attribute='message_count') }}</div>
+                            <div class="stat-label">Total Messages</div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">
+                                {{ "%.1f"|format(conversations|sum(attribute='message_count') / conversations|length if conversations|length > 0 else 0) }}
+                            </div>
+                            <div class="stat-label">Avg Messages/Conv</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search and Filter -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-search"></i></span>
+                            <input type="text" class="form-control" id="searchInput" placeholder="Search conversations by content...">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <select class="form-select" id="sortSelect">
+                            <option value="id">Sort by ID</option>
+                            <option value="messages">Sort by Message Count</option>
+                            <option value="length">Sort by Content Length</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Conversations List -->
+<div class="row" id="conversationsContainer">
+    {% for conv in conversations %}
+    <div class="col-12 mb-4 conversation-item" data-conv-id="{{ conv.id }}" data-message-count="{{ conv.message_count }}">
+        <div class="card conversation-card">
+            <div class="card-header">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-comment"></i>
+                        Conversation #{{ conv.id + 1 }}
+                    </h5>
+                    <div>
+                        <span class="badge bg-info me-2">{{ conv.message_count }} messages</span>
+                        <span class="badge bg-secondary">ID: {{ conv.id }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="conversation-summary">
+                    <p class="mb-3">{{ conv.summary }}</p>
+                </div>
+                
+                <!-- Message Types Preview -->
+                <div class="message-types mb-3">
+                    {% set message_roles = conv.messages|map(attribute='role')|list %}
+                    {% set role_counts = {} %}
+                    {% for role in message_roles %}
+                        {% if role_counts.update({role: role_counts.get(role, 0) + 1}) %}{% endif %}
+                    {% endfor %}
+                    
+                    <div class="d-flex flex-wrap gap-2">
+                        {% for role, count in role_counts.items() %}
+                        <span class="badge bg-outline-{{ 'primary' if role == 'user' else 'success' if role == 'assistant' else 'secondary' if role == 'system' else 'warning' }}">
+                            {{ role.title() }}: {{ count }}
+                        </span>
+                        {% endfor %}
+                    </div>
+                </div>
+                
+                <!-- First and Last Message Preview -->
+                <div class="message-preview">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-2"><i class="fas fa-play"></i> First Message</h6>
+                            <div class="preview-box">
+                                <small class="text-muted">{{ conv.messages[0].role.title() }}:</small>
+                                <div class="preview-content">
+                                    {{ conv.messages[0].content[:100] }}{% if conv.messages[0].content|length > 100 %}...{% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        {% if conv.messages|length > 1 %}
+                        <div class="col-md-6">
+                            <h6 class="text-muted mb-2"><i class="fas fa-stop"></i> Last Message</h6>
+                            <div class="preview-box">
+                                <small class="text-muted">{{ conv.messages[-1].role.title() }}:</small>
+                                <div class="preview-content">
+                                    {{ conv.messages[-1].content[:100] }}{% if conv.messages[-1].content|length > 100 %}...{% endif %}
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent">
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="fas fa-clock"></i>
+                        Created: {{ conv.id }}
+                    </small>
+                    <a href="{{ url_for('conversation_detail', filename=filename, conv_id=conv.id) }}" 
+                       class="btn btn-primary">
+                        <i class="fas fa-eye"></i> View Details
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Pagination (if needed) -->
+<div class="row mt-4">
+    <div class="col-12 text-center">
+        <div id="paginationContainer">
+            <!-- Pagination will be handled by JavaScript if needed -->
+        </div>
+    </div>
+</div>
+
+<style>
+.conversation-card {
+    transition: all 0.3s ease;
+}
+
+.conversation-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.preview-box {
+    background-color: #f8f9fa;
+    border-radius: 6px;
+    padding: 10px;
+    border-left: 3px solid #007bff;
+}
+
+.preview-content {
+    font-size: 0.9em;
+    color: #495057;
+    line-height: 1.4;
+}
+
+.conversation-summary {
+    background-color: #e8f4f8;
+    border-radius: 6px;
+    padding: 12px;
+    border-left: 4px solid #17a2b8;
+}
+
+.message-types {
+    border-top: 1px solid #dee2e6;
+    padding-top: 15px;
+}
+
+.conversation-item.hidden {
+    display: none;
+}
+
+.badge.bg-outline-primary {
+    color: #007bff;
+    border: 1px solid #007bff;
+    background-color: transparent;
+}
+
+.badge.bg-outline-success {
+    color: #28a745;
+    border: 1px solid #28a745;
+    background-color: transparent;
+}
+
+.badge.bg-outline-secondary {
+    color: #6c757d;
+    border: 1px solid #6c757d;
+    background-color: transparent;
+}
+
+.badge.bg-outline-warning {
+    color: #ffc107;
+    border: 1px solid #ffc107;
+    background-color: transparent;
+}
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    const sortSelect = document.getElementById('sortSelect');
+    const conversationItems = document.querySelectorAll('.conversation-item');
+    
+    // Search functionality
+    searchInput.addEventListener('input', function() {
+        const searchTerm = this.value.toLowerCase();
+        
+        conversationItems.forEach(item => {
+            const text = item.textContent.toLowerCase();
+            if (text.includes(searchTerm)) {
+                item.style.display = 'block';
+                item.classList.remove('hidden');
+            } else {
+                item.style.display = 'none';
+                item.classList.add('hidden');
+            }
+        });
+    });
+    
+    // Sort functionality
+    sortSelect.addEventListener('change', function() {
+        const sortBy = this.value;
+        const container = document.getElementById('conversationsContainer');
+        const items = Array.from(conversationItems);
+        
+        items.sort((a, b) => {
+            switch(sortBy) {
+                case 'id':
+                    return parseInt(a.dataset.convId) - parseInt(b.dataset.convId);
+                case 'messages':
+                    return parseInt(b.dataset.messageCount) - parseInt(a.dataset.messageCount);
+                case 'length':
+                    return b.textContent.length - a.textContent.length;
+                default:
+                    return 0;
+            }
+        });
+        
+        // Re-append items in sorted order
+        items.forEach(item => container.appendChild(item));
+    });
+});
+</script>
+{% endblock %} 

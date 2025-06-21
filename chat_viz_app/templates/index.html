@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% set title = "Chat Completions - Home" %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h1 class="display-4 text-center mb-4">
+            <i class="fas fa-comments text-primary"></i>
+            Chat Completions Viewer
+        </h1>
+        <p class="lead text-center text-muted">
+            Browse and analyze chat completion conversations from JSONL files
+        </p>
+    </div>
+</div>
+
+{% if files %}
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2><i class="fas fa-folder-open"></i> Available Files</h2>
+            <span class="badge bg-primary fs-6">{{ files|length }} files</span>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    {% for file_info in files %}
+    <div class="col-lg-4 col-md-6 mb-4">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-file-alt"></i>
+                    {{ file_info.filename }}
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ file_info.conversation_count }}</div>
+                            <div class="stat-label">Conversations</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ file_info.total_messages }}</div>
+                            <div class="stat-label">Messages</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-3">
+                    <small class="text-muted">
+                        <i class="fas fa-info-circle"></i>
+                        Average: {{ "%.1f"|format(file_info.total_messages / file_info.conversation_count if file_info.conversation_count > 0 else 0) }} messages per conversation
+                    </small>
+                </div>
+            </div>
+            <div class="card-footer bg-transparent">
+                <a href="{{ url_for('file_conversations', filename=file_info.filename) }}" 
+                   class="btn btn-primary w-100">
+                    <i class="fas fa-eye"></i> View Conversations
+                </a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Quick Stats Overview -->
+<div class="row mt-5">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-chart-pie"></i> Quick Overview</h4>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ files|sum(attribute='conversation_count') }}</div>
+                            <div class="stat-label">Total Conversations</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ files|sum(attribute='total_messages') }}</div>
+                            <div class="stat-label">Total Messages</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ files|length }}</div>
+                            <div class="stat-label">JSONL Files</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">
+                                {{ "%.1f"|format(files|sum(attribute='total_messages') / files|sum(attribute='conversation_count') if files|sum(attribute='conversation_count') > 0 else 0) }}
+                            </div>
+                            <div class="stat-label">Avg Messages/Conv</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Action Buttons -->
+<div class="row mt-4">
+    <div class="col-12 text-center">
+        <a href="{{ url_for('statistics') }}" class="btn btn-outline-primary btn-lg">
+            <i class="fas fa-chart-bar"></i> View Detailed Statistics
+        </a>
+    </div>
+</div>
+
+{% else %}
+<!-- No Files Found -->
+<div class="row">
+    <div class="col-12">
+        <div class="alert alert-warning text-center" role="alert">
+            <h4 class="alert-heading"><i class="fas fa-exclamation-triangle"></i> No Files Found</h4>
+            <p>No JSONL files were found in the chat_completions directory.</p>
+            <hr>
+            <p class="mb-0">Please ensure that JSONL files exist in the <code>chat_completions</code> folder.</p>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+/* Additional styles for index page */
+.display-4 {
+    font-weight: 700;
+}
+
+.stat-card:hover {
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef) !important;
+    transform: translateY(-2px);
+    transition: all 0.3s ease;
+}
+
+.card-footer .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+</style>
+{% endblock %} 

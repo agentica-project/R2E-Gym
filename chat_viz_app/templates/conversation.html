@@ -1,0 +1,404 @@
+{% extends "base.html" %}
+{% set title = "Conversation " + (current_conv_id + 1)|string + " - " + filename %}
+
+{% block content %}
+<!-- Breadcrumb Navigation -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="{{ url_for('index') }}"><i class="fas fa-home"></i> Home</a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="{{ url_for('file_conversations', filename=filename) }}">
+                <i class="fas fa-file-alt"></i> {{ filename }}
+            </a>
+        </li>
+        <li class="breadcrumb-item active" aria-current="page">
+            <i class="fas fa-comment"></i> Conversation #{{ current_conv_id + 1 }}
+        </li>
+    </ol>
+</nav>
+
+<!-- Conversation Navigation -->
+<div class="conversation-nav">
+    <div class="row align-items-center">
+        <div class="col-md-4">
+            <a href="{{ url_for('file_conversations', filename=filename) }}" 
+               class="btn btn-outline-secondary">
+                <i class="fas fa-arrow-left"></i> Back to File
+            </a>
+        </div>
+        <div class="col-md-4 text-center">
+            <h4 class="mb-0">
+                <i class="fas fa-comment"></i>
+                Conversation {{ current_conv_id + 1 }} of {{ total_conversations }}
+            </h4>
+        </div>
+        <div class="col-md-4 text-end">
+            <div class="btn-group" role="group">
+                {% if current_conv_id > 0 %}
+                <a href="{{ url_for('conversation_detail', filename=filename, conv_id=current_conv_id - 1) }}" 
+                   class="btn btn-outline-primary">
+                    <i class="fas fa-chevron-left"></i> Previous
+                </a>
+                {% endif %}
+                {% if current_conv_id < total_conversations - 1 %}
+                <a href="{{ url_for('conversation_detail', filename=filename, conv_id=current_conv_id + 1) }}" 
+                   class="btn btn-outline-primary">
+                    Next <i class="fas fa-chevron-right"></i>
+                </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Conversation Summary -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-info-circle"></i> Conversation Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded text-center">
+                            <div class="stat-value">{{ messages|length }}</div>
+                            <div class="stat-label">Total Messages</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded text-center">
+                            <div class="stat-value">{{ messages|selectattr('role', 'equalto', 'assistant')|list|length }}</div>
+                            <div class="stat-label">Assistant Messages</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded text-center">
+                            <div class="stat-value">{{ messages|selectattr('role', 'equalto', 'user')|list|length }}</div>
+                            <div class="stat-label">User Messages</div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="stat-card p-3 rounded text-center">
+                            <div class="stat-value">{{ messages|selectattr('has_action', 'defined')|selectattr('has_action')|list|length }}</div>
+                            <div class="stat-label">Actions Taken</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Messages Display -->
+<div class="messages-container">
+    {% for message in messages %}
+    <div class="message-container" id="message-{{ message.index }}">
+        <!-- Message Header -->
+        <div class="message-header {{ message.role }}-header">
+            <div class="d-flex justify-content-between align-items-center w-100">
+                <div class="d-flex align-items-center">
+                    {% if message.role == 'system' %}
+                        <i class="fas fa-cog"></i>
+                        <span class="ms-2">System</span>
+                    {% elif message.role == 'user' %}
+                        <i class="fas fa-user"></i>
+                        <span class="ms-2">User</span>
+                    {% elif message.role == 'assistant' %}
+                        <i class="fas fa-robot"></i>
+                        <span class="ms-2">Assistant</span>
+                    {% elif message.role == 'tool' %}
+                        <i class="fas fa-tools"></i>
+                        <span class="ms-2">Tool</span>
+                    {% endif %}
+                </div>
+                <div class="d-flex align-items-center gap-2">
+                    {% if message.role == 'assistant' and message.has_action %}
+                        <span class="badge bg-light text-dark">
+                            <i class="fas fa-bolt"></i> Action
+                        </span>
+                    {% endif %}
+                    <span class="message-index">#{{ message.index + 1 }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Message Content -->
+        <div class="message-content">
+            {% if message.role == 'assistant' and (message.thought or message.action) %}
+                <!-- Assistant with Thought/Action parsing -->
+                {% if message.thought %}
+                <div class="thought-section">
+                    <div class="thought-header">
+                        <i class="fas fa-brain"></i>
+                        <span>Thought Process</span>
+                    </div>
+                    <div class="thought-content">
+                        <pre>{{ message.thought }}</pre>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if message.action %}
+                <div class="action-section">
+                    <div class="action-header">
+                        <i class="fas fa-play"></i>
+                        <span>Action</span>
+                    </div>
+                    <div class="action-content">
+                        <div class="code-block">
+                            <div class="code-header">
+                                <i class="fas fa-code"></i> Function Call
+                            </div>
+                            <pre><code class="xml">{{ message.action }}</code></pre>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+                
+                {% if not message.thought and not message.action %}
+                <!-- Fallback for assistant messages without parsing -->
+                <pre>{{ message.content }}</pre>
+                {% endif %}
+                
+            {% elif message.role == 'system' and message.content_html %}
+                <!-- System message with markdown rendering -->
+                <div class="markdown-content">
+                    {{ message.content_html|safe }}
+                </div>
+                
+            {% else %}
+                <!-- Regular message content -->
+                <div class="regular-content">
+                    {% if message.content|length > 1000 %}
+                        <div class="long-content">
+                            <div class="content-preview" id="preview-{{ message.index }}">
+                                <pre>{{ message.content[:1000] }}...</pre>
+                                <button class="btn btn-sm btn-outline-primary mt-2" onclick="toggleContent({{ message.index }})">
+                                    <i class="fas fa-expand"></i> Show Full Content
+                                </button>
+                            </div>
+                            <div class="content-full" id="full-{{ message.index }}" style="display: none;">
+                                <pre>{{ message.content }}</pre>
+                                <button class="btn btn-sm btn-outline-secondary mt-2" onclick="toggleContent({{ message.index }})">
+                                    <i class="fas fa-compress"></i> Show Less
+                                </button>
+                            </div>
+                        </div>
+                    {% else %}
+                        <pre>{{ message.content }}</pre>
+                    {% endif %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- Quick Navigation -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-map"></i> Quick Navigation</h6>
+            </div>
+            <div class="card-body">
+                <div class="d-flex flex-wrap gap-2">
+                    {% for message in messages %}
+                    <a href="#message-{{ message.index }}" 
+                       class="btn btn-sm btn-outline-{{ 'primary' if message.role == 'user' else 'success' if message.role == 'assistant' else 'secondary' if message.role == 'system' else 'warning' }}">
+                        {{ message.role.title() }} #{{ message.index + 1 }}
+                        {% if message.role == 'assistant' and message.has_action %}
+                            <i class="fas fa-bolt"></i>
+                        {% endif %}
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Message Statistics -->
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-chart-bar"></i> Message Statistics</h6>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-md-2">
+                        <div class="stat-card p-2 rounded">
+                            <div class="stat-value small">{{ messages|map(attribute='content')|map('length')|sum }}</div>
+                            <div class="stat-label small">Total Characters</div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="stat-card p-2 rounded">
+                            <div class="stat-value small">{{ (messages|map(attribute='content')|map('length')|sum / messages|length)|round(1) if messages|length > 0 else 0 }}</div>
+                            <div class="stat-label small">Avg Length</div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="stat-card p-2 rounded">
+                            <div class="stat-value small">{{ messages|selectattr('role', 'equalto', 'system')|list|length }}</div>
+                            <div class="stat-label small">System</div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="stat-card p-2 rounded">
+                            <div class="stat-value small">{{ messages|selectattr('role', 'equalto', 'user')|list|length }}</div>
+                            <div class="stat-label small">User</div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="stat-card p-2 rounded">
+                            <div class="stat-value small">{{ messages|selectattr('role', 'equalto', 'assistant')|list|length }}</div>
+                            <div class="stat-label small">Assistant</div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <div class="stat-card p-2 rounded">
+                            <div class="stat-value small">{{ messages|selectattr('role', 'equalto', 'tool')|list|length }}</div>
+                            <div class="stat-label small">Tool</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Additional styles for conversation view */
+.messages-container {
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+.regular-content pre {
+    background-color: #ffffff;
+    border: 1px solid #e9ecef;
+    color: #495057;
+    font-size: 0.9em;
+    line-height: 1.5;
+}
+
+.long-content {
+    position: relative;
+}
+
+.content-preview, .content-full {
+    transition: all 0.3s ease;
+}
+
+.thought-content pre, .action-content pre {
+    margin: 0;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.thought-content pre {
+    background-color: rgba(76, 175, 80, 0.05);
+    color: #2e7d32;
+    border: 1px solid rgba(76, 175, 80, 0.2);
+}
+
+.action-content .code-block {
+    margin: 0;
+}
+
+/* Message role specific styling */
+.message-container {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.quick-nav-btn {
+    transition: all 0.2s ease;
+}
+
+.quick-nav-btn:hover {
+    transform: translateY(-2px);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .conversation-nav .col-md-4 {
+        text-align: center !important;
+        margin-bottom: 10px;
+    }
+    
+    .stat-value.small {
+        font-size: 1.2rem;
+    }
+}
+
+/* Scroll to message animation */
+.message-container:target {
+    animation: highlight 2s ease-in-out;
+}
+
+@keyframes highlight {
+    0% { background-color: rgba(255, 193, 7, 0.3); }
+    100% { background-color: transparent; }
+}
+</style>
+
+<script>
+function toggleContent(messageIndex) {
+    const preview = document.getElementById(`preview-${messageIndex}`);
+    const full = document.getElementById(`full-${messageIndex}`);
+    
+    if (preview.style.display === 'none') {
+        preview.style.display = 'block';
+        full.style.display = 'none';
+    } else {
+        preview.style.display = 'none';
+        full.style.display = 'block';
+    }
+}
+
+// Add keyboard navigation
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowLeft' && e.ctrlKey) {
+        // Previous conversation
+        const prevBtn = document.querySelector('a[href*="conv_id={{ current_conv_id - 1 }}"]');
+        if (prevBtn) prevBtn.click();
+    } else if (e.key === 'ArrowRight' && e.ctrlKey) {
+        // Next conversation
+        const nextBtn = document.querySelector('a[href*="conv_id={{ current_conv_id + 1 }}"]');
+        if (nextBtn) nextBtn.click();
+    }
+});
+
+// Add copy functionality to code blocks
+document.querySelectorAll('pre code').forEach(block => {
+    const button = document.createElement('button');
+    button.className = 'btn btn-sm btn-outline-light copy-btn';
+    button.innerHTML = '<i class="fas fa-copy"></i>';
+    button.style.position = 'absolute';
+    button.style.top = '10px';
+    button.style.right = '10px';
+    button.style.zIndex = '10';
+    
+    button.addEventListener('click', () => {
+        navigator.clipboard.writeText(block.textContent);
+        button.innerHTML = '<i class="fas fa-check"></i>';
+        setTimeout(() => {
+            button.innerHTML = '<i class="fas fa-copy"></i>';
+        }, 2000);
+    });
+    
+    block.parentElement.style.position = 'relative';
+    block.parentElement.appendChild(button);
+});
+</script>
+{% endblock %} 

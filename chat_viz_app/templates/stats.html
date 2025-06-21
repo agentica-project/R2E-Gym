@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+{% set title = "Chat Completions Statistics" %}
+
+{% block content %}
+<!-- Breadcrumb Navigation -->
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="{{ url_for('index') }}"><i class="fas fa-home"></i> Home</a>
+        </li>
+        <li class="breadcrumb-item active" aria-current="page">
+            <i class="fas fa-chart-bar"></i> Statistics
+        </li>
+    </ol>
+</nav>
+
+<!-- Page Header -->
+<div class="row mb-4">
+    <div class="col-12">
+        <h1 class="display-4 text-center mb-4">
+            <i class="fas fa-chart-bar text-primary"></i>
+            Chat Completions Statistics
+        </h1>
+        <p class="lead text-center text-muted">
+            Comprehensive analytics across all chat completion conversations
+        </p>
+    </div>
+</div>
+
+<!-- Overview Cards -->
+<div class="row mb-5">
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card stat-card h-100">
+            <div class="card-body text-center">
+                <div class="stat-value text-primary">{{ stats.total_files }}</div>
+                <div class="stat-label">JSONL Files</div>
+                <i class="fas fa-file-alt fa-2x text-primary mt-2"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card stat-card h-100">
+            <div class="card-body text-center">
+                <div class="stat-value text-success">{{ stats.total_conversations }}</div>
+                <div class="stat-label">Total Conversations</div>
+                <i class="fas fa-comments fa-2x text-success mt-2"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card stat-card h-100">
+            <div class="card-body text-center">
+                <div class="stat-value text-info">{{ stats.total_messages }}</div>
+                <div class="stat-label">Total Messages</div>
+                <i class="fas fa-envelope fa-2x text-info mt-2"></i>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-3 col-md-6 mb-4">
+        <div class="card stat-card h-100">
+            <div class="card-body text-center">
+                <div class="stat-value text-warning">
+                    {{ "%.1f"|format(stats.total_messages / stats.total_conversations if stats.total_conversations > 0 else 0) }}
+                </div>
+                <div class="stat-label">Avg Messages/Conversation</div>
+                <i class="fas fa-calculator fa-2x text-warning mt-2"></i>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Message Role Distribution -->
+<div class="row mb-5">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-users"></i> Message Role Distribution</h4>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    {% for role, count in stats.role_counts.items() %}
+                    <div class="col-lg-3 col-md-6 mb-3">
+                        <div class="role-stat p-3 rounded border">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h5 class="mb-1 text-capitalize">{{ role }}</h5>
+                                    <div class="h4 mb-0 text-primary">{{ count }}</div>
+                                </div>
+                                <div class="role-icon">
+                                    {% if role == 'system' %}
+                                        <i class="fas fa-cog fa-2x text-secondary"></i>
+                                    {% elif role == 'user' %}
+                                        <i class="fas fa-user fa-2x text-primary"></i>
+                                    {% elif role == 'assistant' %}
+                                        <i class="fas fa-robot fa-2x text-success"></i>
+                                    {% elif role == 'tool' %}
+                                        <i class="fas fa-tools fa-2x text-warning"></i>
+                                    {% else %}
+                                        <i class="fas fa-comment fa-2x text-info"></i>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="mt-2">
+                                <small class="text-muted">
+                                    {{ "%.1f"|format((count / stats.total_messages * 100) if stats.total_messages > 0 else 0) }}% of total
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Message Length Statistics -->
+{% if stats.message_length_stats %}
+<div class="row mb-5">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-ruler"></i> Message Length Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6 mb-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ stats.message_length_stats.min }}</div>
+                            <div class="stat-label">Minimum</div>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ stats.message_length_stats.max }}</div>
+                            <div class="stat-label">Maximum</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ "%.0f"|format(stats.message_length_stats.avg) }}</div>
+                            <div class="stat-label">Average</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ stats.message_length_stats.median }}</div>
+                            <div class="stat-label">Median</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Conversation Length Statistics -->
+    {% if stats.conversation_length_stats %}
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-comments"></i> Conversation Length Statistics</h5>
+            </div>
+            <div class="card-body">
+                <div class="row text-center">
+                    <div class="col-6 mb-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ stats.conversation_length_stats.min }}</div>
+                            <div class="stat-label">Minimum</div>
+                        </div>
+                    </div>
+                    <div class="col-6 mb-3">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ stats.conversation_length_stats.max }}</div>
+                            <div class="stat-label">Maximum</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ "%.1f"|format(stats.conversation_length_stats.avg) }}</div>
+                            <div class="stat-label">Average</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="stat-card p-3 rounded">
+                            <div class="stat-value">{{ stats.conversation_length_stats.median }}</div>
+                            <div class="stat-label">Median</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Detailed Breakdown -->
+<div class="row mb-5">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-chart-pie"></i> Detailed Analysis</h4>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <!-- Messages per Role Chart Placeholder -->
+                    <div class="col-md-6 mb-4">
+                        <h6 class="text-muted mb-3">Role Distribution</h6>
+                        <div class="role-distribution">
+                            {% for role, count in stats.role_counts.items() %}
+                            <div class="role-bar mb-2">
+                                <div class="d-flex justify-content-between mb-1">
+                                    <span class="text-capitalize">{{ role }}</span>
+                                    <span>{{ count }} ({{ "%.1f"|format((count / stats.total_messages * 100) if stats.total_messages > 0 else 0) }}%)</span>
+                                </div>
+                                <div class="progress">
+                                    <div class="progress-bar 
+                                        {% if role == 'system' %}bg-secondary{% elif role == 'user' %}bg-primary{% elif role == 'assistant' %}bg-success{% elif role == 'tool' %}bg-warning{% else %}bg-info{% endif %}" 
+                                        role="progressbar" 
+                                        style="width: {{ (count / stats.total_messages * 100) if stats.total_messages > 0 else 0 }}%">
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    
+                    <!-- Additional Metrics -->
+                    <div class="col-md-6 mb-4">
+                        <h6 class="text-muted mb-3">Additional Insights</h6>
+                        <div class="insights">
+                            <div class="insight-item p-3 mb-3 bg-light rounded">
+                                <div class="d-flex justify-content-between">
+                                    <span><i class="fas fa-file-alt text-primary"></i> Files with most conversations:</span>
+                                    <strong>{{ stats.total_files }}</strong>
+                                </div>
+                            </div>
+                            <div class="insight-item p-3 mb-3 bg-light rounded">
+                                <div class="d-flex justify-content-between">
+                                    <span><i class="fas fa-comments text-success"></i> Average conversation length:</span>
+                                    <strong>{{ "%.1f"|format(stats.conversation_length_stats.avg if stats.conversation_length_stats else 0) }} messages</strong>
+                                </div>
+                            </div>
+                            <div class="insight-item p-3 mb-3 bg-light rounded">
+                                <div class="d-flex justify-content-between">
+                                    <span><i class="fas fa-envelope text-info"></i> Average message length:</span>
+                                    <strong>{{ "%.0f"|format(stats.message_length_stats.avg if stats.message_length_stats else 0) }} characters</strong>
+                                </div>
+                            </div>
+                            {% if stats.role_counts.get('assistant', 0) > 0 %}
+                            <div class="insight-item p-3 mb-3 bg-light rounded">
+                                <div class="d-flex justify-content-between">
+                                    <span><i class="fas fa-robot text-success"></i> Assistant response rate:</span>
+                                    <strong>{{ "%.1f"|format((stats.role_counts.get('assistant', 0) / stats.total_messages * 100) if stats.total_messages > 0 else 0) }}%</strong>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Raw Data Export -->
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-download"></i> Data Export</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">Export statistical data for further analysis</p>
+                <div class="d-flex flex-wrap gap-2">
+                    <button class="btn btn-outline-primary" onclick="exportStats('json')">
+                        <i class="fas fa-file-code"></i> Export as JSON
+                    </button>
+                    <button class="btn btn-outline-success" onclick="exportStats('csv')">
+                        <i class="fas fa-file-csv"></i> Export as CSV
+                    </button>
+                    <button class="btn btn-outline-info" onclick="printStats()">
+                        <i class="fas fa-print"></i> Print Statistics
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.role-stat {
+    background: linear-gradient(135deg, #ffffff, #f8f9fa);
+    transition: all 0.3s ease;
+}
+
+.role-stat:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.role-distribution .progress {
+    height: 20px;
+}
+
+.insight-item {
+    transition: all 0.3s ease;
+}
+
+.insight-item:hover {
+    background-color: #e9ecef !important;
+}
+
+.stat-value {
+    font-size: 2.5rem;
+    font-weight: bold;
+}
+
+@media (max-width: 768px) {
+    .stat-value {
+        font-size: 2rem;
+    }
+}
+
+/* Print styles */
+@media print {
+    .btn, .navbar, .breadcrumb {
+        display: none !important;
+    }
+    
+    .card {
+        border: 1px solid #000 !important;
+        box-shadow: none !important;
+    }
+}
+</style>
+
+<script>
+// Statistics data for export
+const statsData = {{ stats|tojson }};
+
+function exportStats(format) {
+    if (format === 'json') {
+        const dataStr = JSON.stringify(statsData, null, 2);
+        const dataBlob = new Blob([dataStr], {type: 'application/json'});
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'chat_completions_stats.json';
+        link.click();
+        URL.revokeObjectURL(url);
+    } else if (format === 'csv') {
+        let csv = 'Metric,Value\n';
+        csv += `Total Files,${statsData.total_files}\n`;
+        csv += `Total Conversations,${statsData.total_conversations}\n`;
+        csv += `Total Messages,${statsData.total_messages}\n`;
+        
+        // Add role counts
+        for (const [role, count] of Object.entries(statsData.role_counts)) {
+            csv += `${role.charAt(0).toUpperCase() + role.slice(1)} Messages,${count}\n`;
+        }
+        
+        // Add length stats if available
+        if (statsData.message_length_stats) {
+            csv += `Min Message Length,${statsData.message_length_stats.min}\n`;
+            csv += `Max Message Length,${statsData.message_length_stats.max}\n`;
+            csv += `Avg Message Length,${statsData.message_length_stats.avg.toFixed(1)}\n`;
+            csv += `Median Message Length,${statsData.message_length_stats.median}\n`;
+        }
+        
+        if (statsData.conversation_length_stats) {
+            csv += `Min Conversation Length,${statsData.conversation_length_stats.min}\n`;
+            csv += `Max Conversation Length,${statsData.conversation_length_stats.max}\n`;
+            csv += `Avg Conversation Length,${statsData.conversation_length_stats.avg.toFixed(1)}\n`;
+            csv += `Median Conversation Length,${statsData.conversation_length_stats.median}\n`;
+        }
+        
+        const dataBlob = new Blob([csv], {type: 'text/csv'});
+        const url = URL.createObjectURL(dataBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'chat_completions_stats.csv';
+        link.click();
+        URL.revokeObjectURL(url);
+    }
+}
+
+function printStats() {
+    window.print();
+}
+
+// Add interactive animations
+document.addEventListener('DOMContentLoaded', function() {
+    // Animate progress bars
+    const progressBars = document.querySelectorAll('.progress-bar');
+    progressBars.forEach(bar => {
+        const width = bar.style.width;
+        bar.style.width = '0%';
+        setTimeout(() => {
+            bar.style.transition = 'width 1.5s ease-in-out';
+            bar.style.width = width;
+        }, 500);
+    });
+    
+    // Animate stat values
+    const statValues = document.querySelectorAll('.stat-value');
+    statValues.forEach(value => {
+        const finalValue = parseInt(value.textContent);
+        if (!isNaN(finalValue)) {
+            let currentValue = 0;
+            const increment = finalValue / 50;
+            const timer = setInterval(() => {
+                currentValue += increment;
+                if (currentValue >= finalValue) {
+                    value.textContent = finalValue;
+                    clearInterval(timer);
+                } else {
+                    value.textContent = Math.floor(currentValue);
+                }
+            }, 30);
+        }
+    });
+});
+</script>
+{% endblock %} 
