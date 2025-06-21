@@ -2,6 +2,8 @@ PKG-INFO
 requires.txt
 traj/
 cursor
+chat_completions/
+*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
