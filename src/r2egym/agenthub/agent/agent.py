@@ -487,7 +487,10 @@ class Agent:
         # Prepare problem_statement and structure from the environment
         problem_statement = env.runtime.get_task_instruction()
         self.logger.info(f"Problem Statement: {problem_statement}")
-        gt_patch = env.runtime.commit.get_patch(test_file=True, non_test_file=False)
+        if 'swesmith' in env.runtime.docker_image:
+            gt_patch = env.runtime.ds['patch']
+        else:
+            gt_patch = env.runtime.commit.get_patch(test_file=True, non_test_file=False)
 
         # get system and instance prompts
         system_prompt = self.system_prompt_template

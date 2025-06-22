@@ -214,6 +214,7 @@ class StrReplaceEditor:
         If path is a file, optionally use the 'concise' approach for Python.
         Then apply [start_line, end_line] slicing if provided.
         """
+        python_only = False
         if path.is_dir():
             if not python_only:
                 cmd = ["find", str(path), "-maxdepth", "2", "-not", "-path", "*/.*"]
@@ -697,7 +698,7 @@ def main():
     parser.add_argument(
         "--python_only",
         type=bool,
-        default=True,
+        default=False,
         help="If True, attempts to limit view (for both dir and file level) to Python files only.",
     )
 
@@ -720,6 +721,7 @@ def main():
             new_str=args.new_str,
             insert_line=args.insert_line,
             concise=args.concise,
+            python_only=args.python_only,
         )
         safe_print(result.output)
         if result.error:

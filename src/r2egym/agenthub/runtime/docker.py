@@ -502,6 +502,8 @@ class DockerRuntime(ExecutionEnvironment):
             self.run("chmod +x /run_tests.sh")
             # Ensure can call the tools in /usr/local/bin.
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
+            # chardev install
+            self.run("python -m pip install chardet")
             self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
             
             
