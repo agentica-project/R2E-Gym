@@ -492,7 +492,7 @@ class Agent:
             problem_statement=problem_statement,
             gt_patch=gt_patch,
             working_dir='/testbed',
-            base_commit=env.runtime.ds['base_commit'],
+            # base_commit=env.runtime.ds['base_commit'],
             test_patch_hint=metadata.get("test_patch_hint", ""),
             candidate_patch=metadata.get("candidate_patch", ""),
             candidate_patch_correctness=(

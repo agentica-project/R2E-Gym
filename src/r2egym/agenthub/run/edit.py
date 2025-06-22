@@ -10,6 +10,7 @@ from datetime import datetime
 import json
 import concurrent.futures
 import threading
+import docker
 
 from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.environment.env import EnvArgs, RepoEnv
@@ -52,6 +53,68 @@ def get_docker_images(repo_name) -> List[str]:
     tags = fetch_docker_tags(base_image)
     docker_image_list = [f"{base_image}:{x['name']}" for x in tags]
     return docker_image_list
+
+
+def prepull_docker_image(docker_image: str) -> bool:
+    """
+    Prepulls a single Docker image.
+    
+    Args:
+        docker_image: The Docker image name to pull
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        client = docker.from_env()
+        logger.info(f"Pulling Docker image: {docker_image}")
+        client.images.pull(docker_image)
+        logger.info(f"Successfully pulled Docker image: {docker_image}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to pull Docker image {docker_image}: {e}")
+        return False
+
+
+def prepull_docker_images(ds_selected: List[Dict], max_workers: Optional[int] = None) -> None:
+    """
+    Prepulls all Docker images in parallel before starting the main execution.
+    
+    Args:
+        ds_selected: List of dataset entries containing docker_image keys
+        max_workers: Maximum number of threads for parallel pulling
+    """
+    # Extract unique Docker images
+    docker_images = list(set([ds_entry["docker_image"] for ds_entry in ds_selected]))
+    logger.info(f"Starting parallel prepull of {len(docker_images)} unique Docker images...")
+    
+    # Use ThreadPoolExecutor for I/O bound operations like Docker pulls
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all pull tasks
+        future_to_image = {
+            executor.submit(prepull_docker_image, docker_image): docker_image
+            for docker_image in docker_images
+        }
+        
+        # Track results
+        successful_pulls = []
+        failed_pulls = []
+        
+        for future in concurrent.futures.as_completed(future_to_image):
+            docker_image = future_to_image[future]
+            try:
+                success = future.result()
+                if success:
+                    successful_pulls.append(docker_image)
+                else:
+                    failed_pulls.append(docker_image)
+            except Exception as e:
+                logger.error(f"Exception during prepull of {docker_image}: {e}")
+                failed_pulls.append(docker_image)
+    
+    logger.info(f"Prepull completed. Success: {len(successful_pulls)}, Failed: {len(failed_pulls)}")
+    if failed_pulls:
+        logger.warning(f"Failed to pull images: {failed_pulls}")
 
 
 ##############################################################################
@@ -275,6 +338,7 @@ def runagent_multiple(
     max_iterations: int = 1,
     thinking_mode: bool = False,
     version: str = "v1",
+    prepull_images: bool = True,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -286,6 +350,7 @@ def runagent_multiple(
         start_idx: The starting index in the Docker images list.
         max_steps: Maximum steps for the agent run.
         max_workers: Maximum number of threads to use.
+        prepull_images: Whether to prepull Docker images in parallel before starting execution.
     """
     # Load the dataset
     ds = load_dataset(dataset, split=split)
@@ -354,6 +419,12 @@ def runagent_multiple(
     logger.info(
         f"Starting editagent on {len(ds_selected)} Docker images after filtering."
     )
+
+    # Prepull all Docker images in parallel before starting main execution
+    if ds_selected and prepull_images:
+        logger.info("Prepulling Docker images before starting main execution...")
+        prepull_docker_images(ds_selected, max_workers=max_workers)
+        logger.info("Docker image prepull completed.")
 
     # with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
