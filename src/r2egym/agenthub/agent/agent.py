@@ -136,6 +136,7 @@ class Agent:
 
     def condense_history(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """
+        DEPRECATED: Condense history is no longer used.
         Condense older user messages if total token usage exceeds a threshold.
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
@@ -154,90 +155,6 @@ class Agent:
             return messages_
         else:
             raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
-               
-        # # 1) simple pass: keep only last 5 user observations (after the first)
-        # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
-        # for idx in user_idxs[:-5]:
-        #     messages_[idx]["content"] = "<Observation condensed for saving context>"        
-        # if total_tokens <= MAX_TOKENS:
-        #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
-        #     return messages_
-
-        # 2) Identify user messages (role='user'), skipping the very first user message
-        user_msg_indexes = [
-            i for i, msg in enumerate(messages_) if msg["role"] == "user"
-        ]
-        if len(user_msg_indexes) <= 1:
-            # If there's only 0 or 1 user messages total, nothing to condense
-            return messages_
-
-        # Start condensing from the second user message onward excluding last user message
-        for idx in user_msg_indexes[1:-1]:
-            # Replace with a short placeholder
-            messages_[idx]["content"] = "<Observation condensed for saving context>"
-
-            # Re-count tokens after condensing
-            total_tokens = self._count_tokens(messages_)
-            if total_tokens <= MAX_TOKENS:
-                break
-
-        self.logger.warning(
-            f"Condensed history (both) to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
-        return messages_
-
-    def condense_history_old(
-        self, messages: List[Dict[str, str]]
-    ) -> List[Dict[str, str]]:
-        """
-        Condense older user messages if total token usage exceeds a threshold,
-        but do so by targeting the longest user messages first.
-        Skips the very first and very last user messages.
-        """
-        MAX_TOKENS = 28000
-        messages_ = copy.deepcopy(messages)
-
-        total_tokens = self._count_tokens(messages_)
-        self.logger.warning(
-            f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
-        if total_tokens <= MAX_TOKENS:
-            return messages_
-
-        # Identify user messages (role='user')
-        user_msg_indexes = [
-            i for i, msg in enumerate(messages_) if msg["role"] == "user"
-        ]
-
-        # If there's only 0 or 1 user messages, or effectively no middle messages to condense, do nothing
-        if len(user_msg_indexes) <= 1:
-            return messages_
-
-        # Indices of user messages to consider condensing (skip first and last user message)
-        to_condense = user_msg_indexes[1:-1]
-        if not to_condense:
-            return messages_
-
-        # Sort those middle user messages by descending length (longest first)
-        to_condense_sorted = sorted(
-            to_condense,
-            key=lambda idx: self._count_tokens([messages_[idx]]),
-            reverse=True,
-        )
-
-        # Condense from the longest to shortest until we are below the token limit
-        for idx in to_condense_sorted:
-            messages_[idx]["content"] = "<Observation condensed for saving context>"
-
-            total_tokens = self._count_tokens(messages_)
-            if total_tokens <= MAX_TOKENS:
-                break
-
-        self.logger.warning(
-            f"Condensed history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
-
-        return messages_
 
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """

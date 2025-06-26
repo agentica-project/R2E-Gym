@@ -68,6 +68,7 @@ def run_agent_with_restarts(
     condense_history: bool = True,
     swesmith_wrapper: bool = False,
     max_iterations: int = 1,
+    max_tokens: int = 65536,
 ):
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
@@ -99,6 +100,7 @@ def run_agent_with_restarts(
                 use_fn_calling=use_fn_calling,
                 condense_history=condense_history,
                 swesmith_wrapper=swesmith_wrapper,
+                max_token_limit=max_tokens,
             )
             # remove reproduce.py
             # env.runtime.run('rm reproduce_issue.py')
@@ -128,6 +130,7 @@ def runagent(
     swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
+    max_tokens: int = 65536,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -192,6 +195,7 @@ def runagent(
             condense_history=condense_history,
             swesmith_wrapper=swesmith_wrapper,
             max_iterations=max_iterations,
+            max_tokens=max_tokens,
         )
     except Exception as e:
         logger.error(
@@ -241,6 +245,7 @@ def runagent_multiple(
     swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
+    max_tokens: int = 65536,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -340,6 +345,7 @@ def runagent_multiple(
                 swesmith_wrapper=swesmith_wrapper,
                 max_reward_calc_time=max_reward_calc_time,
                 max_iterations=max_iterations,
+                max_tokens=max_tokens,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
