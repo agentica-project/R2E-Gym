@@ -147,7 +147,7 @@ class Agent:
         self.trajectory_steps = []
         self.history = []
 
-    def condense_history(self, messages: List[Dict[str, str]], max_tokens: int = 32768) -> List[Dict[str, str]]:
+    def condense_history(self, messages: List[Dict[str, str]], max_tokens: int = 65536) -> List[Dict[str, str]]:
         """
         Condense older user messages if total token usage exceeds a threshold.
         Replaces the content of those older user messages (after the first)
@@ -210,7 +210,7 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True, max_tokens: int = 32768, thinking_mode: bool = False,
+        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True, max_tokens: int = 65536, thinking_mode: bool = False,
     ) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None

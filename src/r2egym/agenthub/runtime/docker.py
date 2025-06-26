@@ -474,7 +474,6 @@ class DockerRuntime(ExecutionEnvironment):
             commit_id = self.ds['base_commit']
             self.run("git fetch")
             self.run(f"git checkout {commit_id}")
-            self.run("python -m pip install chardet")
             # Setup the run_test.sh script for subsequent testing.  
             test_command, _ = get_test_command(self.ds)
             eval_script_content = "\n".join(
@@ -500,11 +499,11 @@ class DockerRuntime(ExecutionEnvironment):
             os.unlink(temp_file_path)  # Clean up the temporary file
             
             self.run("chmod +x /run_tests.sh")
-            # Ensure can call the tools in /usr/local/bin.
+
+            # Ensure can call and execute the tools in /usr/local/bin.
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
             self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
-            
-            
+            self.run("python -m pip install chardet")
         except Exception as e:
             self.logger.error(f"Error setting up environment: {repr(e)}")
 
