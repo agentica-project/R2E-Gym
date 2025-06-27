@@ -3,6 +3,7 @@ import re
 import copy
 import yaml
 import json
+import json5
 import time
 from pathlib import Path
 from dataclasses import dataclass, asdict
@@ -75,7 +76,10 @@ class Agent:
         self.other_args = args.other_args or {}
         self.logger.info(f"Initialized Agent: {name} with LLM: {args.llm_name}")
         self.max_retries = self.other_args.get("max_retries", 5)
-        self.llm_timeout = self.other_args.get("timeout", 3000)
+        self.llm_timeout = self.other_args.get("timeout", 7200)
+
+        # used for training to record the inputs and outputs of the llm
+        self.llm_history = []
 
     def prepare_system_message(
         self, problem_statement: str, structure: str, command_docs: str, demo: str
@@ -140,7 +144,7 @@ class Agent:
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
         """
-        MAX_TOKENS = 65536 # 32768
+        MAX_TOKENS = 65536  # 32768
         # Make a deepcopy so we don't mutate the original list
         messages_ = copy.deepcopy(messages)
 
@@ -148,17 +152,17 @@ class Agent:
         total_tokens = self._count_tokens(messages_)
         self.logger.warning(
             f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )     
+        )
         if total_tokens <= MAX_TOKENS:
             logger.warning("No condensing needed. Total tokens are within the limit.")
             return messages_
         else:
             raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
-               
+
         # # 1) simple pass: keep only last 5 user observations (after the first)
         # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
         # for idx in user_idxs[:-5]:
-        #     messages_[idx]["content"] = "<Observation condensed for saving context>"        
+        #     messages_[idx]["content"] = "<Observation condensed for saving context>"
         # if total_tokens <= MAX_TOKENS:
         #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
         #     return messages_
@@ -249,7 +253,10 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0,
+        condense_history: bool = True,
     ) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None
@@ -297,6 +304,8 @@ class Agent:
                     kwargs = {}
                 if "o3" not in self.llm_name and "o4" not in self.llm_name:
                     kwargs["temperature"] = temperature
+                    kwargs["top_p"] = 0.95
+
                 response = litellm.completion(
                     model=self.llm_name,
                     tools=tools,
@@ -316,6 +325,14 @@ class Agent:
                 if retries >= self.max_retries:
                     raise e
 
+        # record the inputs and outputs of the llm
+        llm_input_output = {
+            "model": self.llm_name,
+            "messages": messages_,
+            "response": response.json(),
+            **kwargs,
+        }
+        self.llm_history.append(llm_input_output)
         # End timer, calculate total execution time, and include in response
         exec_time = time.time() - start_time
         return response, exec_time
@@ -396,7 +413,7 @@ class Agent:
             or "sonnet" in self.llm_name
             or "o3" in self.llm_name
             or "o4" in self.llm_name
-            and "qwen" not in self.llm_name
+            and "qwen" not in self.llm_name.lower()
         )
         self.use_fn_calling = use_fn_calling and support_fn_calling
         self.logger.warning(f"Using fn calling: {self.use_fn_calling}")
@@ -419,7 +436,7 @@ class Agent:
         user_prompt = self.instance_prompt_template.format(
             problem_statement=problem_statement,
             gt_patch=gt_patch,
-            working_dir='/testbed',
+            working_dir="/testbed",
             test_patch_hint=metadata.get("test_patch_hint", ""),
             candidate_patch=metadata.get("candidate_patch", ""),
             candidate_patch_correctness=(
@@ -462,7 +479,9 @@ class Agent:
             # Query the LLM
             messages = copy.deepcopy(self.history)
             try:
-                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history)
+                response, llm_exec_time = self.model_query(
+                    messages, temperature, condense_history=condense_history
+                )
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
                 done = True
@@ -486,7 +505,7 @@ class Agent:
                 prompt_tokens = -1
                 total_tokens = -1
                 if not condense_history:
-                    total_tokens =  self._count_tokens(messages)
+                    total_tokens = self._count_tokens(messages)
                 self.logger.warning(
                     "No token usage information available in the response."
                 )
@@ -499,6 +518,7 @@ class Agent:
             if self.use_fn_calling:
                 thought, action = self.custom_parser(response)
             else:
+                # import pdb; pdb.set_trace()
                 thought, action_original = self.parse_response(assistant_message)
                 if swesmith_wrapper:
                     action = action_original.from_swesmith_action()
@@ -632,6 +652,7 @@ class Agent:
 
         # Create a Trajectory object
         self.trajectory = Trajectory(
+            llm_history=json.dumps(self.llm_history),
             trajectory_steps=[
                 traj_step.model_dump() for traj_step in self.trajectory_steps
             ],

@@ -194,6 +194,7 @@ def runagent(
 
 def runagent_multiple(
     dataset: str,
+    subset: str,
     split: str,
     k: int = 1,
     traj_dir: str = "./traj",
@@ -225,13 +226,17 @@ def runagent_multiple(
         max_workers: Maximum number of threads to use.
     """
     # Load the dataset
-    ds = load_dataset(dataset, split=split)
+    ds = load_dataset(dataset, subset, split=split)
     logger.info(f"{len(ds)}, {k}, {start_idx}")
     # shuffle the dataset
     ds = ds.shuffle(seed=42)
 
     # get selected idxs
-    selected_idx = range(start_idx, start_idx + k)
+    if start_idx >= len(ds):
+        raise ValueError(f"start_idx ({start_idx}) is larger than or equal to dataset size ({len(ds)})")
+    
+    end_idx = min(start_idx + k, len(ds))
+    selected_idx = range(start_idx, end_idx)
     ds_selected = [ds[i] for i in selected_idx]
 
     # print ds_selected stats
@@ -292,7 +297,7 @@ def runagent_multiple(
         f"Starting editagent on {len(ds_selected)} Docker images after filtering."
     )
 
-    # with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    # with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         # Submit all tasks to the executor using keyword arguments
         future_to_image = {
@@ -326,9 +331,13 @@ def runagent_multiple(
                     if result is not None:
                         with file_lock:
                             f.write(result + "\n")
+                    else:
+                        raise Exception("result is None")
+                    
                 except Exception as e:
                     # Use docker_image from above when logging
                     logger.error(f"Exception for Docker image {docker_image}: {e}")
+                    raise e
 
     logger.info(f"editagent completed on {len(ds_selected)} Docker images.")
 

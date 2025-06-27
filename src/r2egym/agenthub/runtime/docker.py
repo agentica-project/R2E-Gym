@@ -560,7 +560,7 @@ class DockerRuntime(ExecutionEnvironment):
             # install required packages
             # self.run("uv pip install tree_sitter_languages") # remove since already installed in new dockers
 
-            self.run("uv pip install chardet")
+            self.run("pip install chardet")
 
             self.run("find . -name '*.pyc' -delete")
 
@@ -704,6 +704,7 @@ class DockerRuntime(ExecutionEnvironment):
 
         command = f"timeout {timeout} {exec_code} {args}"
         try:
+            
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 # Notice we do NOT set tty=True here
                 future = executor.submit(

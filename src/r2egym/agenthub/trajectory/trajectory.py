@@ -53,6 +53,7 @@ class Trajectory(BaseModel):
     ##############################
     # Trajectory steps data
     ##############################
+    llm_history: str
     trajectory_steps: list[TrajectoryStep]
 
     ##############################
