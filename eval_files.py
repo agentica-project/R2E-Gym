@@ -8,17 +8,10 @@ import fire
 from r2egym.agenthub.trajectory.trajectory import Trajectory
 
 
-FILE_NAMES = [
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-0.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-1.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-2.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-3.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-4.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-5.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-6.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-7.jsonl",
-    "./traj/deepswe/r2egym-deepswe-64k-100-steps-run-8.jsonl",
-]
+
+
+# Glob files from ./traj/qwen3-context
+FILE_NAMES = [f for f in Path("./traj/deepswe").glob("*.jsonl")]
 
 def load_trajectories(filename: str) -> List[Trajectory]:
     """Load trajectories from a JSONL file."""
