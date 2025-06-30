@@ -70,6 +70,16 @@ def run_agent_with_restarts(
     max_iterations: int = 1,
     max_tokens: int = 65536,
 ):
+    """
+    Iterative eval protocol:
+    - normally run the agent
+    - run for maximum num_iterations = 3 times
+    - stop if trajectory.exit_reason == "agent"
+    - otherwise continue iteratively till maximum iterations
+    - finally choose the trajectory with the lowest number of steps
+    - note restarts and iterative_evals are different (so just use one of them | add an assert flag)
+    - also if original is at temp = 0, then we do next with 0.1 and 0.2 and so on (max 0.2)
+    """
     steps_per_agent = max_steps // num_restarts
     logger.warning(f"running {steps_per_agent} steps per agent")
 
