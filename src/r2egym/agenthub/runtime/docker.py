@@ -36,6 +36,7 @@ from r2egym.agenthub.trajectory.swebench_utils import (
 )
 from r2egym.agenthub.utils.utils import get_logger
 from r2egym.commit_models.diff_classes import ParsedCommit
+from r2egym.swesmith.utils import get_test_command
 
 from kubernetes import client, config, watch
 
@@ -96,10 +97,21 @@ class DockerRuntime(ExecutionEnvironment):
         # swebench specific setup
         self.ds = ds
         self.backend = backend
-        self.docker_image = (
-            self.ds["docker_image"] if not docker_image else docker_image
-        )
+        ds_image = None
+        if "docker_image" in self.ds:
+            ds_image = self.ds["docker_image"]
+        elif "image_name" in self.ds:
+            ds_image = self.ds["image_name"]
+        else:
+            raise ValueError(f"No docker image found in ds: {self.ds}")
+        self.docker_image = ds_image if not docker_image else docker_image
         self.swebench_verified = "swebench" in self.docker_image
+        self.swesmith = "swesmith" in self.docker_image
+        if self.swesmith:
+            image_name = self.ds['image_name'].replace('__', '_1776_')
+            self.swebench_verified = False
+            self.docker_image = f'jyangballin/{image_name}:latest'
+        
         if self.swebench_verified:
             # also create a test spec for swebench verified dockers (useful for grading)
             self.test_spec = make_test_spec(self.ds)
@@ -109,14 +121,15 @@ class DockerRuntime(ExecutionEnvironment):
         self.alt_path = alt_path
         self.command = command
         self.repo_name = (
-            self.ds["repo"] if self.swebench_verified else self.ds["repo_name"]
+            self.ds["repo"] if self.swebench_verified or self.swesmith else self.ds["repo_name"]
         )
-        self.commit_json = (
-            self.ds["parsed_commit"]
-            if self.swebench_verified
-            else self.ds["parsed_commit_content"]
-        )
-        self.commit = ParsedCommit(**json.loads(self.commit_json))
+        if not self.swesmith:
+            self.commit_json = (
+                self.ds["parsed_commit"]
+                if self.swebench_verified
+                else self.ds["parsed_commit_content"]
+            )
+            self.commit = ParsedCommit(**json.loads(self.commit_json))
         self.docker_kwargs = docker_kwargs
         if logger is None:
             if self.backend == "docker":
@@ -451,6 +464,56 @@ class DockerRuntime(ExecutionEnvironment):
                     self._stop_kubernetes_pod()
         except Exception as e:
             print("Container stop/delete error:", repr(e))
+    
+    def reset_swesmith_tests(self):
+        f2p_files = list(set([x.split("::", 1)[0] for x in self.ds[FAIL_TO_PASS]]))
+        p2p_files = list(set([x.split("::", 1)[0] for x in self.ds[PASS_TO_PASS]]))
+        all_files = list(set(f2p_files + p2p_files))
+        all_files = [f for f in all_files if 
+             os.path.basename(f).startswith('test_') and os.path.basename(f).endswith('.py') or
+             os.path.basename(f).endswith('_test.py')]
+        commit_id = self.ds['base_commit']
+        reset_command = (
+            f'printf "%s\\n" {" ".join(all_files)} | '
+            f'xargs -n1 -I{{}} git checkout {commit_id} -- "{{}}" 2>/dev/null'
+        )
+        self.run(reset_command)
+
+    def setup_env_swesmith(self):
+        try:
+            commit_id = self.ds['base_commit']
+            self.run("git fetch")
+            self.run(f"git checkout {commit_id}")
+            self.run("python -m pip install chardet")
+            # Setup the run_test.sh script for subsequent testing.  
+            test_command, _ = get_test_command(self.ds)
+            eval_script_content = "\n".join(
+                [
+                    "#!/bin/bash",
+                    "set -uxo pipefail",
+                    "source /opt/miniconda3/bin/activate",
+                    f"conda activate testbed",
+                    f"cd testbed/",
+                    f": '>>>>> Start Test Output'",
+                    test_command,
+                    f": '>>>>> End Test Output'",
+                ]
+            ) + "\n"
+            
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.sh') as temp_file:
+                temp_file.write(eval_script_content)
+                temp_file.flush()  # Ensure content is written to disk
+                temp_file_path = temp_file.name
+            
+            # Copy the file to container and clean up
+            self.copy_to_container(temp_file_path, "/run_tests.sh")
+            os.unlink(temp_file_path)  # Clean up the temporary file
+            
+            self.run("chmod +x /run_tests.sh")
+            
+            
+        except Exception as e:
+            self.logger.error(f"Error setting up environment: {repr(e)}")
 
     def setup_env_swebench(self):
         try:
@@ -483,6 +546,8 @@ class DockerRuntime(ExecutionEnvironment):
     def setup_env(self):
         if self.swebench_verified:
             return self.setup_env_swebench()
+        elif self.swesmith:
+            return self.setup_env_swesmith()
 
         try:
             # setup venv
@@ -913,6 +978,43 @@ class DockerRuntime(ExecutionEnvironment):
             return parsed_output
         else:
             return parse_log_fn(f"{self.repo_name}")(log_output)
+    
+    def _calculate_reward_swesmith(self, get_test_output=False, timeout: int = 300) -> float:
+        self.reset_swesmith_tests()
+        output, error_msg = self.run("/run_tests.sh", timeout=timeout)
+        parse = self.parse_logs(output)
+        
+        fail2pass = [ ".".join(line.split("::")[1:]) for line in self.ds['FAIL_TO_PASS']]
+        pass2pass = [ ".".join(line.split("::")[1:]) for line in self.ds['PASS_TO_PASS']]
+        # @(Naman, Jas): Parse the output and return the reward. This implementation is a hack rn.
+        if not parse:
+            return 0.0
+        
+        # Check fail2pass
+        for test_name in fail2pass:
+            if test_name not in parse:
+                # Check if test_name is substring of any key
+                matching_key = next((k for k in parse.keys() if test_name in k), None)
+                if matching_key is None:
+                    return 0.0
+                if parse[matching_key] != 'PASSED':
+                    return 0.0
+                test_name = matching_key
+            if parse[test_name] != 'PASSED':
+                return 0.0
+        
+        # Check pass2pass
+        for test_name in pass2pass:
+            if test_name not in parse:
+                # Check if test_name is substring of any key
+                matching_key = next((k for k in parse.keys() if test_name in k), None)
+                if matching_key is None:
+                    return 0.0
+                test_name = matching_key
+            if parse[test_name] != 'PASSED':
+                return 0.0
+        return 1.0
+
 
     def _calculate_reward_swebench(self, get_test_output=False, timeout: int = 300) -> float:
         # gt_test_patch = self.commit.get_patch(test_file=True,non_test_file=False)
@@ -974,6 +1076,8 @@ class DockerRuntime(ExecutionEnvironment):
     def _calculate_reward(self, get_test_output=False, timeout: int = 300) -> float:
         if self.swebench_verified:
             return self._calculate_reward_swebench(get_test_output=get_test_output, timeout=timeout)
+        elif self.swesmith:
+            return self._calculate_reward_swesmith(get_test_output=get_test_output, timeout=timeout)
         else:
             return self._calculate_reward_r2e(get_test_output=get_test_output, timeout=timeout)
 
