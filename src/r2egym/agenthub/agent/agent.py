@@ -70,9 +70,10 @@ class Agent:
         else:
             self.logger = logger
         self.llm_name = args.llm_name
+
         self.llm_base_url = (
             # "http://localhost:8000/v1"
-            "http://localhost:8000/v1"
+            os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
             if ("openai/" in self.llm_name) or ("hosted_vllm" in self.llm_name)
             else None
         )
@@ -150,6 +151,7 @@ class Agent:
 
     def condense_history(self, messages: List[Dict[str, str]], max_tokens: int = 65536) -> List[Dict[str, str]]:
         """
+        DEPRECATED: Condense history is no longer used.
         Condense older user messages if total token usage exceeds a threshold.
         Replaces the content of those older user messages (after the first)
         with a placeholder until total tokens are under the limit.
@@ -169,37 +171,6 @@ class Agent:
         else:
             # NOTE: no condensing is done here
             raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
-               
-        # # 1) simple pass: keep only last 5 user observations (after the first)
-        # user_idxs = [i for i, m in enumerate(messages_) if m["role"] == "user"][1:]
-        # for idx in user_idxs[:-5]:
-        #     messages_[idx]["content"] = "<Observation condensed for saving context>"        
-        # if total_tokens <= MAX_TOKENS:
-        #     logger.warning(f"Only top-n (n=5) condenser was applied. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}")
-        #     return messages_
-
-        # 2) Identify user messages (role='user'), skipping the very first user message
-        user_msg_indexes = [
-            i for i, msg in enumerate(messages_) if msg["role"] == "user"
-        ]
-        if len(user_msg_indexes) <= 1:
-            # If there's only 0 or 1 user messages total, nothing to condense
-            return messages_
-
-        # Start condensing from the second user message onward excluding last user message
-        for idx in user_msg_indexes[1:-1]:
-            # Replace with a short placeholder
-            messages_[idx]["content"] = "<Observation condensed for saving context>"
-
-            # Re-count tokens after condensing
-            total_tokens = self._count_tokens(messages_)
-            if total_tokens <= MAX_TOKENS:
-                break
-
-        self.logger.warning(
-            f"Condensed history (both) to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )
-        return messages_
 
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """

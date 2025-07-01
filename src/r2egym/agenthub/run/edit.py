@@ -132,6 +132,7 @@ def run_agent_with_restarts(
     max_iterations: int = 1,
     thinking_mode: bool = False,
     scaffold: str = "r2egym",
+    max_tokens: int = 65536,
 ):
     """
     Iterative eval protocol:
@@ -174,6 +175,7 @@ def run_agent_with_restarts(
                 condense_history=condense_history,
                 thinking_mode=thinking_mode,
                 scaffold=scaffold,
+                max_token_limit=max_tokens,
             )
             # remove reproduce.py
             # env.runtime.run('rm reproduce_issue.py')
@@ -204,6 +206,7 @@ def runagent(
     max_iterations: int = 1,
     thinking_mode: bool = False,
     scaffold: str = "r2egym",
+    max_tokens: int = 65536,
 ) -> Optional[str]:
     """
     Runs the editagent agent on a specified Docker image.
@@ -263,6 +266,7 @@ def runagent(
             max_iterations=max_iterations,
             thinking_mode=thinking_mode,
             scaffold=scaffold,
+            max_tokens=max_tokens,
         )
     except Exception as e:
         logger.error(
@@ -315,6 +319,7 @@ def runagent_multiple(
     thinking_mode: bool = False,
     scaffold: str = "r2egym",
     prepull_images: bool = True,
+    max_tokens: int = 65536,
 ):
     """
     Runs the editagent agent on the first k Docker images.
@@ -422,6 +427,7 @@ def runagent_multiple(
                 max_iterations=max_iterations,
                 thinking_mode=thinking_mode,
                 scaffold=scaffold,
+                max_tokens=max_tokens,
             ): ds_entry[
                 "docker_image"
             ]  # <-- store the docker_image from ds_entry here
