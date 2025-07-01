@@ -97,10 +97,16 @@ class Trajectory(BaseModel):
     ##############################
     custom_test_outputs: dict = {}  # custom test outputs
     regression_test_output: Optional[str] = None  # regression test output
+    verifier_prob: Optional[float] = None  # verifier yes probability
+    reproduction_test_scores: list[int] = []  # reproduction test score
 
     @classmethod
     def load_from_model_dump_json(cls, json_string: str):
         return Trajectory.model_validate_json(json_string)
+
+    @property
+    def instance_name(self):
+        return self.docker_image.split(".")[-1]
 
     @property
     def total_time_traj(self):
@@ -523,3 +529,34 @@ class Trajectory(BaseModel):
                     }
                 )
         return lines_tokens
+
+    @property
+    def true_output_patch_only_existing_files(self):
+        try:
+            return self.parsed_pred_commit.get_patch(
+                include_files=set(self.editor_files) - set(self.created_files)
+            )  ## note only python, pyx not covered
+        except Exception as e:
+            print(f"Error in true_output_patch_only_modified: {e}")
+            return self.output_patch
+
+    def swebench_reasoning_trace(self):
+        reasoning_trace = ""
+        for step_idx, step in enumerate(self.trajectory_steps):
+            reasoning_trace += "=" * 100 + "\n"
+            reasoning_trace += f"Step {step_idx}:\n\n"
+            reasoning_trace += f"Thought:\n\n{step.thought}\n"
+            reasoning_trace += f"Action:\n\n{step.action}\n"
+            reasoning_trace += f"Observation:\n\n{step.observation}\n"
+        return reasoning_trace
+
+    def create_swebench_submission(self):
+        return {
+            "instance_id": self.instance_name,
+            "model_name_or_path": self.exp_name,
+            "model_patch": self.true_output_patch,
+        }
+
+    @property
+    def reproduction_test_score(self):
+        return sum(self.reproduction_test_scores)

@@ -6,7 +6,7 @@ This guide provides step-by-step instructions to reproduce the DeepSWE Pass@1 re
 
 The following doc assumes you have
 
-- *GPUs** with sufficient VRAM (recommended: 80GB+ for tensor parallelism)
+- **GPUs** with sufficient VRAM (recommended: 80GB+ for tensor parallelism)
 - **Sufficient disk space** (at least 1TB for models and datasets)
 
 
@@ -29,7 +29,6 @@ source .venv/bin/activate
 uv sync && uv pip install -e .
 ```
 
-> 💡 **Tip**: If you encounter permission issues with uv installation, you may need to run with appropriate permissions or use alternative installation methods.
 
 ## 🤖 Running DeepSWE Inference
 
@@ -39,7 +38,12 @@ First, start the VLLM server to serve the DeepCoder model:
 
 ```bash
 # Start VLLM server with tensor parallelism across 8 GPUs
-vllm serve agentica-org/DeepCoder-14B-Preview --tensor-parallel-size 8
+export MAX_CONTEXT_LEN=65536
+VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 vllm serve agentica-org/DeepSWE-Preview \
+    --tensor-parallel-size 8 \
+    --max-model-len $MAX_CONTEXT_LEN \
+    --hf-overrides '{"max_position_embeddings": '$MAX_CONTEXT_LEN'}' \
+    --enable_prefix_caching
 ```
 
 > ⚠️ **Important**: Wait for the server to fully load before proceeding to the next step. You should see logs indicating the server is ready to accept requests.
@@ -53,18 +57,23 @@ In a new terminal session, run the DeepSWE agent evaluation:
 source .venv/bin/activate
 
 # Run the DeepSWE agent on SWE-Bench Verified
-uv run python src/r2egym/agenthub/run/edit.py runagent_multiple \
-  --max_workers 54 \
-  --dataset "R2E-Gym/SWE-Bench-Verified" \
-  --split "test" \
-  --start_idx 0 \
-  --k 500 \
-  --llm_name 'vllm/agentica-org/DeepCoder-14B-Preview' \
-  --use_fn_calling False \
-  --exp_name deepswe_32b_agent_swebv_eval_temp_1_run_1 \
-  --temperature 1 \
-  --max_steps 40 \
-  --max_steps_absolute 100
+time python src/r2egym/agenthub/run/edit.py runagent_multiple \
+    --traj_dir "./traj" \
+    --max_workers 48 \
+    --start_idx 0 \
+    --k 500 \
+    --dataset "R2E-Gym/SWE-Bench-Verified" \
+    --split "test" \
+    --llm_name "openai/agentica-org/DeepSWE-Preview" \
+    --scaffold "r2egym" \
+    --use_fn_calling False \
+    --exp_name "$EXP_NAME" \
+    --temperature "$TEMP" \
+    --max_steps_absolute 100 \
+    --backend "docker" \
+    --condense_history False \
+    --max_reward_calc_time 1200 \
+    --max_tokens 65536
 ```
 
 **Parameter Explanation:**
