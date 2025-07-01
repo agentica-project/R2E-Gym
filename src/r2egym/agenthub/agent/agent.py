@@ -141,29 +141,6 @@ class Agent:
         self.trajectory_steps = []
         self.history = []
 
-    def condense_history(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """
-        DEPRECATED: Condense history is no longer used.
-        Condense older user messages if total token usage exceeds a threshold.
-        Replaces the content of those older user messages (after the first)
-        with a placeholder until total tokens are under the limit.
-        """
-        MAX_TOKENS = 1e9 # 32768
-        # Make a deepcopy so we don't mutate the original list
-        messages_ = copy.deepcopy(messages)
-
-        # Count the total tokens in the conversation so far
-        total_tokens = self._count_tokens(messages_)
-        self.logger.warning(
-            f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )     
-        if total_tokens <= MAX_TOKENS:
-            logger.warning("No condensing needed. Total tokens are within the limit.")
-            return messages_
-        else:
-            # NOTE: no condensing is done here
-            raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
-
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """
         Counts the tokens for a list of messages using the litellm library.
@@ -174,7 +151,7 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True) -> Dict[str, Any]:
+        self, messages: List[Dict[str, str]], temperature: float = 0,) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None
         retries = 0
@@ -207,11 +184,7 @@ class Agent:
         if using_local:
             litellm.api_key = None
 
-        if not self.use_fn_calling:
-            # condense messages after first user message
-            messages_ = self.condense_history(messages)
-        else:
-            messages_ = copy.deepcopy(messages)
+        messages_ = copy.deepcopy(messages)
 
         # query the model with retries
         while retries < self.max_retries:
@@ -308,7 +281,6 @@ class Agent:
         temperature=0,
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
-        condense_history: bool = True,
         scaffold: str = "r2egym",
     ):
         assert scaffold in ["r2egym", "openhands", "sweagent"], "Scaffold must be either r2egym or openhands or sweagent"
@@ -395,7 +367,7 @@ class Agent:
             # Query the LLM
             messages = copy.deepcopy(self.history)
             try:
-                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history)
+                response, llm_exec_time = self.model_query(messages, temperature)
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
                 self.logger.error(f"Error querying LLM: {traceback.format_exc()}")
@@ -419,14 +391,15 @@ class Agent:
                 completion_tokens = -1
                 prompt_tokens = -1
                 total_tokens = -1
-                if not condense_history:
-                    total_tokens =  self._count_tokens(messages)
+                total_tokens =  self._count_tokens(messages)
                 self.logger.warning(
                     "No token usage information available in the response."
                 )
 
             # Parse the LLM response to get 'thought' and 'action'
             self.response = response  # for debugging
+            assistant_message = response.choices[0].message.content
+            self.logger.info(f"Assistant's message:\n{assistant_message}\n")
 
             if self.use_fn_calling:
                 thought, action = self.custom_parser(response)

@@ -128,9 +128,7 @@ def run_agent_with_restarts(
     temperature=0.0,
     max_steps_absolute=50,
     use_fn_calling: bool = True,
-    condense_history: bool = True,
     max_iterations: int = 1,
-    thinking_mode: bool = False,
     scaffold: str = "r2egym",
     max_tokens: int = 65536,
 ):
@@ -172,8 +170,6 @@ def run_agent_with_restarts(
                 temperature=temperatures[iteration],
                 max_steps_absolute=max_steps_absolute,
                 use_fn_calling=use_fn_calling,
-                condense_history=condense_history,
-                thinking_mode=thinking_mode,
                 scaffold=scaffold,
                 max_token_limit=max_tokens,
             )
@@ -201,10 +197,8 @@ def runagent(
     temperature=0,
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
-    condense_history: bool = True,
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
-    thinking_mode: bool = False,
     scaffold: str = "r2egym",
     max_tokens: int = 65536,
 ) -> Optional[str]:
@@ -262,9 +256,7 @@ def runagent(
             temperature=temperature,
             max_steps_absolute=max_steps_absolute,
             use_fn_calling=use_fn_calling,
-            condense_history=condense_history,
             max_iterations=max_iterations,
-            thinking_mode=thinking_mode,
             scaffold=scaffold,
             max_tokens=max_tokens,
         )
@@ -312,13 +304,10 @@ def runagent_multiple(
     temperature: float = 0,
     use_fn_calling: bool = True,
     backend: str = "kubernetes", # "kubernetes" or "docker"
-    condense_history: bool = True,
-    swesmith_wrapper: bool = False,
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
-    thinking_mode: bool = False,
     scaffold: str = "r2egym",
-    prepull_images: bool = True,
+    prepull_images: bool = False,
     max_tokens: int = 65536,
 ):
     """
@@ -422,10 +411,8 @@ def runagent_multiple(
                 temperature=temperature,
                 use_fn_calling=use_fn_calling,
                 backend=backend,
-                condense_history=condense_history,
                 max_reward_calc_time=max_reward_calc_time,
                 max_iterations=max_iterations,
-                thinking_mode=thinking_mode,
                 scaffold=scaffold,
                 max_tokens=max_tokens,
             ): ds_entry[
