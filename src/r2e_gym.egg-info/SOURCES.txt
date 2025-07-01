@@ -30,6 +30,11 @@ src/r2egym/agenthub/tools/file_editor.py
 src/r2egym/agenthub/tools/finish.py
 src/r2egym/agenthub/tools/search.py
 src/r2egym/agenthub/tools/search_dir.py
+src/r2egym/agenthub/tools/str_replace_editor.py
+src/r2egym/agenthub/tools/submit.py
+src/r2egym/agenthub/tools/r2egym/__init__.py
+src/r2egym/agenthub/tools/r2egym/execute_bash.py
+src/r2egym/agenthub/tools/r2egym/file_editor.py
 src/r2egym/agenthub/trajectory/__init__.py
 src/r2egym/agenthub/trajectory/swebench_utils.py
 src/r2egym/agenthub/trajectory/trajectory.py
@@ -81,3 +86,6 @@ src/r2egym/repo_analysis/issues/pyramid_issues.py
 src/r2egym/repo_analysis/issues/scrapy_issues.py
 src/r2egym/repo_analysis/issues/sympy_issues.py
 src/r2egym/repo_analysis/issues/tornado_issues.py
+src/r2egym/swesmith/__init__.py
+src/r2egym/swesmith/constants.py
+src/r2egym/swesmith/utils.py
