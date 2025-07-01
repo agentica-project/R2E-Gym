@@ -15,10 +15,10 @@ class Observation:
         # empty or no function call
         if not self.action.function_name:
             return CONTINUE_MSG
-        elif self.action.function_name == "finish":
+        elif self.action.function_name == "finish" or self.action.function_name == "submit":
             return "<<< Finished >>>"
         else:
-            if self.action.function_name == "execute_bash":
+            if self.action.function_name == "execute_bash" or self.action.function_name == "bash":
                 lines = self.bash_output.splitlines() if self.bash_output else []
                 if len(lines) > 2 * self.num_lines:
                     top_lines = "\n".join(lines[:self.num_lines])

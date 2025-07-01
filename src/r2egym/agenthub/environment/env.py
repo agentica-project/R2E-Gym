@@ -65,9 +65,15 @@ class RepoEnv(gym.Env):
         Resets the environment and returns an initial observation.
         """
         self.logger.info(f"Resetting RepoEnv ...")
+        # close the runtime
+        self.runtime.close()
         self.observation = "Environment reset"
         self.state = None
         self.done = False
+        # also just recreate env again with the same args
+        self.runtime = DockerRuntime(
+            ds=self.args.ds, command=["/bin/bash", "-l"], logger=self.logger, backend=self.backend
+        )
         return self.observation  # self.get_observation()
 
     def add_commands(self, cmd_files: list[str]):
@@ -185,7 +191,7 @@ class RepoEnv(gym.Env):
         bash_output, error_code, total_time = self.run_action(action, timeout=timeout)
         self.observation = Observation(bash_output, error_code, action)
         reward = self.calculate_reward(self.observation)
-        if "finish" in action.function_name.lower():
+        if "finish" in action.function_name.lower() or "submit" in action.function_name.lower():
             self.done = True
         info = {"total_time": total_time}
         return self.observation, reward, self.done, info

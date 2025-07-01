@@ -17,13 +17,17 @@ from r2egym.agenthub.utils.log import get_logger
 from r2egym.agenthub.environment.env import RepoEnv
 from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
+from anthropic import Anthropic, AnthropicVertex  # Add Anthropic Vertex import
 from r2egym.agenthub.tools import (
+    r2egym_bash_execute_tool,
     search_tool,
     file_editor,
-    bash_execute_tool,
     finish_tool,
+    str_replace_editor_tool,
+    execute_bash_tool,
+    submit_tool,
 )
-
+import traceback
 logger = get_logger(__name__)  # Logger for this module
 
 
@@ -38,6 +42,7 @@ class AgentArgs:
     llm_name: str
     llm_base_url: Optional[str] = "http://localhost:8000/v1"  # None
     demo_file: Optional[Path] = None
+    use_demo: Optional[bool] = False
     other_args: Optional[Dict[str, Any]] = None  # To handle extra configurations
 
     @classmethod
@@ -76,6 +81,8 @@ class Agent:
         self.logger.info(f"Initialized Agent: {name} with LLM: {args.llm_name}")
         self.max_retries = self.other_args.get("max_retries", 5)
         self.llm_timeout = self.other_args.get("timeout", 3000)
+
+
 
     def prepare_system_message(
         self, problem_statement: str, structure: str, command_docs: str, demo: str
@@ -134,28 +141,6 @@ class Agent:
         self.trajectory_steps = []
         self.history = []
 
-    def condense_history(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """
-        DEPRECATED: Condense history is no longer used.
-        Condense older user messages if total token usage exceeds a threshold.
-        Replaces the content of those older user messages (after the first)
-        with a placeholder until total tokens are under the limit.
-        """
-        MAX_TOKENS = 65536 # 32768
-        # Make a deepcopy so we don't mutate the original list
-        messages_ = copy.deepcopy(messages)
-
-        # Count the total tokens in the conversation so far
-        total_tokens = self._count_tokens(messages_)
-        self.logger.warning(
-            f"Condensing history to save context. total tokens: {total_tokens}, max tokens: {MAX_TOKENS}"
-        )     
-        if total_tokens <= MAX_TOKENS:
-            logger.warning("No condensing needed. Total tokens are within the limit.")
-            return messages_
-        else:
-            raise ValueError(f"Total tokens: {total_tokens} > {MAX_TOKENS}")
-
     def _count_tokens(self, messages: List[Dict[str, str]]) -> int:
         """
         Counts the tokens for a list of messages using the litellm library.
@@ -166,15 +151,17 @@ class Agent:
         return token_count
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, condense_history: bool = True
-    ) -> Dict[str, Any]:
+        self, messages: List[Dict[str, str]], temperature: float = 0,) -> Dict[str, Any]:
         """Query the LLM with the messages and measure execution time."""
         response = None
         retries = 0
         tools = None
 
         if self.use_fn_calling:
-            tools = [search_tool, file_editor, bash_execute_tool, finish_tool]
+            if self.scaffold == "r2egym":
+                tools = [search_tool, file_editor, r2egym_bash_execute_tool, finish_tool]
+            elif self.scaffold == "openhands" or self.scaffold == "sweagent":
+                tools = [str_replace_editor_tool, execute_bash_tool, submit_tool]
             if "vertex" not in self.llm_name.lower():
                 self.logger.warning(f"using prompt caching for {self.llm_name}")
                 # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
@@ -197,11 +184,7 @@ class Agent:
         if using_local:
             litellm.api_key = None
 
-        if not self.use_fn_calling and condense_history:
-            # condense messages after first user message
-            messages_ = self.condense_history(messages)
-        else:
-            messages_ = copy.deepcopy(messages)
+        messages_ = copy.deepcopy(messages)
 
         # query the model with retries
         while retries < self.max_retries:
@@ -262,7 +245,6 @@ class Agent:
 
         # convert action to Action object
         action = Action.from_string(action)
-        # action, original_xml_str = Action.from_swesmith_xml_string(action)
 
         return thought, action
 
@@ -276,7 +258,7 @@ class Agent:
             parameters = json.loads(
                 response.choices[0].message.tool_calls[0].function.arguments
             )
-            action = Action(function_name, parameters)
+            action = Action(function_name=function_name, parameters=parameters)
         except:
             action = Action(function_name="", parameters={})
 
@@ -299,10 +281,10 @@ class Agent:
         temperature=0,
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
-        condense_history: bool = True,
-        swesmith_wrapper: bool = False,
+        scaffold: str = "r2egym",
     ):
-
+        assert scaffold in ["r2egym", "openhands", "sweagent"], "Scaffold must be either r2egym or openhands or sweagent"
+        self.scaffold = scaffold
         # get the start time
         start_time = time.time()
         self.llm_timeout = max_llm_time
@@ -337,6 +319,7 @@ class Agent:
             problem_statement=problem_statement,
             gt_patch=gt_patch,
             working_dir='/testbed',
+            # base_commit=env.runtime.ds['base_commit'],
             test_patch_hint=metadata.get("test_patch_hint", ""),
             candidate_patch=metadata.get("candidate_patch", ""),
             candidate_patch_correctness=(
@@ -346,6 +329,12 @@ class Agent:
             ),
         )
         self.logger.info(f"User Prompt: {user_prompt}")
+
+        if self.args.use_demo:
+            with open(self.args.demo_file, "r") as file:
+                demo = file.read()
+            user_prompt = f"{demo}\n\n{user_prompt}"
+        self.logger.info(f"User Prompt with demo: {user_prompt}")
 
         # initialize the history
         self.history = [
@@ -367,7 +356,6 @@ class Agent:
             # Add steps remaining message
             steps_remaining = max_steps - step_count
             if steps_remaining > 0:
-                # stepcount_message = f"Steps Remaining: {steps_remaining} Total Steps: {max_steps}"
                 stepcount_message = f"Steps Remaining: {steps_remaining}"
             else:
                 stepcount_message = "You have reached the maximum number of steps. Please submit your answer NOW."
@@ -379,9 +367,10 @@ class Agent:
             # Query the LLM
             messages = copy.deepcopy(self.history)
             try:
-                response, llm_exec_time = self.model_query(messages, temperature, condense_history=condense_history)
+                response, llm_exec_time = self.model_query(messages, temperature)
             except Exception as e:
                 self.logger.error(f"Error querying LLM: {e}")
+                self.logger.error(f"Error querying LLM: {traceback.format_exc()}")
                 done = True
                 exit_reason = "llm_query_error"
                 break
@@ -402,8 +391,7 @@ class Agent:
                 completion_tokens = -1
                 prompt_tokens = -1
                 total_tokens = -1
-                if not condense_history:
-                    total_tokens =  self._count_tokens(messages)
+                total_tokens =  self._count_tokens(messages)
                 self.logger.warning(
                     "No token usage information available in the response."
                 )
@@ -416,11 +404,7 @@ class Agent:
             if self.use_fn_calling:
                 thought, action = self.custom_parser(response)
             else:
-                thought, action_original = self.parse_response(assistant_message)
-                if swesmith_wrapper:
-                    action = action_original.from_swesmith_action()
-                else:
-                    action = action_original
+                thought, action = self.parse_response(assistant_message)
 
             action_str = action.to_xml_string()
             self.logger.info(f"THOUGHT:\n{thought}\n")
@@ -470,7 +454,7 @@ class Agent:
                     self.history.append({"role": "user", "content": str(obs)})
             else:
                 self.logger.warning("logging fn response as a user message")
-                assistant_message = f"{thought}\n\n{action_original.to_xml_string()}"
+                assistant_message = f"{thought}\n\n{action.to_xml_string()}"
                 # assistant_message = f"{thought}\n\n{original_xml_str}"
                 self.history.append({"role": "assistant", "content": assistant_message})
                 self.history.append({"role": "user", "content": str(obs)})

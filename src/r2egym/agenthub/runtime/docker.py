@@ -219,7 +219,7 @@ class DockerRuntime(ExecutionEnvironment):
         try:
             # Check if the pod already exists
             self.container = self.client.read_namespaced_pod(
-                name=pod_name, namespace=DEFAULT_NAMESPACE
+                name=pod_name, namespace=DEFAULT_NAMESPACE, _request_timeout=60,
             )
             self.logger.info(f"Found existing Kubernetes pod: {pod_name}")
             return
@@ -257,12 +257,6 @@ class DockerRuntime(ExecutionEnvironment):
                 "imagePullSecrets": [{"name": "dockerhub-pro"}],
                 "nodeSelector": {"karpenter.sh/nodepool": "bigcpu-standby"},
                 "tolerations": [
-                    # {
-                    #     "key": "node.kubernetes.io/disk-pressure",
-                    #     "operator": "Exists",
-                    #     "effect": "NoSchedule",
-                    #     "tolerationSeconds": 10800,
-                    # },
                     {
                         "key": "node.kubernetes.io/disk-pressure",
                         "operator": "Exists",
@@ -280,12 +274,12 @@ class DockerRuntime(ExecutionEnvironment):
         for attempt in range(1, max_retries + 1):
             try:
                 pod = self.client.create_namespaced_pod(
-                    namespace=DEFAULT_NAMESPACE, body=pod_body
+                    namespace=DEFAULT_NAMESPACE, body=pod_body, _request_timeout=120,
                 )
                 break  # success
             except client.ApiException as e:
                 # Retry on API-server throttling or transient errors
-                if e.status in (429, 500, 503):
+                if e.status in (409, 429, 500, 503):
                     self.logger.warning(
                         f"Transient Kubernetes error {e.status} while creating pod "
                         f"'{pod_name}' (attempt {attempt}/{max_retries}); "
@@ -310,11 +304,15 @@ class DockerRuntime(ExecutionEnvironment):
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={pod_name}",
                 resource_version=rv,
-                timeout_seconds=600,  # 10 minutes timeout instead of 1 hour
+                timeout_seconds=1200,  # 10 minutes timeout instead of 1 hour
             )
+            start_time = time.time()
             for event in stream:
                 obj = event["object"]
                 phase = obj.status.phase
+                if time.time() - start_time > 1200:
+                    w.stop()
+                    raise RuntimeError(f"Kubernetes pod '{pod_name}' timed out after 1200 seconds.")
                 # self.logger.info(f"Event {event['type']} → pod.phase={phase}")
                 if phase == "Running":
                     self.logger.info(f"Kubernetes pod '{pod_name}' is Running.")
@@ -337,7 +335,7 @@ class DockerRuntime(ExecutionEnvironment):
             # Check pod status directly as fallback
             try:
                 pod_status = self.client.read_namespaced_pod(
-                    name=pod_name, namespace=DEFAULT_NAMESPACE
+                    name=pod_name, namespace=DEFAULT_NAMESPACE, _request_timeout=60,
                 )
                 if pod_status.status.phase == "Running":
                     self.logger.info(f"Pod '{pod_name}' is running (verified after watch error)")
@@ -384,29 +382,21 @@ class DockerRuntime(ExecutionEnvironment):
 
     def _stop_kubernetes_pod(self):
         try:
-            pod = self.client.read_namespaced_pod(
-                self.container_name, DEFAULT_NAMESPACE
+            self.client.delete_namespaced_pod(
+                name=self.container_name,
+                namespace=DEFAULT_NAMESPACE,
+                body=kubernetes.client.V1DeleteOptions(grace_period_seconds=0),
+                _request_timeout=60,
             )
-            #rv = pod.metadata.resource_version
 
-            # 2) start the watch
             w = watch.Watch()
             stream = w.stream(
                 self.client.list_namespaced_pod,
                 namespace=DEFAULT_NAMESPACE,
                 field_selector=f"metadata.name={self.container_name}",
-                #resource_version=rv,
                 timeout_seconds=60,  # 1 minute timeout instead of indefinite
             )
 
-            # 3) delete the pod (now your watch is listening)
-            self.client.delete_namespaced_pod(
-                name=self.container_name,
-                namespace=DEFAULT_NAMESPACE,
-                body=kubernetes.client.V1DeleteOptions(grace_period_seconds=0),
-            )
-
-            # 4) consume events until you see DELETED or timeout
             deletion_confirmed = False
             for event in stream:
                 if event["type"] == "DELETED":
@@ -484,7 +474,6 @@ class DockerRuntime(ExecutionEnvironment):
             commit_id = self.ds['base_commit']
             self.run("git fetch")
             self.run(f"git checkout {commit_id}")
-            self.run("python -m pip install chardet")
             # Setup the run_test.sh script for subsequent testing.  
             test_command, _ = get_test_command(self.ds)
             eval_script_content = "\n".join(
@@ -510,8 +499,11 @@ class DockerRuntime(ExecutionEnvironment):
             os.unlink(temp_file_path)  # Clean up the temporary file
             
             self.run("chmod +x /run_tests.sh")
-            
-            
+
+            # Ensure can call and execute the tools in /usr/local/bin.
+            self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
+            self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
+            self.run("python -m pip install chardet")
         except Exception as e:
             self.logger.error(f"Error setting up environment: {repr(e)}")
 

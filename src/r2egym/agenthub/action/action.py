@@ -129,7 +129,7 @@ class Action:
         """
         if not self.function_name:
             return ""
-        elif self.function_name == "finish":
+        elif self.function_name == "finish" or self.function_name == "submit":
             return "echo '<<<Finished>>>'"
 
         # Start building the command
@@ -151,67 +151,6 @@ class Action:
             cmd_parts.append(param_value_quoted)
 
         return " ".join(cmd_parts)
-    
-    def from_swesmith_action(self) -> "Action":
-        """
-        Converts this action into R2E format from SWESmith format.
-        """
-        # create a copy of the action
-        action = Action(self.function_name, self.parameters)
-        assert action.function_name in ['bash', 'submit', 'str_replace_editor']
-        
-        # Map SWESmith actions to r2e-gym actions
-        if action.function_name == 'submit':
-            action.function_name = 'finish'
-            action.parameters = {'command': 'submit'}
-        elif action.function_name == 'bash':
-            action.function_name = 'execute_bash'
-            action.parameters = {'cmd': action.parameters['command']}
-        elif action.function_name == 'str_replace_editor':
-            action.function_name = 'file_editor'
-            # Parameters are compatible between str_replace_editor and file_editor
-            # No parameter mapping needed
-        elif action.function_name in ['finish', 'execute_bash', 'file_editor']:
-          if action.function_name == 'execute_bash' and 'command' in action.parameters:
-            action.parameters['cmd'] = action.parameters['command']
-            del action.parameters['command']
-
-        return action
-
-
-    @classmethod
-    def from_swesmith_xml_string(cls, xml_str: str) -> "Action":
-        """Convert a SWESmith XML action string into an Action object.
-        
-        Args:
-            xml_str: XML string in SWESmith format
-            
-        Returns:
-            Action object with converted function name and parameters
-        """
-        # First parse as normal action
-        action = cls.from_string(xml_str)
-        original_xml_str = action.to_xml_string()
-        
-        assert action.function_name in ['bash', 'submit', 'str_replace_editor']
-        
-        # Map SWESmith actions to r2e-gym actions
-        if action.function_name == 'submit':
-            action.function_name = 'finish'
-            action.parameters = {'command': 'submit'}
-        elif action.function_name == 'bash':
-            action.function_name = 'execute_bash'
-            action.parameters = {'cmd': action.parameters['command']}
-        elif action.function_name == 'str_replace_editor':
-            action.function_name = 'file_editor'
-            # Parameters are compatible between str_replace_editor and file_editor
-            # No parameter mapping needed
-        elif action.function_name in ['finish', 'execute_bash', 'file_editor']:
-          if action.function_name == 'execute_bash' and 'command' in action.parameters:
-            action.parameters['cmd'] = action.parameters['command']
-            del action.parameters['command']
-        return action, original_xml_str
-
 
 if __name__ == "__main__":
     # Sample usage

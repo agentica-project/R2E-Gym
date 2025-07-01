@@ -238,6 +238,14 @@ def analyze_log(
     print(f"Total exec time: {sum(total_exec_times)}")
     print(pd.Series(total_exec_times).describe(percentiles=[0.05, 0.5, 0.95]))
 
+    correct_num_steps = [t.num_steps for t in trajectories if t.reward == 1]
+    print(f"Correct number of steps: {sum(correct_num_steps)}")
+    print(
+        pd.Series(correct_num_steps).describe(
+            percentiles=[0.05, 0.5, 0.65, 0.75, 0.85, 0.95]
+        )
+    )
+    
     if not minimal:
         # llm_time_by_step = [t.llm_time_by_step for t in trajectories]
         # print(f"LLM time by step:")
