@@ -84,10 +84,9 @@ instance_prompt: |-
   Your thinking should be thorough and so it's fine if it's very long.
   
 command_files:
-  - "./src/r2egym/agenthub/tools/file_editor.py"
-  - "./src/r2egym/agenthub/tools/search.py"
+  - "./src/r2egym/agenthub/tools/str_replace_editor.py"
   - "./src/r2egym/agenthub/tools/execute_bash.py"
-  - "./src/r2egym/agenthub/tools/finish.py"
+  - "./src/r2egym/agenthub/tools/submit.py"
 llm_name: "gpt-4o"
 demo_file: "./src/r2egym/agenthub/config/localizer-demo"
 other_args:

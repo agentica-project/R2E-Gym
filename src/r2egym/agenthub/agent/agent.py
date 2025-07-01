@@ -19,6 +19,7 @@ from r2egym.agenthub.runtime.docker import DockerRuntime
 from r2egym.agenthub.trajectory import TrajectoryStep, Trajectory
 from anthropic import Anthropic, AnthropicVertex  # Add Anthropic Vertex import
 from r2egym.agenthub.tools import (
+    r2egym_bash_execute_tool,
     search_tool,
     file_editor,
     finish_tool,
@@ -218,9 +219,9 @@ class Agent:
         tools = None
 
         if self.use_fn_calling:
-            if self.version == "v1":
-                tools = [search_tool, file_editor, execute_bash_tool, finish_tool]
-            elif self.version == "v2":
+            if self.scaffold == "r2egym":
+                tools = [search_tool, file_editor, r2egym_bash_execute_tool, finish_tool]
+            elif self.scaffold == "openhands" or self.scaffold == "sweagent":
                 tools = [str_replace_editor_tool, execute_bash_tool, submit_tool]
 
             if thinking_mode:
@@ -359,7 +360,6 @@ class Agent:
 
         # convert action to Action object
         action = Action.from_string(action)
-        # action, original_xml_str = Action.from_swesmith_xml_string(action)
 
         return thought, action
 
@@ -452,12 +452,11 @@ class Agent:
         # additional metadata e.g. for hints / additional inputs etc
         metadata: Optional[Dict[str, Any]] = {},
         condense_history: bool = True,
-        swesmith_wrapper: bool = False,
         thinking_mode: bool = False,
-        version: str = "v2",
+        scaffold: str = "r2egym",
     ):
-        assert version in ["v1", "v2"], "Version must be either v1 or v2"
-        self.version = version
+        assert scaffold in ["r2egym", "openhands", "sweagent"], "Scaffold must be either r2egym or openhands or sweagent"
+        self.scaffold = scaffold
         # get the start time
         start_time = time.time()
         self.llm_timeout = max_llm_time
@@ -580,11 +579,7 @@ class Agent:
             else:
                 assistant_message = response.choices[0].message.content
                 self.logger.info(f"Assistant's message:\n{assistant_message}\n")
-                thought, action_original = self.parse_response(assistant_message)
-                if swesmith_wrapper:
-                    action = action_original.from_swesmith_action()
-                else:
-                    action = action_original
+                thought, action = self.parse_response(assistant_message)
 
             action_str = action.to_xml_string()
             self.logger.info(f"THOUGHT:\n{thought}\n")

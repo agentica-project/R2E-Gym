@@ -68,7 +68,6 @@ file_editor = {
 }
 
 
-# V2 File Editor
 _STR_REPLACE_EDITOR_DESCRIPTION = """Custom editing tool for viewing, creating and editing files
 * State is persistent across command calls and discussions with the user
 * If `path` is a file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
@@ -124,6 +123,33 @@ str_replace_editor_tool = {
         },
     },
 }
+
+
+_R2EGYM_BASH_EXECUTE_DESCRIPTION = """
+Description: Execute a bash command in the terminal.
+
+Parameters:
+  (1) command (string, required): The bash command to execute. For example: `python my_script.py`
+"""
+
+r2egym_bash_execute_tool = {
+    "type": "function",
+    "function": {
+        "name": "execute_bash",
+        "description": _R2EGYM_BASH_EXECUTE_DESCRIPTION,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "cmd": {
+                    "type": "string",
+                    "description": "The command (and optional arguments) to execute. For example: 'python my_script.py'",
+                }
+            },
+            "required": ["cmd"],
+        },
+    },
+}
+
 
 
 _BASH_DESCRIPTION = """

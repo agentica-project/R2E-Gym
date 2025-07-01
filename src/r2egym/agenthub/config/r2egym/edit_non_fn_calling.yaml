@@ -195,9 +195,9 @@ instance_prompt: |-
   - When creating edge cases, you should look at the relevant existing tests to understand existing "regression" test cases. Ensure the fix doesn't break existing functionality.
   
 command_files:
-  - "./src/r2egym/agenthub/tools/file_editor.py"
+  - "./src/r2egym/agenthub/tools/r2egym/file_editor.py"
   - "./src/r2egym/agenthub/tools/search.py"
-  - "./src/r2egym/agenthub/tools/execute_bash.py"
+  - "./src/r2egym/agenthub/tools/r2egym/execute_bash.py"
   - "./src/r2egym/agenthub/tools/finish.py"
 llm_name: "gpt-4o"
 demo_file: "./r2egym/agenthub/config/localizer-demo"
