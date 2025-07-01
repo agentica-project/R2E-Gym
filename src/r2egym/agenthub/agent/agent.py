@@ -162,20 +162,20 @@ class Agent:
                 tools = [search_tool, file_editor, r2egym_bash_execute_tool, finish_tool]
             elif self.scaffold == "openhands" or self.scaffold == "sweagent":
                 tools = [str_replace_editor_tool, execute_bash_tool, submit_tool]
-                if "vertex" not in self.llm_name.lower():
-                    self.logger.warning(f"using prompt caching for {self.llm_name}")
-                    # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
-                    # litellm might need dev install with vertex: https://github.com/BerriAI/litellm/issues/6898
-                    # add prompt caching for anthropic
-                    tools[-1]["function"]["cache_control"] = {"type": "ephemeral"}
-                    breakpoints_remaining = 3  # remaining 1 for system/tool (above)
-                    for message in reversed(messages):
-                        if message["role"] in ("user", "tool"):
-                            if breakpoints_remaining > 0:
-                                message["cache_control"] = {"type": "ephemeral"}
-                                breakpoints_remaining -= 1
-                            else:
-                                break
+            if "vertex" not in self.llm_name.lower():
+                self.logger.warning(f"using prompt caching for {self.llm_name}")
+                # vertex is not supported yet: https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude-prompt-caching
+                # litellm might need dev install with vertex: https://github.com/BerriAI/litellm/issues/6898
+                # add prompt caching for anthropic
+                tools[-1]["function"]["cache_control"] = {"type": "ephemeral"}
+                breakpoints_remaining = 3  # remaining 1 for system/tool (above)
+                for message in reversed(messages):
+                    if message["role"] in ("user", "tool"):
+                        if breakpoints_remaining > 0:
+                            message["cache_control"] = {"type": "ephemeral"}
+                            breakpoints_remaining -= 1
+                        else:
+                            break
 
         # Start timer
         start_time = time.time()
@@ -424,9 +424,38 @@ class Agent:
             step_count += 1  # Increment the step count
 
             if self.use_fn_calling:
-                # special case for thinking mode anthropic
+                assistant_response = response.choices[0].message.dict()
+                if assistant_response.get("tool_calls", None):
+                    assistant_response["tool_calls"] = assistant_response["tool_calls"][
+                        :1
+                    ]  # only keep the first tool call
+                self.history.append(assistant_response)
+                # add tool response / user response to history
+                try:
+                    function_name = (
+                        response.choices[0].message.tool_calls[0].function.name
+                    )
+                    function_id = response.choices[0].message.tool_calls[0].id
+                    self.history.append(
+                        {
+                            "role": "tool",
+                            "content": str(obs),
+                            "name": function_name,
+                            "tool_call_id": function_id,
+                        }
+                    )
+                    self.logger.warning("logging fn response as a tool call")
+                    self.logger.warning(
+                        f"number of fn calls: {len(response.choices[0].message.tool_calls)}"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Error logging tool response: {e}")
+                    self.logger.warning("fallback: logging fn response as a tool call")
+                    self.history.append({"role": "user", "content": str(obs)})
+            else:
                 self.logger.warning("logging fn response as a user message")
                 assistant_message = f"{thought}\n\n{action.to_xml_string()}"
+                # assistant_message = f"{thought}\n\n{original_xml_str}"
                 self.history.append({"role": "assistant", "content": assistant_message})
                 self.history.append({"role": "user", "content": str(obs)})
 
