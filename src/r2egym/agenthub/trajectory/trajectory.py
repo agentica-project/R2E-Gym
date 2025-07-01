@@ -556,3 +556,7 @@ class Trajectory(BaseModel):
             "model_name_or_path": self.exp_name,
             "model_patch": self.true_output_patch,
         }
+
+    @property
+    def reproduction_test_score(self):
+        return sum(self.reproduction_test_scores)

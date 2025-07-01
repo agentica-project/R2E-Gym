@@ -8,15 +8,49 @@ from r2egym.agenthub.trajectory.trajectory import Trajectory
 
 
 def run_ef_verifier(sub_trajs: list[Trajectory]) -> Trajectory:
-    pass
+    """
+    Select the trajectory with the highest verifier probability.
+    """
+    return max(sub_trajs, key=lambda x: x.verifier_prob)
 
 
 def run_eb_verifier(sub_trajs: list[Trajectory]) -> Trajectory:
-    pass
+    """
+    Select the trajectory with the highest execution-based verifier score.
+    First, only keep the trajectories with the highest regression score.
+    Next, among the trajectories with the highest regression score, select the one with the highest reproduction test score.
+    """
+    sub_trajs = [
+        traj
+        for traj in sub_trajs
+        if traj.regression_pass_count
+        == max(traj.regression_pass_count for traj in sub_trajs)
+    ]
+    return max(sub_trajs, key=lambda x: x.reproduction_test_score)
 
 
 def run_hybrid_verifier(sub_trajs: list[Trajectory]) -> Trajectory:
-    pass
+    """
+    First, keep top-n trajectories with the highest verifier probability.
+    Next, among the top-n trajectories, keep the trajectory with the highest regression score.
+    Next, among the trajectories with the highest regression score, keep the ones with the highest reproduction test score.
+    Finally, select the trajectory with the highest verifier probability.
+    """
+    n = len(sub_trajs) // 2
+    sub_trajs = sorted(sub_trajs, key=lambda x: x.verifier_prob, reverse=True)[:n]
+    sub_trajs = [
+        traj
+        for traj in sub_trajs
+        if traj.regression_pass_count
+        == max(traj.regression_pass_count for traj in sub_trajs)
+    ]
+    sub_trajs = [
+        traj
+        for traj in sub_trajs
+        if traj.reproduction_test_score
+        == max(traj.reproduction_test_score for traj in sub_trajs)
+    ]
+    return max(sub_trajs, key=lambda x: x.verifier_prob)
 
 
 def run(
@@ -33,7 +67,7 @@ def run(
     verifier_fn = verifier_fn_dict[verifier_mode]
 
     traj_files = glob.glob(traj_file_glob)
-    all_trajs_by_docker: list[Trajectory] = defaultdict(list)
+    all_trajs_by_docker: dict[str, list[Trajectory]] = defaultdict(list)
 
     for traj_file in traj_files:
         with open(traj_file, "r") as f:
