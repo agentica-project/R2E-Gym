@@ -4,14 +4,12 @@ This guide provides step-by-step instructions to reproduce the DeepSWE Test-Time
 
 ## 📋 Prerequisites
 
-## 📋 Prerequisites
-
 The following doc assumes you have
 
-- *GPUs** with sufficient VRAM (recommended: 80GB+ for tensor parallelism)
+- **GPUs** with sufficient VRAM (recommended: 80GB+ for tensor parallelism)
 - **Sufficient disk space** (at least 1TB for models and datasets)
 
-> ⚠️ **Note**: TTS requires significantly more computational resources than single-pass evaluation due to multiple rollouts and verifier inference.
+> ⚠️ **Note**: TTS requires more computational resources than single-pass evaluation due to multiple rollouts and verifier inference. We recommend distributing the work across multiple machines if possible.
 
 ## 🚀 Setup Instructions
 

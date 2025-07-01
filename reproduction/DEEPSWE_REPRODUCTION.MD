@@ -6,7 +6,7 @@ This guide provides step-by-step instructions to reproduce the DeepSWE Pass@1 re
 
 The following doc assumes you have
 
-- *GPUs** with sufficient VRAM (recommended: 80GB+ for tensor parallelism)
+- **GPUs** with sufficient VRAM (recommended: 80GB+ for tensor parallelism)
 - **Sufficient disk space** (at least 1TB for models and datasets)
 
 
