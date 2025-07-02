@@ -95,7 +95,7 @@ vllm serve Qwen/Qwen3-14B \
     --max-model-len $MAX_CONTEXT_LEN \
     --hf-overrides '{"max_position_embeddings": '$MAX_CONTEXT_LEN'}' \
     --enable-lora \
-    --lora-modules verifier=agentica-org/DeepSWE-LoraVerifier-Preview \
+    --lora-modules verifier=agentica-org/DeepSWE-Preview \
     --port 8000 \
     --dtype bfloat16 \
     --max-lora-rank 64 \
@@ -110,7 +110,7 @@ Run the execution-free verifier on all rollouts:
 # Run execution-free verifier
 uv run python src/r2egym/agenthub/verifiers/run_ef_verifier.py \
     --traj_file_glob "traj/${EXP_NAME}_run_*.jsonl" \
-    --verifier_model_name "openai/agentica-org/DeepSWE-LoraVerifier-Preview"
+    --verifier_model_name "openai/agentica-org/DeepSWE-Preview"
 ```
 
 **What this does:**

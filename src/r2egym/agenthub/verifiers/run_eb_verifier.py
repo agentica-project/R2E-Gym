@@ -18,6 +18,7 @@ def process_trajectories_to_verifier_format(
             for line in f:
                 trajectories.append(Trajectory.model_validate_json(line))
 
+        trajectories = trajectories
         trajectories = add_regression_output(trajectories, max_workers=max_workers)
         trajectories = add_reproduction_tests(trajectories, max_workers=max_workers)
 
