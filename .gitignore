@@ -171,3 +171,6 @@ cython_debug/
 # src/r2e_edits/agenthub/train/results_traj_verifier-14B-v2.csv
 
 *.png
+
+# Notebooks from other branches
+notebooks/agent-training.ipynb
