@@ -181,7 +181,7 @@ def run_agent_with_restarts(
         # otherwise continue iteratively
         trajectories.append(trajectory)
         # reset the env
-        env.reset()
+        # env.reset()
 
     # choose the trajectory with the lowest number of steps
     trajectory = min(trajectories, key=lambda x: x.num_steps)

@@ -29,7 +29,7 @@ from r2egym.agenthub.tools import (
 )
 import traceback
 logger = get_logger(__name__)  # Logger for this module
-
+MAX_CONTEXT_TOKENS = 65536
 
 ##############################################################################
 # AgentArgs Dataclass
@@ -157,18 +157,6 @@ class Agent:
         retries = 0
         tools = None
 
-        #########################################################
-        # debug
-        if False:
-            self.logger.warning(f"Debug mode checking messages")
-            for idx, message in enumerate(messages):
-                # log role and content, step
-                self.logger.warning(f"step {idx}: role: {message['role']}")
-                self.logger.warning(f"step {idx}: content: {message['content']}")
-        #########################################################
-
-
-
         if self.use_fn_calling:
             if self.scaffold == "r2egym":
                 tools = [search_tool, file_editor, r2egym_bash_execute_tool, finish_tool]
@@ -197,7 +185,11 @@ class Agent:
             litellm.api_key = None
 
         messages_ = copy.deepcopy(messages)
-
+        total_tokens = self._count_tokens(messages_)
+        if total_tokens > MAX_CONTEXT_TOKENS:
+            logger.warning(f"Total tokens: {total_tokens} > {MAX_CONTEXT_TOKENS}")
+            raise ValueError(f"Total tokens: {total_tokens} > {MAX_CONTEXT_TOKENS}")
+        
         # query the model with retries
         while retries < self.max_retries:
             try:
@@ -232,7 +224,7 @@ class Agent:
         exec_time = time.time() - start_time
         return response, exec_time
 
-    def parse_response(self, response: Dict[str, Any]) -> Tuple[str, Action]:
+    def parse_response_v2(self, response: Dict[str, Any]) -> Tuple[str, Action]:
         """
         Parse the response from the LLM.
         """
@@ -265,9 +257,7 @@ class Agent:
 
         return thought, action
 
-        
-
-    def parse_response_old(self, response_text: str) -> Tuple[str, Action]:
+    def parse_response(self, response_text: str) -> Tuple[str, Action]:
         """
         Extracts:
         - thought: everything before the first <function=...> block
