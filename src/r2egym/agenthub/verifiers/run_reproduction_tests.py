@@ -71,7 +71,9 @@ def run_test_patch(ds, test_patch, patch):
                     )
             # Execute the test command
             custom_logger.info(f"Executing test command:")
-            out, error_code = env.runtime.run("execute_bash 'python3 test_issue.py -v'")
+            out, error_code = env.runtime.run(
+                "execute_bash --cmd 'python3 test_issue.py -v'"
+            )
             custom_logger.info(f"Test output:\n{out}")
 
             pred_reward = out.count("resolved")
