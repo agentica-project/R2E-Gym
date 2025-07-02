@@ -224,7 +224,7 @@ class Agent:
         exec_time = time.time() - start_time
         return response, exec_time
 
-    def parse_response_v2(self, response: Dict[str, Any]) -> Tuple[str, Action]:
+    def parse_response(self, response: Dict[str, Any]) -> Tuple[str, Action]:
         """
         Parse the response from the LLM.
         """
@@ -257,7 +257,7 @@ class Agent:
 
         return thought, action
 
-    def parse_response(self, response_text: str) -> Tuple[str, Action]:
+    def parse_response_v2(self, response_text: str) -> Tuple[str, Action]:
         """
         Extracts:
         - thought: everything before the first <function=...> block
